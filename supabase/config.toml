@@ -1,1 +1,7 @@
 project_id = "bbffmosouvzifowfwwzk"
+
+[functions.dob-violations]
+verify_jwt = false
+
+[functions.geocode]
+verify_jwt = false
