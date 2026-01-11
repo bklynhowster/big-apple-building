@@ -359,18 +359,26 @@ serve(async (req) => {
 
     if (searchType === 'address') {
       const houseNumber = (params.get('house') || '').trim();
-      const street = params.get('street') || '';
+      const streetName = (params.get('streetName') || '').trim();
+      const streetType = (params.get('streetType') || '').trim();
       const borough = params.get('borough') || '';
 
-      // Debug logging
-      console.log(`Received params - house: "${houseNumber}", street: "${street}", borough: "${borough}"`);
+      // Construct full street from streetName + streetType
+      const constructedStreet = streetName && streetType 
+        ? `${streetName} ${streetType}` 
+        : streetName || '';
 
-      if (!houseNumber || !street || !borough) {
+      // Debug logging
+      console.log(`Received params - house: "${houseNumber}", streetName: "${streetName}", streetType: "${streetType}", constructedStreet: "${constructedStreet}", borough: "${borough}"`);
+
+      if (!houseNumber || !constructedStreet || !borough) {
         return new Response(
           JSON.stringify({ 
-            error: 'house, street, and borough are required for address search',
-            receivedHouse: houseNumber,
-            receivedStreet: street,
+            error: 'house, streetName, streetType, and borough are required for address search',
+            receivedHouseNumber: houseNumber,
+            receivedStreetName: streetName,
+            receivedStreetType: streetType,
+            constructedStreet: constructedStreet,
             receivedBorough: borough,
           }),
           { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -380,8 +388,8 @@ serve(async (req) => {
       const titleCaseBorough = toTitleCase(borough);
       const normalizedBorough = BOROUGH_NAMES[borough.toUpperCase()] || titleCaseBorough;
 
-      // Use the new geocode function with retry logic
-      const geocodeResult = await geocodeAddress(houseNumber, street, titleCaseBorough);
+      // Use the geocode function with the constructed street
+      const geocodeResult = await geocodeAddress(houseNumber, constructedStreet, titleCaseBorough);
 
       if (!geocodeResult.success) {
         console.error('Geocode failed:', geocodeResult.error, geocodeResult.details);
@@ -391,8 +399,10 @@ serve(async (req) => {
             details: geocodeResult.details,
             normalizedStreetTried: geocodeResult.normalizedStreetTried,
             userMessage: geocodeResult.userMessage,
-            receivedHouse: houseNumber,
-            receivedStreet: street,
+            receivedHouseNumber: houseNumber,
+            receivedStreetName: streetName,
+            receivedStreetType: streetType,
+            constructedStreet: constructedStreet,
             receivedBorough: borough,
           }),
           { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -479,10 +489,14 @@ serve(async (req) => {
     console.log('Returning property info:', JSON.stringify(propertyInfo));
 
     // Add debug fields to success response
+    const streetName = params.get('streetName') || '';
+    const streetType = params.get('streetType') || '';
     const responseData = {
       ...propertyInfo,
-      receivedHouse: params.get('house') || '',
-      receivedStreet: params.get('street') || '',
+      receivedHouseNumber: params.get('house') || '',
+      receivedStreetName: streetName,
+      receivedStreetType: streetType,
+      constructedStreet: streetName && streetType ? `${streetName} ${streetType}` : streetName,
       receivedBorough: params.get('borough') || '',
     };
 
