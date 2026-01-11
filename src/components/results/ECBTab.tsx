@@ -1,19 +1,60 @@
-import { useState } from 'react';
-import { FilterBar } from './FilterBar';
-import { DataTable, StatusBadge } from './DataTable';
+import { useState, useEffect } from 'react';
+import { Search, X, ChevronLeft, ChevronRight, Loader2, AlertCircle, FileX, DollarSign } from 'lucide-react';
+import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import type { ECBViolation, SearchFilters } from '@/types/property';
+import { Skeleton } from '@/components/ui/skeleton';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
+import { useECB, ECBFilters, ECBRecord } from '@/hooks/useECB';
 
 interface ECBTabProps {
-  violations: ECBViolation[];
+  bbl: string | null;
 }
 
-function SeverityBadge({ severity }: { severity: ECBViolation['severity'] }) {
+function StatusBadge({ status }: { status: ECBRecord['status'] }) {
+  const variants: Record<string, 'destructive' | 'secondary' | 'outline'> = {
+    open: 'destructive',
+    resolved: 'secondary',
+    unknown: 'outline',
+  };
+
+  return (
+    <Badge variant={variants[status] || 'outline'} className="font-medium capitalize">
+      {status}
+    </Badge>
+  );
+}
+
+function SeverityBadge({ severity }: { severity: string | null }) {
+  if (!severity) return <span className="text-muted-foreground">-</span>;
+  
   const variants: Record<string, 'destructive' | 'default' | 'secondary' | 'outline'> = {
+    Hazardous: 'destructive',
     HAZARDOUS: 'destructive',
+    Major: 'default',
     MAJOR: 'default',
+    Minor: 'secondary',
     MINOR: 'secondary',
-    UNKNOWN: 'outline',
   };
 
   return (
@@ -23,98 +64,319 @@ function SeverityBadge({ severity }: { severity: ECBViolation['severity'] }) {
   );
 }
 
-export function ECBTab({ violations }: ECBTabProps) {
-  const [filters, setFilters] = useState<SearchFilters>({
+function LoadingSkeleton() {
+  return (
+    <div className="space-y-4">
+      {/* Filter bar skeleton */}
+      <div className="flex flex-col md:flex-row gap-4 p-4 bg-muted/50 rounded-lg">
+        <Skeleton className="h-10 flex-1" />
+        <div className="flex gap-3">
+          <Skeleton className="h-10 w-32" />
+          <Skeleton className="h-10 w-36" />
+          <Skeleton className="h-10 w-36" />
+          <Skeleton className="h-10 w-20" />
+        </div>
+      </div>
+      
+      {/* Summary skeleton */}
+      <Skeleton className="h-6 w-64" />
+      
+      {/* Table skeleton */}
+      <div className="rounded-md border">
+        <div className="p-4 space-y-4">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <div key={i} className="flex gap-4">
+              <Skeleton className="h-6 w-24" />
+              <Skeleton className="h-6 w-20" />
+              <Skeleton className="h-6 w-24" />
+              <Skeleton className="h-6 flex-1" />
+              <Skeleton className="h-6 w-20" />
+              <Skeleton className="h-6 w-28" />
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function formatCurrency(amount: number | null): string {
+  if (amount === null || amount === undefined) return '-';
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  }).format(amount);
+}
+
+export function ECBTab({ bbl }: ECBTabProps) {
+  const {
+    loading,
+    error,
+    data,
+    filters,
+    offset,
+    fetchECB,
+    setFilters,
+    applyFilters,
+    goToNextPage,
+    goToPrevPage,
+  } = useECB(bbl);
+
+  const [localFilters, setLocalFilters] = useState<ECBFilters>({
     status: 'all',
     keyword: '',
   });
 
-  const columns = [
-    {
-      key: 'ecbNumber',
-      header: 'ECB #',
-      sortable: true,
-      render: (item: ECBViolation) => (
-        <span className="font-mono text-sm">{item.ecbNumber}</span>
-      ),
-    },
-    {
-      key: 'issueDate',
-      header: 'Issue Date',
-      sortable: true,
-      render: (item: ECBViolation) => (
-        <span className="text-sm">{new Date(item.issueDate).toLocaleDateString()}</span>
-      ),
-    },
-    {
-      key: 'violationType',
-      header: 'Type',
-      sortable: true,
-    },
-    {
-      key: 'severity',
-      header: 'Severity',
-      sortable: true,
-      render: (item: ECBViolation) => <SeverityBadge severity={item.severity} />,
-    },
-    {
-      key: 'description',
-      header: 'Description',
-      render: (item: ECBViolation) => (
-        <span className="text-sm line-clamp-2">{item.description}</span>
-      ),
-    },
-    {
-      key: 'penaltyAmount',
-      header: 'Penalty',
-      sortable: true,
-      render: (item: ECBViolation) => (
-        <span className="text-sm font-mono">
-          {item.penaltyAmount ? `$${item.penaltyAmount.toLocaleString()}` : '-'}
-        </span>
-      ),
-    },
-    {
-      key: 'status',
-      header: 'Status',
-      sortable: true,
-      render: (item: ECBViolation) => <StatusBadge status={item.status} />,
-    },
-  ];
+  // Fetch on mount when bbl is available
+  useEffect(() => {
+    if (bbl) {
+      fetchECB(bbl);
+    }
+  }, [bbl]);
 
-  const filterFn = (item: ECBViolation, filters: SearchFilters) => {
-    if (filters.status !== 'all') {
-      const matchStatus = filters.status === 'open' ? 'OPEN' : 'RESOLVED';
-      if (item.status !== matchStatus) return false;
-    }
-    
-    if (filters.keyword) {
-      const keyword = filters.keyword.toLowerCase();
-      const searchable = `${item.ecbNumber} ${item.violationType} ${item.description}`.toLowerCase();
-      if (!searchable.includes(keyword)) return false;
-    }
-    
-    if (filters.dateFrom) {
-      if (new Date(item.issueDate) < new Date(filters.dateFrom)) return false;
-    }
-    
-    if (filters.dateTo) {
-      if (new Date(item.issueDate) > new Date(filters.dateTo)) return false;
-    }
-    
-    return true;
+  const handleFilterChange = (updates: Partial<ECBFilters>) => {
+    const newFilters = { ...localFilters, ...updates };
+    setLocalFilters(newFilters);
+    setFilters(newFilters);
   };
+
+  const handleClearFilters = () => {
+    const clearedFilters: ECBFilters = {
+      status: 'all',
+      keyword: '',
+      fromDate: undefined,
+      toDate: undefined,
+    };
+    setLocalFilters(clearedFilters);
+    setFilters(clearedFilters);
+  };
+
+  const handleApply = () => {
+    applyFilters();
+  };
+
+  const hasActiveFilters =
+    localFilters.status !== 'all' ||
+    localFilters.keyword ||
+    localFilters.fromDate ||
+    localFilters.toDate;
+
+  // Loading state
+  if (loading && !data) {
+    return <LoadingSkeleton />;
+  }
+
+  // Error state
+  if (error) {
+    return (
+      <div className="flex flex-col items-center justify-center py-12 text-center">
+        <AlertCircle className="h-12 w-12 text-destructive mb-4" />
+        <p className="text-foreground font-medium mb-2">Failed to load ECB violations</p>
+        <p className="text-sm text-muted-foreground mb-4">{error}</p>
+        <Button variant="outline" onClick={() => bbl && fetchECB(bbl)}>
+          Try Again
+        </Button>
+      </div>
+    );
+  }
+
+  const items = data?.items || [];
+  const totalApprox = data?.totalApprox || 0;
+  const hasNextPage = data?.nextOffset !== null;
+  const hasPrevPage = offset > 0;
+  const currentPage = Math.floor(offset / 50) + 1;
 
   return (
     <div className="space-y-4">
-      <FilterBar filters={filters} onFiltersChange={setFilters} />
-      <DataTable
-        data={violations}
-        columns={columns}
-        filters={filters}
-        filterFn={filterFn}
-        emptyMessage="No ECB violations found for this property"
-      />
+      {/* Filter Bar */}
+      <div className="flex flex-col md:flex-row gap-4 p-4 bg-muted/50 rounded-lg">
+        <div className="flex-1">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="Search by description..."
+              value={localFilters.keyword || ''}
+              onChange={(e) => handleFilterChange({ keyword: e.target.value })}
+              className="pl-9 bg-card"
+            />
+          </div>
+        </div>
+
+        <div className="flex flex-wrap gap-3 items-center">
+          <Select
+            value={localFilters.status}
+            onValueChange={(v) => handleFilterChange({ status: v as ECBFilters['status'] })}
+          >
+            <SelectTrigger className="w-32 bg-card">
+              <SelectValue placeholder="Status" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Status</SelectItem>
+              <SelectItem value="open">Open</SelectItem>
+              <SelectItem value="resolved">Resolved</SelectItem>
+            </SelectContent>
+          </Select>
+
+          <Input
+            type="date"
+            placeholder="From"
+            value={localFilters.fromDate || ''}
+            onChange={(e) => handleFilterChange({ fromDate: e.target.value || undefined })}
+            className="w-36 bg-card"
+          />
+
+          <Input
+            type="date"
+            placeholder="To"
+            value={localFilters.toDate || ''}
+            onChange={(e) => handleFilterChange({ toDate: e.target.value || undefined })}
+            className="w-36 bg-card"
+          />
+
+          <Button onClick={handleApply} disabled={loading}>
+            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Apply'}
+          </Button>
+
+          {hasActiveFilters && (
+            <Button variant="ghost" size="sm" onClick={handleClearFilters}>
+              <X className="h-4 w-4 mr-1" />
+              Clear
+            </Button>
+          )}
+        </div>
+      </div>
+
+      {/* BBL Display */}
+      {bbl && (
+        <div className="text-xs text-muted-foreground font-mono bg-muted/30 px-2 py-1 rounded inline-block">
+          BBL: {bbl}
+        </div>
+      )}
+
+      {/* Summary Line */}
+      <div className="flex items-center justify-between text-sm text-muted-foreground">
+        <div>
+          Showing {items.length} of ~{totalApprox} ECB summonses
+          {hasActiveFilters && <span className="ml-2 text-primary">(filtered)</span>}
+        </div>
+        {loading && <Loader2 className="h-4 w-4 animate-spin" />}
+      </div>
+
+      {/* Empty State */}
+      {items.length === 0 && !loading && (
+        <div className="flex flex-col items-center justify-center py-12 text-center border rounded-lg bg-muted/20">
+          <FileX className="h-12 w-12 text-muted-foreground mb-4" />
+          <p className="text-foreground font-medium mb-2">No ECB summonses found</p>
+          <p className="text-sm text-muted-foreground">
+            No ECB summonses found for this property with the current filters.
+          </p>
+          {hasActiveFilters && (
+            <Button variant="link" onClick={handleClearFilters} className="mt-2">
+              Clear filters and try again
+            </Button>
+          )}
+        </div>
+      )}
+
+      {/* Data Table */}
+      {items.length > 0 && (
+        <div className="rounded-md border overflow-hidden">
+          <Table>
+            <TableHeader>
+              <TableRow className="bg-muted/50">
+                <TableHead className="font-semibold">Issue Date</TableHead>
+                <TableHead className="font-semibold">Status</TableHead>
+                <TableHead className="font-semibold">Severity</TableHead>
+                <TableHead className="font-semibold">Category</TableHead>
+                <TableHead className="font-semibold">Description</TableHead>
+                <TableHead className="font-semibold text-right">Penalty</TableHead>
+                <TableHead className="font-semibold text-right">Balance</TableHead>
+                <TableHead className="font-semibold">Record ID</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {items.map((item, index) => (
+                <TableRow key={`${item.recordId}-${index}`}>
+                  <TableCell className="text-sm">
+                    {item.issueDate
+                      ? new Date(item.issueDate).toLocaleDateString()
+                      : '-'}
+                  </TableCell>
+                  <TableCell>
+                    <StatusBadge status={item.status} />
+                  </TableCell>
+                  <TableCell>
+                    <SeverityBadge severity={item.severity} />
+                  </TableCell>
+                  <TableCell className="text-sm">
+                    {item.category || '-'}
+                  </TableCell>
+                  <TableCell className="max-w-xs">
+                    {item.description ? (
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="text-sm line-clamp-2 cursor-help">
+                              {item.description}
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent className="max-w-md">
+                            <p>{item.description}</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    ) : (
+                      <span className="text-muted-foreground">-</span>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-right font-mono text-sm">
+                    {formatCurrency(item.penaltyAmount)}
+                  </TableCell>
+                  <TableCell className="text-right font-mono text-sm">
+                    <span className={item.balanceDue && item.balanceDue > 0 ? 'text-destructive font-medium' : ''}>
+                      {formatCurrency(item.balanceDue)}
+                    </span>
+                  </TableCell>
+                  <TableCell>
+                    <span className="font-mono text-sm">{item.recordId}</span>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      )}
+
+      {/* Pagination */}
+      {items.length > 0 && (
+        <div className="flex items-center justify-between">
+          <div className="text-sm text-muted-foreground">
+            Page {currentPage}
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={goToPrevPage}
+              disabled={!hasPrevPage || loading}
+            >
+              <ChevronLeft className="h-4 w-4 mr-1" />
+              Previous
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={goToNextPage}
+              disabled={!hasNextPage || loading}
+            >
+              Next
+              <ChevronRight className="h-4 w-4 ml-1" />
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

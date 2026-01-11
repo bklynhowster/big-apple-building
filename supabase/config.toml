@@ -5,3 +5,6 @@ verify_jwt = false
 
 [functions.geocode]
 verify_jwt = false
+
+[functions.dob-ecb]
+verify_jwt = false

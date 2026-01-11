@@ -80,7 +80,7 @@ export default function Results() {
                     value="ecb" 
                     className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent py-3 px-6"
                   >
-                    ECB ({data.ecbViolations.length})
+                    ECB
                   </TabsTrigger>
                   <TabsTrigger 
                     value="safety" 
@@ -112,7 +112,7 @@ export default function Results() {
                   <TabsContent value="ecb" className="mt-0">
                     <Card>
                       <CardContent className="p-6">
-                        <ECBTab violations={data.ecbViolations} />
+                        <ECBTab bbl={data.info.bbl} />
                       </CardContent>
                     </Card>
                   </TabsContent>
