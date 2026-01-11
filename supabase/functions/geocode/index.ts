@@ -14,6 +14,21 @@ const GEOCLIENT_API_GATEWAY_URL = 'https://api.nyc.gov/geoclient/v2';
 // Attempt B: Maps NYC (app_id/app_key in query params)
 const GEOCLIENT_MAPS_URL = 'https://maps.nyc.gov/geoclient/v2';
 
+// Street suffix normalization mapping
+const STREET_SUFFIX_MAP: Record<string, string> = {
+  'street': 'st',
+  'avenue': 'ave',
+  'boulevard': 'blvd',
+  'road': 'rd',
+  'place': 'pl',
+  'drive': 'dr',
+  'court': 'ct',
+  'lane': 'ln',
+  'terrace': 'ter',
+  'parkway': 'pkwy',
+  'highway': 'hwy',
+};
+
 interface GeoclientResponse {
   address?: {
     bbl?: string;
@@ -88,10 +103,51 @@ const BOROUGH_CODES: Record<string, string> = {
   'STATEN ISLAND': '5',
 };
 
+// Normalize street input: trim, collapse spaces
+function normalizeStreetInput(street: string): string {
+  return street
+    .trim()
+    .replace(/\s+/g, ' '); // Collapse multiple spaces
+}
+
+// Normalize street suffix (Street -> St, Avenue -> Ave, etc.)
+function normalizeStreetSuffix(street: string): { normalized: string; wasNormalized: boolean } {
+  const words = street.split(' ');
+  if (words.length === 0) {
+    return { normalized: street, wasNormalized: false };
+  }
+  
+  const lastWord = words[words.length - 1].toLowerCase();
+  const abbreviation = STREET_SUFFIX_MAP[lastWord];
+  
+  if (abbreviation) {
+    // Replace last word with abbreviation, preserving title case
+    words[words.length - 1] = abbreviation.charAt(0).toUpperCase() + abbreviation.slice(1);
+    return { normalized: words.join(' '), wasNormalized: true };
+  }
+  
+  return { normalized: street, wasNormalized: false };
+}
+
 // Convert borough to Title Case for API
 function toTitleCase(borough: string): string {
   const normalized = BOROUGH_NAMES[borough.toUpperCase()];
   return normalized || borough.charAt(0).toUpperCase() + borough.slice(1).toLowerCase();
+}
+
+// Check if the response indicates "NOT RECOGNIZED" error
+function isNotRecognizedError(data: GeoclientResponse): boolean {
+  const address = data.address;
+  if (!address) return false;
+  
+  const message = (address.message || '').toUpperCase();
+  const returnCode = address.returnCode1a || '';
+  
+  // Return codes that indicate street not recognized
+  // Common codes: 11, 12, 13 for various "not recognized" scenarios
+  return message.includes('NOT RECOGNIZED') || 
+         message.includes('STREET NAME NOT FOUND') ||
+         ['11', '12', '13', '42'].includes(returnCode);
 }
 
 // Attempt A: API Gateway with subscription key header
@@ -104,8 +160,7 @@ async function attemptApiGateway(
     url.searchParams.set(key, value);
   });
 
-  console.log(`Attempt A (API Gateway): ${url.toString()}`);
-  console.log(`Attempt A debug: hasAppId=${!!GEOCLIENT_APP_ID}, hasAppKey=${!!GEOCLIENT_APP_KEY}`);
+  console.log(`Attempt A (API Gateway): street=${params.street}, borough=${params.borough}`);
 
   try {
     const response = await fetch(url.toString(), {
@@ -152,8 +207,7 @@ async function attemptMapsNyc(
   url.searchParams.set('app_id', GEOCLIENT_APP_ID);
   url.searchParams.set('app_key', GEOCLIENT_APP_KEY);
 
-  console.log(`Attempt B (Maps NYC): ${url.toString().replace(GEOCLIENT_APP_KEY, '[REDACTED]')}`);
-  console.log(`Attempt B debug: hasAppId=${!!GEOCLIENT_APP_ID}, hasAppKey=${!!GEOCLIENT_APP_KEY}`);
+  console.log(`Attempt B (Maps NYC): street=${params.street}, borough=${params.borough}`);
 
   try {
     const response = await fetch(url.toString());
@@ -207,6 +261,81 @@ async function geoclientFetch(
   };
 }
 
+// Main geocode function with retry logic for street normalization
+async function geocodeAddress(
+  houseNumber: string,
+  street: string,
+  borough: string
+): Promise<{ success: true; data: GeoclientResponse; streetUsed: string } | { success: false; error: string; details: string; normalizedStreetTried?: string; userMessage?: string }> {
+  
+  // First attempt with original street (after basic normalization)
+  const normalizedStreet = normalizeStreetInput(street);
+  console.log(`Geocoding: ${houseNumber} ${normalizedStreet}, ${borough}`);
+  
+  const result1 = await geoclientFetch('address.json', {
+    houseNumber,
+    street: normalizedStreet,
+    borough,
+  });
+
+  if ('error' in result1) {
+    return { success: false, error: 'Failed to geocode address', details: result1.error };
+  }
+
+  // Check if first attempt succeeded
+  const data1 = result1.data;
+  if (data1.address && !isNotRecognizedError(data1)) {
+    const returnCode = data1.address.returnCode1a;
+    if (returnCode === '00' || returnCode === '01') {
+      return { success: true, data: data1, streetUsed: normalizedStreet };
+    }
+  }
+
+  // If NOT RECOGNIZED, try with suffix-normalized street
+  const { normalized: suffixNormalized, wasNormalized } = normalizeStreetSuffix(normalizedStreet);
+  
+  if (wasNormalized && suffixNormalized !== normalizedStreet) {
+    console.log(`Retrying with normalized suffix: ${suffixNormalized}`);
+    
+    const result2 = await geoclientFetch('address.json', {
+      houseNumber,
+      street: suffixNormalized,
+      borough,
+    });
+
+    if (!('error' in result2)) {
+      const data2 = result2.data;
+      if (data2.address && !isNotRecognizedError(data2)) {
+        const returnCode = data2.address.returnCode1a;
+        if (returnCode === '00' || returnCode === '01') {
+          return { success: true, data: data2, streetUsed: suffixNormalized };
+        }
+      }
+    }
+
+    // Both attempts failed
+    const message = data1.address?.message || 'Street not recognized';
+    return {
+      success: false,
+      error: 'Address not found',
+      details: message,
+      normalizedStreetTried: suffixNormalized,
+      userMessage: "Street name not recognized. Try using abbreviations like 'St', 'Ave', 'Blvd'.",
+    };
+  }
+
+  // Original attempt failed without suffix to normalize
+  const message = data1.address?.message || 'Address not found';
+  return {
+    success: false,
+    error: 'Address not found',
+    details: message,
+    userMessage: isNotRecognizedError(data1) 
+      ? "Street name not recognized. Check spelling or try abbreviations like 'St', 'Ave'."
+      : undefined,
+  };
+}
+
 serve(async (req) => {
   // Handle CORS preflight
   if (req.method === 'OPTIONS') {
@@ -229,9 +358,9 @@ serve(async (req) => {
     let propertyInfo: PropertyInfo;
 
     if (searchType === 'address') {
-      const houseNumber = params.get('house');
-      const street = params.get('street');
-      const borough = params.get('borough');
+      const houseNumber = (params.get('house') || '').trim();
+      const street = params.get('street') || '';
+      const borough = params.get('borough') || '';
 
       if (!houseNumber || !street || !borough) {
         return new Response(
@@ -243,51 +372,25 @@ serve(async (req) => {
       const titleCaseBorough = toTitleCase(borough);
       const normalizedBorough = BOROUGH_NAMES[borough.toUpperCase()] || titleCaseBorough;
 
-      console.log(`Geocoding address: ${houseNumber} ${street}, ${titleCaseBorough}`);
+      // Use the new geocode function with retry logic
+      const geocodeResult = await geocodeAddress(houseNumber, street, titleCaseBorough);
 
-      const result = await geoclientFetch('address.json', {
-        houseNumber,
-        street,
-        borough: titleCaseBorough,
-      });
-
-      if ('error' in result) {
-        console.error('Geoclient failed:', result.error);
+      if (!geocodeResult.success) {
+        console.error('Geocode failed:', geocodeResult.error, geocodeResult.details);
         return new Response(
           JSON.stringify({ 
-            error: 'Failed to geocode address',
-            details: result.error,
-            attempts: result.attempts.map(a => ({
-              attempt: a.attempt,
-              status: a.status,
-              hasAppId: !!GEOCLIENT_APP_ID,
-              hasAppKey: !!GEOCLIENT_APP_KEY,
-            })),
-          }),
-          { status: 502, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
-
-      console.log(`Geoclient response (attempt ${result.attemptUsed}):`, JSON.stringify(result.data, null, 2));
-
-      const address = result.data.address;
-      if (!address) {
-        return new Response(
-          JSON.stringify({ error: 'No address data returned from Geoclient' }),
-          { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
-
-      // Check for errors
-      if (address.returnCode1a && address.returnCode1a !== '00' && address.returnCode1a !== '01') {
-        return new Response(
-          JSON.stringify({ 
-            error: 'Address not found',
-            details: address.message || `Return code: ${address.returnCode1a}`
+            error: geocodeResult.error,
+            details: geocodeResult.details,
+            normalizedStreetTried: geocodeResult.normalizedStreetTried,
+            userMessage: geocodeResult.userMessage,
           }),
           { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
+
+      console.log(`Geoclient succeeded with street: ${geocodeResult.streetUsed}`);
+
+      const address = geocodeResult.data.address!;
 
       // Extract BBL components
       const bbl = address.bbl || '';
@@ -296,7 +399,7 @@ serve(async (req) => {
       const lot = address.bblTaxLot || bbl.slice(6, 10) || '0000';
       
       propertyInfo = {
-        address: `${address.houseNumber || houseNumber} ${address.firstStreetNameNormalized || street}`.toUpperCase(),
+        address: `${address.houseNumber || houseNumber} ${address.firstStreetNameNormalized || geocodeResult.streetUsed}`.toUpperCase(),
         borough: BOROUGH_NAMES[boroughCode] || normalizedBorough,
         block: block.padStart(5, '0'),
         lot: lot.padStart(4, '0'),
