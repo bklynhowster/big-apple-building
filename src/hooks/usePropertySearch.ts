@@ -91,11 +91,14 @@ export function usePropertySearch() {
 
         if (type === 'address') {
           const house = searchParams.get('house') || '';
-          const street = searchParams.get('street') || '';
+          const streetName = searchParams.get('streetName') || '';
+          const streetType = searchParams.get('streetType') || '';
           const borough = searchParams.get('borough') || 'MANHATTAN';
           
+          // Support new streetName/streetType params
           queryParams.set('house', house);
-          queryParams.set('street', street);
+          queryParams.set('streetName', streetName);
+          queryParams.set('streetType', streetType);
           queryParams.set('borough', borough);
         } else if (type === 'bbl') {
           const boroughCode = searchParams.get('borough') || '1';

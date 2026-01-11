@@ -23,6 +23,21 @@ const BOROUGHS: { value: Borough; label: string }[] = [
   { value: 'STATEN ISLAND', label: 'Staten Island' },
 ];
 
+const STREET_TYPES = [
+  { value: 'St', label: 'Street (St)' },
+  { value: 'Ave', label: 'Avenue (Ave)' },
+  { value: 'Rd', label: 'Road (Rd)' },
+  { value: 'Blvd', label: 'Boulevard (Blvd)' },
+  { value: 'Pl', label: 'Place (Pl)' },
+  { value: 'Dr', label: 'Drive (Dr)' },
+  { value: 'Ct', label: 'Court (Ct)' },
+  { value: 'Ln', label: 'Lane (Ln)' },
+  { value: 'Ter', label: 'Terrace (Ter)' },
+  { value: 'Pkwy', label: 'Parkway (Pkwy)' },
+  { value: 'Way', label: 'Way' },
+  { value: 'Hwy', label: 'Highway (Hwy)' },
+];
+
 export function SearchForm() {
   const navigate = useNavigate();
   const [searchType, setSearchType] = useState<'address' | 'bbl'>('address');
@@ -30,6 +45,7 @@ export function SearchForm() {
   // Address search state
   const [houseNumber, setHouseNumber] = useState('');
   const [streetName, setStreetName] = useState('');
+  const [streetType, setStreetType] = useState('');
   const [borough, setBorough] = useState<Borough | ''>('');
   
   // BBL search state
@@ -39,12 +55,13 @@ export function SearchForm() {
 
   const handleAddressSearch = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!houseNumber || !streetName || !borough) return;
+    if (!houseNumber || !streetName || !streetType || !borough) return;
     
     const params = new URLSearchParams({
       type: 'address',
       house: houseNumber,
-      street: streetName,
+      streetName: streetName,
+      streetType: streetType,
       borough: borough,
     });
     navigate(`/results?${params.toString()}`);
@@ -80,7 +97,7 @@ export function SearchForm() {
 
           <TabsContent value="address">
             <form onSubmit={handleAddressSearch} className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="houseNumber">House Number</Label>
                   <Input
@@ -95,11 +112,27 @@ export function SearchForm() {
                   <Label htmlFor="streetName">Street Name</Label>
                   <Input
                     id="streetName"
-                    placeholder="Broadway"
+                    placeholder="Carroll, Broadway, East 2"
                     value={streetName}
                     onChange={(e) => setStreetName(e.target.value)}
                     required
                   />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="streetType">Street Type</Label>
+                  <Select value={streetType} onValueChange={setStreetType}>
+                    <SelectTrigger id="streetType">
+                      <SelectValue placeholder="Type" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {STREET_TYPES.map((st) => (
+                        <SelectItem key={st.value} value={st.value}>
+                          {st.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">St, Ave, Rd, etc.</p>
                 </div>
               </div>
               <div className="space-y-2">
