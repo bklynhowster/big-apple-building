@@ -1,24 +1,17 @@
 import { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import type { PropertyData, PropertyInfo, DOBViolation, ECBViolation, SafetyViolation, Permit, Borough } from '@/types/property';
+import type { PropertyData, PropertyInfo, ECBViolation, SafetyViolation, Permit, Borough } from '@/types/property';
 
-// Mock data generator for demonstration
-function generateMockData(info: PropertyInfo): PropertyData {
-  const violations: DOBViolation[] = Array.from({ length: 12 }, (_, i) => ({
-    id: `viol-${i}`,
-    violationNumber: `V${Math.random().toString().slice(2, 10)}`,
-    issueDate: new Date(Date.now() - Math.random() * 365 * 24 * 60 * 60 * 1000 * 5).toISOString(),
-    violationType: ['WORK WITHOUT PERMIT', 'ILLEGAL CONVERSION', 'FAILURE TO MAINTAIN', 'ELEVATOR SAFETY'][Math.floor(Math.random() * 4)],
-    description: [
-      'Work without permit: installation of HVAC system without required permits',
-      'Failure to maintain building facade in a safe condition',
-      'Illegal conversion of basement to residential use',
-      'Failure to maintain elevator in safe operating condition',
-    ][Math.floor(Math.random() * 4)],
-    status: ['OPEN', 'RESOLVED', 'PENDING'][Math.floor(Math.random() * 3)] as 'OPEN' | 'RESOLVED' | 'PENDING',
-    dispositionDate: Math.random() > 0.5 ? new Date(Date.now() - Math.random() * 365 * 24 * 60 * 60 * 1000).toISOString() : undefined,
-  }));
+const BOROUGH_NAMES: Record<string, Borough> = {
+  '1': 'MANHATTAN',
+  '2': 'BRONX',
+  '3': 'BROOKLYN',
+  '4': 'QUEENS',
+  '5': 'STATEN ISLAND',
+};
 
+// Generate mock data for tabs that aren't implemented yet
+function generatePlaceholderData(info: PropertyInfo): Omit<PropertyData, 'info' | 'violations'> {
   const ecbViolations: ECBViolation[] = Array.from({ length: 8 }, (_, i) => ({
     id: `ecb-${i}`,
     ecbNumber: `ECB${Math.random().toString().slice(2, 12)}`,
@@ -70,21 +63,11 @@ function generateMockData(info: PropertyInfo): PropertyData {
   }));
 
   return {
-    info,
-    violations,
     ecbViolations,
     safetyViolations,
     permits,
   };
 }
-
-const BOROUGH_NAMES: Record<string, Borough> = {
-  '1': 'MANHATTAN',
-  '2': 'BRONX',
-  '3': 'BROOKLYN',
-  '4': 'QUEENS',
-  '5': 'STATEN ISLAND',
-};
 
 export function usePropertySearch() {
   const [searchParams] = useSearchParams();
@@ -98,50 +81,72 @@ export function usePropertySearch() {
       setError(null);
 
       try {
-        // Simulate API delay
-        await new Promise((resolve) => setTimeout(resolve, 1200));
-
         const type = searchParams.get('type');
         let propertyInfo: PropertyInfo;
+
+        // Build query params for the geocode function
+        const baseUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/geocode`;
+        const queryParams = new URLSearchParams();
+        queryParams.set('type', type || 'address');
 
         if (type === 'address') {
           const house = searchParams.get('house') || '';
           const street = searchParams.get('street') || '';
-          const borough = searchParams.get('borough') as Borough || 'MANHATTAN';
+          const borough = searchParams.get('borough') || 'MANHATTAN';
           
-          // In production, this would call NYC Geoclient API
-          propertyInfo = {
-            address: `${house} ${street}`.toUpperCase(),
-            borough,
-            block: String(Math.floor(Math.random() * 9999) + 1).padStart(5, '0'),
-            lot: String(Math.floor(Math.random() * 999) + 1).padStart(4, '0'),
-            bbl: '',
-            bin: `1${String(Math.floor(Math.random() * 999999)).padStart(6, '0')}`,
-          };
-          propertyInfo.bbl = `${BOROUGH_NAMES[propertyInfo.borough] === 'MANHATTAN' ? '1' : 
-            BOROUGH_NAMES[propertyInfo.borough] === 'BRONX' ? '2' : 
-            BOROUGH_NAMES[propertyInfo.borough] === 'BROOKLYN' ? '3' : 
-            BOROUGH_NAMES[propertyInfo.borough] === 'QUEENS' ? '4' : '5'}${propertyInfo.block}${propertyInfo.lot}`;
+          queryParams.set('house', house);
+          queryParams.set('street', street);
+          queryParams.set('borough', borough);
         } else if (type === 'bbl') {
           const boroughCode = searchParams.get('borough') || '1';
           const block = searchParams.get('block') || '00001';
           const lot = searchParams.get('lot') || '0001';
           
-          propertyInfo = {
-            address: `BLOCK ${block}, LOT ${lot}`,
-            borough: BOROUGH_NAMES[boroughCode] || 'MANHATTAN',
-            block: block.padStart(5, '0'),
-            lot: lot.padStart(4, '0'),
-            bbl: `${boroughCode}${block.padStart(5, '0')}${lot.padStart(4, '0')}`,
-            bin: `${boroughCode}${String(Math.floor(Math.random() * 999999)).padStart(6, '0')}`,
-          };
+          queryParams.set('borough', boroughCode);
+          queryParams.set('block', block);
+          queryParams.set('lot', lot);
         } else {
           throw new Error('Invalid search type');
         }
 
-        const mockData = generateMockData(propertyInfo);
-        setData(mockData);
+        const fullUrl = `${baseUrl}?${queryParams.toString()}`;
+        console.log('Calling geocode API:', fullUrl);
+
+        const response = await fetch(fullUrl, {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+            'apikey': import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+          },
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.error || errorData.details || `HTTP ${response.status}`);
+        }
+
+        const geocodeResult = await response.json();
+        console.log('Geocode result:', geocodeResult);
+
+        propertyInfo = {
+          address: geocodeResult.address,
+          borough: geocodeResult.borough as Borough,
+          block: geocodeResult.block,
+          lot: geocodeResult.lot,
+          bbl: geocodeResult.bbl,
+          bin: geocodeResult.bin,
+        };
+
+        // Generate placeholder data for other tabs (will be replaced with real API calls later)
+        const placeholderData = generatePlaceholderData(propertyInfo);
+        
+        setData({
+          info: propertyInfo,
+          violations: [], // Violations are now fetched separately by the ViolationsTab
+          ...placeholderData,
+        });
       } catch (err) {
+        console.error('Error fetching property data:', err);
         setError(err instanceof Error ? err.message : 'Failed to fetch property data');
       } finally {
         setLoading(false);

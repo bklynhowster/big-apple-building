@@ -74,7 +74,7 @@ export default function Results() {
                     value="violations" 
                     className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent py-3 px-6"
                   >
-                    Violations ({data.violations.length})
+                    Violations
                   </TabsTrigger>
                   <TabsTrigger 
                     value="ecb" 
@@ -104,7 +104,7 @@ export default function Results() {
                   <TabsContent value="violations" className="mt-0">
                     <Card>
                       <CardContent className="p-6">
-                        <ViolationsTab violations={data.violations} />
+                        <ViolationsTab bbl={data.info.bbl} />
                       </CardContent>
                     </Card>
                   </TabsContent>
