@@ -92,7 +92,7 @@ export default function Results() {
                     value="permits" 
                     className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent py-3 px-6"
                   >
-                    Permits ({data.permits.length})
+                    Permits
                   </TabsTrigger>
                 </TabsList>
 
@@ -128,7 +128,7 @@ export default function Results() {
                   <TabsContent value="permits" className="mt-0">
                     <Card>
                       <CardContent className="p-6">
-                        <PermitsTab permits={data.permits} />
+                        <PermitsTab bbl={data.info.bbl} />
                       </CardContent>
                     </Card>
                   </TabsContent>
