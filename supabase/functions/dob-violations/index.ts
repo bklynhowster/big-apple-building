@@ -104,7 +104,7 @@ serve(async (req) => {
     const params = url.searchParams;
 
     // Extract and validate parameters
-    const bbl = params.get('bbl');
+    let bbl = params.get('bbl');
     if (!bbl) {
       return new Response(
         JSON.stringify({ error: 'bbl parameter is required' }),
@@ -112,17 +112,20 @@ serve(async (req) => {
       );
     }
 
+    // Normalize BBL to 10 digits
+    bbl = bbl.toString().padStart(10, '0');
+
     if (!validateBBL(bbl)) {
       return new Response(
-        JSON.stringify({ error: 'bbl must be exactly 10 digits' }),
+        JSON.stringify({ error: 'bbl must be exactly 10 digits', received: bbl }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    // Parse BBL into components
+    // Parse BBL into components for the query
     const boro = bbl.charAt(0);
-    const block = bbl.slice(1, 6).replace(/^0+/, ''); // Remove leading zeros for query
-    const lot = bbl.slice(6, 10).replace(/^0+/, ''); // Remove leading zeros for query
+    const block = bbl.slice(1, 6);
+    const lot = bbl.slice(6, 10);
 
     // Parse pagination params
     let limit = parseInt(params.get('limit') || '50', 10);
@@ -137,15 +140,17 @@ serve(async (req) => {
     const status = params.get('status') || 'all';
     const keyword = params.get('q');
 
-    console.log(`Fetching DOB violations for BBL: ${bbl} (boro=${boro}, block=${block}, lot=${lot})`);
+    console.log(`=== DOB Violations Request ===`);
+    console.log(`BBL received: ${bbl}`);
+    console.log(`Parsed: boro=${boro}, block=${block}, lot=${lot}`);
 
-    // Build SoQL query
+    // Build SoQL query - the dataset uses separate boro, block, lot fields (not combined bbl)
     const whereConditions: string[] = [];
     
-    // BBL filter - match boro, block, lot
+    // Filter by boro, block, lot (without leading zeros for matching)
     whereConditions.push(`boro='${boro}'`);
-    whereConditions.push(`block='${block}'`);
-    whereConditions.push(`lot='${lot}'`);
+    whereConditions.push(`block='${block.replace(/^0+/, '') || '0'}'`);
+    whereConditions.push(`lot='${lot.replace(/^0+/, '') || '0'}'`);
 
     // Date filtering
     if (fromDate) {
@@ -177,10 +182,11 @@ serve(async (req) => {
       headers['X-App-Token'] = NYC_OPEN_DATA_APP_TOKEN;
     }
 
-    console.log(`Fetching from: ${dataUrl.toString()}`);
+    const finalQueryUrl = dataUrl.toString();
+    console.log(`SoQL query URL: ${finalQueryUrl}`);
 
     // Fetch data
-    const dataResponse = await fetch(dataUrl.toString(), { headers });
+    const dataResponse = await fetch(finalQueryUrl, { headers });
     if (!dataResponse.ok) {
       const errorText = await dataResponse.text();
       console.error(`NYC Open Data API error: ${dataResponse.status} - ${errorText}`);
@@ -194,7 +200,7 @@ serve(async (req) => {
     }
 
     const rawData = await dataResponse.json() as Record<string, unknown>[];
-    console.log(`Received ${rawData.length} records from API`);
+    console.log(`Received ${rawData.length} raw records from NYC Open Data`);
 
     // Determine if there are more results
     const hasMore = rawData.length > limit;

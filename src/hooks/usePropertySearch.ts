@@ -128,12 +128,15 @@ export function usePropertySearch() {
         const geocodeResult = await response.json();
         console.log('Geocode result:', geocodeResult);
 
+        // Normalize BBL to ensure 10 digits
+        const normalizedBBL = (geocodeResult.bbl || '').toString().padStart(10, '0');
+        
         propertyInfo = {
           address: geocodeResult.address,
           borough: geocodeResult.borough as Borough,
           block: geocodeResult.block,
           lot: geocodeResult.lot,
-          bbl: geocodeResult.bbl,
+          bbl: normalizedBBL,
           bin: geocodeResult.bin,
         };
 
