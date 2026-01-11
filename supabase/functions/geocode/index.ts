@@ -362,9 +362,17 @@ serve(async (req) => {
       const street = params.get('street') || '';
       const borough = params.get('borough') || '';
 
+      // Debug logging
+      console.log(`Received params - house: "${houseNumber}", street: "${street}", borough: "${borough}"`);
+
       if (!houseNumber || !street || !borough) {
         return new Response(
-          JSON.stringify({ error: 'house, street, and borough are required for address search' }),
+          JSON.stringify({ 
+            error: 'house, street, and borough are required for address search',
+            receivedHouse: houseNumber,
+            receivedStreet: street,
+            receivedBorough: borough,
+          }),
           { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
@@ -383,6 +391,9 @@ serve(async (req) => {
             details: geocodeResult.details,
             normalizedStreetTried: geocodeResult.normalizedStreetTried,
             userMessage: geocodeResult.userMessage,
+            receivedHouse: houseNumber,
+            receivedStreet: street,
+            receivedBorough: borough,
           }),
           { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
@@ -467,7 +478,15 @@ serve(async (req) => {
 
     console.log('Returning property info:', JSON.stringify(propertyInfo));
 
-    return new Response(JSON.stringify(propertyInfo), {
+    // Add debug fields to success response
+    const responseData = {
+      ...propertyInfo,
+      receivedHouse: params.get('house') || '',
+      receivedStreet: params.get('street') || '',
+      receivedBorough: params.get('borough') || '',
+    };
+
+    return new Response(JSON.stringify(responseData), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
 
