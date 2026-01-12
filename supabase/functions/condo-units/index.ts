@@ -5,585 +5,559 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-// NYC Digital Tax Map: Condominium Units dataset (the specific dataset requested)
+// DOF Digital Tax Map datasets (NYC Open Data)
+// - Condo complex context
+const CONDO_COMPLEX_DATASET_ID = 'p8u6-a6it';
+// - Unit-level lots
 const CONDO_UNITS_DATASET_ID = 'eguu-7ie3';
-// NYC PLUTO dataset for property info / condo detection
-const PLUTO_DATASET_ID = '64uk-42ks';
 
-// Schema cache
+// -------- Caches --------
+
 const schemaCache = new Map<string, { columns: Set<string>; timestamp: number }>();
 const SCHEMA_CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
 
-// Response cache
 const responseCache = new Map<string, { data: unknown; timestamp: number }>();
-const RESPONSE_CACHE_TTL = 60 * 60 * 1000; // 1 hour
+const RESPONSE_CACHE_TTL = 30 * 60 * 1000; // 30 minutes
 
-interface CondoUnit {
+// -------- Types --------
+
+export interface CondoUnit {
   unitBbl: string;
   borough: string;
   block: string;
   lot: string;
   unitLabel: string | null;
-  address: string | null;
   raw: Record<string, unknown>;
 }
 
-interface CondoUnitsResponse {
-  buildingBbl: string;
+export interface CondoUnitsListResponse {
+  inputBbl: string;
+  billingBbl: string | null;
+  inputIsUnitLot: boolean;
   isCondo: boolean;
-  buildingContextBbl: string | null;
-  billingLotBbl: string | null;
-  condoId: string | null;
   units: CondoUnit[];
   totalApprox: number;
-  notes: string[];
   requestId: string;
 }
 
-// Generate request ID
+type CondoKeyKind =
+  | { kind: 'condo_key'; column: string; value: string }
+  | { kind: 'condo_base_bbl_key'; column: string; value: string }
+  | { kind: 'condo_number'; column: string; value: string; baseBoro?: string; baseBlock?: string }
+  | { kind: 'condo_base_bbl'; column: string; value: string };
+
+interface CondoContext {
+  isCondo: boolean;
+  condoKey: CondoKeyKind | null;
+  billingBbl: string | null;
+  inputIsUnitLot: boolean;
+}
+
+// -------- Utilities --------
+
 function generateRequestId(): string {
   return crypto.randomUUID().slice(0, 8);
 }
 
-// Discover schema for a dataset
+function isValidBbl(bbl: string): boolean {
+  return /^\d{10}$/.test(bbl);
+}
+
+function parseBbl(bbl: string): { borough: string; block: string; lot: string } | null {
+  if (!isValidBbl(bbl)) return null;
+  return {
+    borough: bbl.slice(0, 1),
+    block: bbl.slice(1, 6),
+    lot: bbl.slice(6, 10),
+  };
+}
+
+function composeBbl(boro: string, block: string, lot: string): string {
+  return `${boro}${String(block).padStart(5, '0')}${String(lot).padStart(4, '0')}`;
+}
+
+function normalizeIntString(val: unknown): string {
+  if (val === null || val === undefined) return '';
+  const n = Number(String(val).trim());
+  if (Number.isFinite(n)) return String(Math.trunc(n));
+  return String(val).trim();
+}
+
+function discoverColumnSetFromRow(row: Record<string, unknown>): Set<string> {
+  return new Set(Object.keys(row).map((k) => k.toLowerCase()));
+}
+
 async function discoverSchema(datasetId: string, appToken: string): Promise<Set<string>> {
   const cacheKey = `schema:${datasetId}`;
   const cached = schemaCache.get(cacheKey);
-  if (cached && Date.now() - cached.timestamp < SCHEMA_CACHE_TTL) {
-    return cached.columns;
-  }
+  if (cached && Date.now() - cached.timestamp < SCHEMA_CACHE_TTL) return cached.columns;
 
   const url = `https://data.cityofnewyork.us/resource/${datasetId}.json?$limit=1`;
-  const headers: Record<string, string> = { 'Accept': 'application/json' };
+  const headers: Record<string, string> = { Accept: 'application/json' };
   if (appToken) headers['X-App-Token'] = appToken;
 
   try {
-    const response = await fetch(url, { headers });
-    if (!response.ok) {
-      console.error(`[discoverSchema] Failed for ${datasetId}: ${response.status}`);
+    const resp = await fetch(url, { headers });
+    if (!resp.ok) {
+      console.error(`[discoverSchema] ${datasetId} failed: ${resp.status}`);
       return new Set();
     }
-    const rows = await response.json();
-    if (!Array.isArray(rows) || rows.length === 0) {
-      return new Set();
-    }
-    const columns = new Set(Object.keys(rows[0]).map(k => k.toLowerCase()));
+    const rows = await resp.json();
+    if (!Array.isArray(rows) || rows.length === 0) return new Set();
+
+    const columns = discoverColumnSetFromRow(rows[0]);
     schemaCache.set(cacheKey, { columns, timestamp: Date.now() });
     console.log(`[discoverSchema] ${datasetId}: ${Array.from(columns).join(', ')}`);
     return columns;
-  } catch (err) {
-    console.error(`[discoverSchema] Error:`, err);
+  } catch (e) {
+    console.error(`[discoverSchema] ${datasetId} error:`, e);
     return new Set();
   }
 }
 
-// Find first matching column from candidates
-function findColumn(columns: Set<string>, candidates: string[]): string | null {
+function hasCol(columns: Set<string>, col: string): boolean {
+  return columns.has(col.toLowerCase());
+}
+
+function firstCol(columns: Set<string>, candidates: string[]): string | null {
   for (const c of candidates) {
-    if (columns.has(c.toLowerCase())) return c;
+    if (hasCol(columns, c)) return c;
   }
   return null;
 }
 
-// Parse BBL into components
-function parseBbl(bbl: string): { borough: string; block: string; lot: string } | null {
-  if (!bbl || bbl.length !== 10 || !/^\d{10}$/.test(bbl)) {
-    return null;
-  }
-  return {
-    borough: bbl.substring(0, 1),
-    block: bbl.substring(1, 6),
-    lot: bbl.substring(6, 10),
-  };
+function escapeSoqlLiteral(value: string): string {
+  // Minimal escaping for Socrata SOQL string literals.
+  return value.replace(/'/g, "''");
 }
 
-// Compose BBL from parts
-function composeBbl(borough: string, block: string, lot: string): string {
-  return `${borough}${block.padStart(5, '0')}${lot.padStart(4, '0')}`;
-}
-
-// Determine if property is a condo based on building class
-function isCondoBuildingClass(buildingClass: string | null): boolean {
-  if (!buildingClass) return false;
-  const cls = buildingClass.toUpperCase().trim();
-  // R0-R9 are condo building classes, RR = Condominium Rentals
-  return /^R[0-9]$/.test(cls) || cls === 'RR' || cls === 'RS';
-}
-
-// Query PLUTO for property info
-async function queryPlutoProperty(bbl: string, appToken: string): Promise<{
-  found: boolean;
-  isCondo: boolean;
-  buildingClass: string | null;
-  landUse: string | null;
-  condoNo: string | null;
-  block: string | null;
-  borough: string | null;
-  address: string | null;
-  raw: Record<string, unknown>;
-}> {
-  const columns = await discoverSchema(PLUTO_DATASET_ID, appToken);
-  
-  const bblCol = findColumn(columns, ['bbl']);
-  if (!bblCol) {
-    console.error('[queryPlutoProperty] bbl column not found in PLUTO');
-    return { found: false, isCondo: false, buildingClass: null, landUse: null, condoNo: null, block: null, borough: null, address: null, raw: {} };
-  }
-  
-  // Find available columns
-  const bldgClassCol = findColumn(columns, ['bldgclass', 'buildingclass', 'building_class']);
-  const landUseCol = findColumn(columns, ['landuse', 'land_use']);
-  const condoNoCol = findColumn(columns, ['condono', 'condo_no', 'condonumber']);
-  const blockCol = findColumn(columns, ['block']);
-  const boroCol = findColumn(columns, ['borocode', 'borough', 'boro']);
-  const addressCol = findColumn(columns, ['address']);
-  
-  const selectCols = [bblCol, bldgClassCol, landUseCol, condoNoCol, blockCol, boroCol, addressCol].filter(Boolean);
-  const url = `https://data.cityofnewyork.us/resource/${PLUTO_DATASET_ID}.json?$select=${selectCols.join(',')}&$where=${bblCol}='${bbl}'&$limit=1`;
-  
-  const headers: Record<string, string> = { 'Accept': 'application/json' };
+async function soqlFetch(datasetId: string, query: URLSearchParams, appToken: string) {
+  const url = `https://data.cityofnewyork.us/resource/${datasetId}.json?${query.toString()}`;
+  const headers: Record<string, string> = { Accept: 'application/json' };
   if (appToken) headers['X-App-Token'] = appToken;
-  
-  try {
-    const response = await fetch(url, { headers });
-    if (!response.ok) {
-      console.error(`[queryPlutoProperty] Error: ${response.status}`);
-      return { found: false, isCondo: false, buildingClass: null, landUse: null, condoNo: null, block: null, borough: null, address: null, raw: {} };
-    }
-    
-    const rows = await response.json();
-    if (!Array.isArray(rows) || rows.length === 0) {
-      return { found: false, isCondo: false, buildingClass: null, landUse: null, condoNo: null, block: null, borough: null, address: null, raw: {} };
-    }
-    
-    const row = rows[0];
-    const buildingClass = bldgClassCol ? String(row[bldgClassCol] || '') : null;
-    const landUse = landUseCol ? String(row[landUseCol] || '') : null;
-    const condoNo = condoNoCol ? String(row[condoNoCol] || '') : null;
-    const block = blockCol ? String(row[blockCol] || '') : null;
-    const borough = boroCol ? String(row[boroCol] || '') : null;
-    const address = addressCol ? String(row[addressCol] || '') : null;
-    
-    // Determine condo status - ensure it's a boolean
-    const hasCondoClass = isCondoBuildingClass(buildingClass);
-    const hasCondoLandUse = landUse === '04';
-    const hasCondoNo = Boolean(condoNo && condoNo !== '0' && condoNo !== '');
-    const isCondo = hasCondoClass || hasCondoLandUse || hasCondoNo;
-    
+  const resp = await fetch(url, { headers });
+  return { resp, url };
+}
+
+async function soqlCount(datasetId: string, where: string, appToken: string): Promise<number> {
+  const q = new URLSearchParams();
+  q.set('$select', 'count(*) as __count');
+  q.set('$where', where);
+  const { resp } = await soqlFetch(datasetId, q, appToken);
+  if (!resp.ok) return 0;
+  const rows = await resp.json();
+  const raw = Array.isArray(rows) && rows[0] ? rows[0].__count ?? rows[0].count : '0';
+  const n = parseInt(String(raw || '0'), 10);
+  return Number.isFinite(n) ? n : 0;
+}
+
+// -------- Condo context resolution (DTM first, schema-safe) --------
+
+function looksLikeUnitLot(lot4: string): boolean {
+  const lotNum = parseInt(lot4, 10);
+  return Number.isFinite(lotNum) && lotNum >= 1001 && lotNum <= 6999;
+}
+
+function looksLikeBillingLot(lot4: string): boolean {
+  const lotNum = parseInt(lot4, 10);
+  return Number.isFinite(lotNum) && lotNum >= 7501 && lotNum <= 7599;
+}
+
+function pickBestCondoKeyFromUnitsRow(
+  columns: Set<string>,
+  row: Record<string, unknown>
+): CondoKeyKind | null {
+  // Prefer strongest keys present in the unit dataset itself.
+  if (hasCol(columns, 'condo_key') && row['condo_key']) {
+    return { kind: 'condo_key', column: 'condo_key', value: String(row['condo_key']) };
+  }
+  if (hasCol(columns, 'condo_base_bbl_key') && row['condo_base_bbl_key']) {
     return {
-      found: true,
-      isCondo,
-      buildingClass,
-      landUse,
-      condoNo: condoNo && condoNo !== '0' && condoNo !== '' ? condoNo : null,
-      block,
-      borough,
-      address,
-      raw: row,
+      kind: 'condo_base_bbl_key',
+      column: 'condo_base_bbl_key',
+      value: String(row['condo_base_bbl_key']),
     };
-  } catch (err) {
-    console.error('[queryPlutoProperty] Error:', err);
-    return { found: false, isCondo: false, buildingClass: null, landUse: null, condoNo: null, block: null, borough: null, address: null, raw: {} };
   }
+  if (hasCol(columns, 'condo_number') && row['condo_number']) {
+    const baseBoro = hasCol(columns, 'condo_base_boro') ? normalizeIntString(row['condo_base_boro']) : undefined;
+    const baseBlock = hasCol(columns, 'condo_base_block') ? normalizeIntString(row['condo_base_block']) : undefined;
+    return {
+      kind: 'condo_number',
+      column: 'condo_number',
+      value: String(row['condo_number']),
+      baseBoro: baseBoro || undefined,
+      baseBlock: baseBlock || undefined,
+    };
+  }
+  if (hasCol(columns, 'condo_base_bbl') && row['condo_base_bbl']) {
+    return {
+      kind: 'condo_base_bbl',
+      column: 'condo_base_bbl',
+      value: String(row['condo_base_bbl']),
+    };
+  }
+  return null;
 }
 
-// Query Digital Tax Map: Condominium Units dataset
-async function queryCondoUnitsFromDTM(
-  borough: string,
-  block: string,
-  condoNo: string | null,
-  appToken: string
-): Promise<{ units: CondoUnit[]; totalApprox: number }> {
-  const columns = await discoverSchema(CONDO_UNITS_DATASET_ID, appToken);
-  
-  if (columns.size === 0) {
-    console.log('[queryCondoUnitsFromDTM] No columns discovered - dataset may be unavailable');
-    return { units: [], totalApprox: 0 };
+function billingBblFromUnitsRow(columns: Set<string>, row: Record<string, unknown>): string | null {
+  if (hasCol(columns, 'condo_base_bbl') && row['condo_base_bbl']) {
+    const v = String(row['condo_base_bbl']).trim();
+    return isValidBbl(v) ? v : null;
   }
-  
-  console.log(`[queryCondoUnitsFromDTM] Available columns: ${Array.from(columns).join(', ')}`);
-  
-  // Find available columns for filtering and selection
-  const bblCol = findColumn(columns, ['bbl', 'condo_bbl', 'unit_bbl', 'tax_lot_bbl']);
-  const boroCol = findColumn(columns, ['boro', 'borough', 'borough_code', 'borocode']);
-  const blockCol = findColumn(columns, ['block', 'tax_block', 'condo_block']);
-  const lotCol = findColumn(columns, ['lot', 'tax_lot', 'condo_lot', 'unit_lot']);
-  const condoNoCol = findColumn(columns, ['condo_no', 'condono', 'condo_number', 'condo_id', 'condonumber']);
-  const unitDesigCol = findColumn(columns, ['unit_desig', 'unit_designation', 'unit', 'apt', 'apartment', 'unit_number']);
-  const addressCol = findColumn(columns, ['address', 'street_address', 'unit_address']);
-  
-  // Build WHERE clause based on available columns
-  let whereClause = '';
-  
-  // Try condo number first (most specific)
-  if (condoNo && condoNoCol) {
-    whereClause = `${condoNoCol}='${condoNo}'`;
-    console.log(`[queryCondoUnitsFromDTM] Using condo number filter: ${condoNoCol}='${condoNo}'`);
-  } 
-  // Fall back to borough + block (less specific but should work)
-  else if (boroCol && blockCol) {
-    whereClause = `${boroCol}='${borough}' AND ${blockCol}='${parseInt(block, 10)}'`;
-    console.log(`[queryCondoUnitsFromDTM] Using borough+block filter: ${whereClause}`);
-  }
-  // Last resort: just borough
-  else if (boroCol) {
-    whereClause = `${boroCol}='${borough}'`;
-    console.log(`[queryCondoUnitsFromDTM] Using borough only filter: ${whereClause}`);
-  } else {
-    console.log('[queryCondoUnitsFromDTM] Cannot build WHERE clause - missing required columns');
-    return { units: [], totalApprox: 0 };
-  }
-  
-  // Build select clause
-  const selectCols: string[] = [];
-  if (bblCol) selectCols.push(bblCol);
-  if (boroCol) selectCols.push(boroCol);
-  if (blockCol) selectCols.push(blockCol);
-  if (lotCol) selectCols.push(lotCol);
-  if (unitDesigCol) selectCols.push(unitDesigCol);
-  if (addressCol) selectCols.push(addressCol);
-  if (condoNoCol) selectCols.push(condoNoCol);
-  
-  // Add any other columns we haven't selected yet (up to a reasonable limit)
-  for (const col of columns) {
-    if (!selectCols.includes(col) && selectCols.length < 15) {
-      selectCols.push(col);
+
+  const boroCol = hasCol(columns, 'condo_base_boro') ? 'condo_base_boro' : null;
+  const blockCol = hasCol(columns, 'condo_base_block') ? 'condo_base_block' : null;
+  const lotCol = hasCol(columns, 'condo_base_lot') ? 'condo_base_lot' : null;
+
+  if (boroCol && blockCol && lotCol) {
+    const boro = normalizeIntString(row[boroCol]);
+    const block = normalizeIntString(row[blockCol]);
+    const lot = normalizeIntString(row[lotCol]);
+    if (boro && block && lot) {
+      const bbl = composeBbl(boro, block, lot);
+      return isValidBbl(bbl) ? bbl : null;
     }
   }
-  
-  // First, get count
-  let totalApprox = 0;
-  try {
-    const countUrl = `https://data.cityofnewyork.us/resource/${CONDO_UNITS_DATASET_ID}.json?$select=count(*)&$where=${encodeURIComponent(whereClause)}`;
-    const countResp = await fetch(countUrl, {
-      headers: { 'Accept': 'application/json', ...(appToken ? { 'X-App-Token': appToken } : {}) },
-    });
-    if (countResp.ok) {
-      const countData = await countResp.json();
-      if (Array.isArray(countData) && countData.length > 0) {
-        totalApprox = parseInt(countData[0].count || '0', 10);
+
+  return null;
+}
+
+async function resolveCondoContext(inputBbl: string, appToken: string, requestId: string): Promise<CondoContext> {
+  const parsed = parseBbl(inputBbl);
+  if (!parsed) return { isCondo: false, condoKey: null, billingBbl: null, inputIsUnitLot: false };
+
+  const unitsCols = await discoverSchema(CONDO_UNITS_DATASET_ID, appToken);
+  const unitBblCol = hasCol(unitsCols, 'unit_bbl') ? 'unit_bbl' : null;
+
+  const heuristics = {
+    lotLooksLikeUnit: looksLikeUnitLot(parsed.lot),
+    lotLooksLikeBilling: looksLikeBillingLot(parsed.lot),
+  };
+
+  // 1) If possible, treat as unit lookup first (strongest way to resolve condo key)
+  if (unitBblCol) {
+    const selectCols = [
+      ...(['condo_key', 'condo_base_bbl_key', 'condo_number', 'condo_base_bbl', 'condo_base_boro', 'condo_base_block', 'condo_base_lot']
+        .filter((c) => hasCol(unitsCols, c))),
+    ];
+
+    const q = new URLSearchParams();
+    q.set('$select', selectCols.join(',') || unitBblCol);
+    q.set('$where', `${unitBblCol}='${escapeSoqlLiteral(inputBbl)}'`);
+    q.set('$limit', '1');
+
+    const { resp, url } = await soqlFetch(CONDO_UNITS_DATASET_ID, q, appToken);
+    if (resp.ok) {
+      const rows = await resp.json();
+      if (Array.isArray(rows) && rows.length > 0) {
+        const row = rows[0] as Record<string, unknown>;
+        const billingBbl = billingBblFromUnitsRow(unitsCols, row);
+        const condoKey = pickBestCondoKeyFromUnitsRow(unitsCols, row);
+
+        console.log(`[${requestId}] resolveCondoContext: matched as unit lot via ${unitBblCol}; url=${url}`);
+        return {
+          isCondo: true,
+          condoKey,
+          billingBbl,
+          inputIsUnitLot: true,
+        };
       }
     }
-  } catch (e) {
-    console.error('[queryCondoUnitsFromDTM] Count query failed:', e);
   }
-  
-  // Fetch units (paginated, get all)
-  const allUnits: CondoUnit[] = [];
-  let offset = 0;
-  const limit = 1000;
-  
-  while (true) {
-    const url = `https://data.cityofnewyork.us/resource/${CONDO_UNITS_DATASET_ID}.json?$select=${selectCols.join(',')}&$where=${encodeURIComponent(whereClause)}&$order=${bblCol || lotCol || 'null'}&$limit=${limit}&$offset=${offset}`;
-    
-    const headers: Record<string, string> = { 'Accept': 'application/json' };
-    if (appToken) headers['X-App-Token'] = appToken;
-    
-    try {
-      const response = await fetch(url, { headers });
-      if (!response.ok) {
-        console.error(`[queryCondoUnitsFromDTM] Error: ${response.status}`);
-        break;
-      }
-      
-      const rows = await response.json();
-      if (!Array.isArray(rows) || rows.length === 0) {
-        break;
-      }
-      
-      for (const row of rows) {
-        // Extract BBL - might be directly available or need to be composed
-        let unitBbl = bblCol ? String(row[bblCol] || '') : '';
-        const rowBorough = boroCol ? String(row[boroCol] || '') : borough;
-        const rowBlock = blockCol ? String(row[blockCol] || '') : block;
-        const rowLot = lotCol ? String(row[lotCol] || '') : '';
-        
-        // If no BBL column, try to compose it
-        if (!unitBbl && rowBorough && rowBlock && rowLot) {
-          unitBbl = composeBbl(rowBorough, rowBlock, rowLot);
-        }
-        
-        // Skip if we couldn't determine BBL
-        if (!unitBbl || unitBbl.length !== 10) {
-          continue;
-        }
-        
-        // Extract unit label from available fields
-        let unitLabel: string | null = null;
-        if (unitDesigCol && row[unitDesigCol]) {
-          unitLabel = String(row[unitDesigCol]);
-        }
-        
-        // Extract address
-        let unitAddress: string | null = null;
-        if (addressCol && row[addressCol]) {
-          unitAddress = String(row[addressCol]);
-        }
-        
-        allUnits.push({
-          unitBbl,
-          borough: rowBorough,
-          block: rowBlock.replace(/^0+/, '') || '0',
-          lot: rowLot.replace(/^0+/, '') || '0',
-          unitLabel,
-          address: unitAddress,
-          raw: row,
-        });
-      }
-      
-      if (rows.length < limit) {
-        break; // No more pages
-      }
-      offset += limit;
-      
-      // Safety limit - don't fetch more than 5000 units
-      if (allUnits.length >= 5000) {
-        console.log('[queryCondoUnitsFromDTM] Reached safety limit of 5000 units');
-        break;
-      }
-    } catch (err) {
-      console.error('[queryCondoUnitsFromDTM] Error:', err);
-      break;
+
+  // 2) Treat as condo base / billing record (find any units pointing at this base)
+  const baseWhereCandidates: string[] = [];
+
+  if (hasCol(unitsCols, 'condo_base_bbl')) {
+    baseWhereCandidates.push(`condo_base_bbl='${escapeSoqlLiteral(inputBbl)}'`);
+  }
+
+  if (hasCol(unitsCols, 'condo_base_boro') && hasCol(unitsCols, 'condo_base_block') && hasCol(unitsCols, 'condo_base_lot')) {
+    const boro = normalizeIntString(parsed.borough);
+    const block = normalizeIntString(parsed.block);
+    const lot = normalizeIntString(parsed.lot);
+    // Socrata often stores numeric columns without leading zeros.
+    baseWhereCandidates.push(
+      `condo_base_boro='${escapeSoqlLiteral(boro)}' AND condo_base_block='${escapeSoqlLiteral(String(parseInt(block, 10)))}' AND condo_base_lot='${escapeSoqlLiteral(String(parseInt(lot, 10)))}'`
+    );
+  }
+
+  for (const where of baseWhereCandidates) {
+    const count = await soqlCount(CONDO_UNITS_DATASET_ID, where, appToken);
+    if (count > 0) {
+      // Fetch a row to extract best key / billingBbl
+      const selectCols = [
+        ...(['condo_key', 'condo_base_bbl_key', 'condo_number', 'condo_base_bbl', 'condo_base_boro', 'condo_base_block', 'condo_base_lot']
+          .filter((c) => hasCol(unitsCols, c))),
+      ];
+      const q = new URLSearchParams();
+      q.set('$select', selectCols.join(','));
+      q.set('$where', where);
+      q.set('$limit', '1');
+
+      const { resp, url } = await soqlFetch(CONDO_UNITS_DATASET_ID, q, appToken);
+      const rows = resp.ok ? await resp.json() : [];
+      const row = Array.isArray(rows) && rows[0] ? (rows[0] as Record<string, unknown>) : {};
+
+      const condoKey = pickBestCondoKeyFromUnitsRow(unitsCols, row);
+      const billingBbl = billingBblFromUnitsRow(unitsCols, row) || inputBbl;
+
+      console.log(`[${requestId}] resolveCondoContext: matched as base/billing via units dataset; where=${where}; url=${url}`);
+      return {
+        isCondo: true,
+        condoKey,
+        billingBbl,
+        inputIsUnitLot: false,
+      };
     }
   }
-  
-  // Deduplicate by unitBbl
-  const uniqueUnits = new Map<string, CondoUnit>();
-  for (const unit of allUnits) {
-    if (!uniqueUnits.has(unit.unitBbl)) {
-      uniqueUnits.set(unit.unitBbl, unit);
+
+  // 3) As a last resort, consult condo complex dataset (p8u6-a6it) to confirm condo/billing context.
+  // This keeps us aligned with the requested DOF datasets even when the unit dataset doesn't match.
+  const complexCols = await discoverSchema(CONDO_COMPLEX_DATASET_ID, appToken);
+  if (complexCols.size > 0) {
+    // Find likely "billing bbl" / "bbl" column without guessing: discover then pick.
+    const billingBblCol = firstCol(complexCols, ['billing_bbl', 'billingbbl', 'condo_base_bbl', 'condo_bbl', 'bbl']);
+    const condoKeyCol = firstCol(complexCols, ['condo_key', 'condo_base_bbl_key', 'condo_number', 'condonumber', 'condo_no', 'condono']);
+
+    if (billingBblCol) {
+      const q = new URLSearchParams();
+      const selectCols = [billingBblCol, condoKeyCol].filter(Boolean) as string[];
+      q.set('$select', selectCols.join(',') || billingBblCol);
+      q.set('$where', `${billingBblCol}='${escapeSoqlLiteral(inputBbl)}'`);
+      q.set('$limit', '1');
+
+      const { resp, url } = await soqlFetch(CONDO_COMPLEX_DATASET_ID, q, appToken);
+      if (resp.ok) {
+        const rows = await resp.json();
+        if (Array.isArray(rows) && rows.length > 0) {
+          const row = rows[0] as Record<string, unknown>;
+          const billing = String(row[billingBblCol] || '').trim();
+          const billingBbl = isValidBbl(billing) ? billing : null;
+
+          let condoKey: CondoKeyKind | null = null;
+          if (condoKeyCol && row[condoKeyCol]) {
+            if (condoKeyCol === 'condo_key') condoKey = { kind: 'condo_key', column: condoKeyCol, value: String(row[condoKeyCol]) };
+            else if (condoKeyCol === 'condo_base_bbl_key') condoKey = { kind: 'condo_base_bbl_key', column: condoKeyCol, value: String(row[condoKeyCol]) };
+            else condoKey = { kind: 'condo_number', column: condoKeyCol, value: String(row[condoKeyCol]) };
+          }
+
+          console.log(`[${requestId}] resolveCondoContext: matched in condo complex dataset; url=${url}`);
+
+          // inputIsUnitLot best-effort from heuristic
+          return {
+            isCondo: true,
+            condoKey,
+            billingBbl: billingBbl || inputBbl,
+            inputIsUnitLot: heuristics.lotLooksLikeUnit && !heuristics.lotLooksLikeBilling,
+          };
+        }
+      }
     }
   }
-  
-  return { 
-    units: Array.from(uniqueUnits.values()).sort((a, b) => a.unitBbl.localeCompare(b.unitBbl)),
-    totalApprox: totalApprox || allUnits.length,
+
+  // No evidence this is a condo in DTM datasets.
+  console.log(`[${requestId}] resolveCondoContext: no DTM matches; heuristics=${JSON.stringify(heuristics)}`);
+  return {
+    isCondo: false,
+    condoKey: null,
+    billingBbl: null,
+    inputIsUnitLot: false,
   };
 }
 
-// Fallback: Query units from PLUTO by condo number or block with R-class buildings
-async function queryCondoUnitsFromPluto(
-  borough: string,
-  block: string,
-  condoNo: string | null,
-  appToken: string
-): Promise<{ units: CondoUnit[]; totalApprox: number }> {
-  const columns = await discoverSchema(PLUTO_DATASET_ID, appToken);
-  
-  const bblCol = findColumn(columns, ['bbl']);
-  const boroCol = findColumn(columns, ['borocode', 'borough', 'boro']);
-  const blockCol = findColumn(columns, ['block']);
-  const lotCol = findColumn(columns, ['lot']);
-  const condoNoCol = findColumn(columns, ['condono', 'condo_no']);
-  const bldgClassCol = findColumn(columns, ['bldgclass', 'buildingclass']);
-  const addressCol = findColumn(columns, ['address']);
-  
-  if (!bblCol) {
-    return { units: [], totalApprox: 0 };
-  }
-  
-  let whereClause: string;
-  if (condoNo && condoNoCol) {
-    whereClause = `${condoNoCol}='${condoNo}'`;
-    if (boroCol) whereClause += ` AND ${boroCol}='${borough}'`;
-  } else if (boroCol && blockCol) {
-    whereClause = `${boroCol}='${borough}' AND ${blockCol}='${parseInt(block, 10)}'`;
-    // Filter by R-class building codes if available
-    if (bldgClassCol) {
-      whereClause += ` AND ${bldgClassCol} LIKE 'R%'`;
+// -------- Unit enumeration (paginated) --------
+
+function buildUnitsWhereClause(
+  unitsCols: Set<string>,
+  ctx: CondoContext,
+  requestId: string
+): { where: string | null; reason: string } {
+  // Prefer strongest key if it can be applied to the units dataset.
+  if (ctx.condoKey && hasCol(unitsCols, ctx.condoKey.column)) {
+    if (ctx.condoKey.kind === 'condo_number') {
+      // If we have base boro/block in the units dataset, include them to reduce collisions.
+      const clauses: string[] = [`${ctx.condoKey.column}='${escapeSoqlLiteral(ctx.condoKey.value)}'`];
+      if (ctx.condoKey.baseBoro && hasCol(unitsCols, 'condo_base_boro')) {
+        clauses.push(`condo_base_boro='${escapeSoqlLiteral(ctx.condoKey.baseBoro)}'`);
+      }
+      if (ctx.condoKey.baseBlock && hasCol(unitsCols, 'condo_base_block')) {
+        clauses.push(`condo_base_block='${escapeSoqlLiteral(String(parseInt(ctx.condoKey.baseBlock, 10)))}'`);
+      }
+      return { where: clauses.join(' AND '), reason: 'condo_number(+base)' };
     }
-  } else {
-    return { units: [], totalApprox: 0 };
+
+    return {
+      where: `${ctx.condoKey.column}='${escapeSoqlLiteral(ctx.condoKey.value)}'`,
+      reason: ctx.condoKey.kind,
+    };
   }
-  
-  const selectCols = [bblCol, lotCol, addressCol].filter(Boolean);
-  const url = `https://data.cityofnewyork.us/resource/${PLUTO_DATASET_ID}.json?$select=${selectCols.join(',')}&$where=${encodeURIComponent(whereClause)}&$order=${bblCol}&$limit=500`;
-  
-  const headers: Record<string, string> = { 'Accept': 'application/json' };
-  if (appToken) headers['X-App-Token'] = appToken;
-  
-  try {
-    const response = await fetch(url, { headers });
-    if (!response.ok) {
-      return { units: [], totalApprox: 0 };
-    }
-    
-    const rows = await response.json();
-    if (!Array.isArray(rows)) return { units: [], totalApprox: 0 };
-    
-    const units = rows.map((row: Record<string, unknown>) => {
-      const unitBbl = String(row[bblCol as string] || '');
-      const parsed = parseBbl(unitBbl);
-      return {
-        unitBbl,
-        borough: parsed?.borough || borough,
-        block: parsed?.block?.replace(/^0+/, '') || block.replace(/^0+/, ''),
-        lot: parsed?.lot?.replace(/^0+/, '') || String(row[lotCol as string] || '').replace(/^0+/, ''),
-        unitLabel: null,
-        address: addressCol ? String(row[addressCol] || '') : null,
-        raw: row,
-      };
-    }).filter((u: CondoUnit) => u.unitBbl.length === 10);
-    
-    return { units, totalApprox: units.length };
-  } catch (err) {
-    console.error('[queryCondoUnitsFromPluto] Error:', err);
-    return { units: [], totalApprox: 0 };
+
+  // Fallback: condo_base_bbl is the most direct "billing bbl" linkage in the unit dataset.
+  if (ctx.billingBbl && hasCol(unitsCols, 'condo_base_bbl')) {
+    return { where: `condo_base_bbl='${escapeSoqlLiteral(ctx.billingBbl)}'`, reason: 'condo_base_bbl' };
   }
+
+  console.log(`[${requestId}] buildUnitsWhereClause: unable to build where (missing columns)`);
+  return { where: null, reason: 'missing_columns' };
+}
+
+function normalizeUnitFromRow(unitsCols: Set<string>, row: Record<string, unknown>): CondoUnit | null {
+  const unitBblCol = hasCol(unitsCols, 'unit_bbl') ? 'unit_bbl' : null;
+  if (!unitBblCol) return null;
+
+  const unitBbl = String(row[unitBblCol] || '').trim();
+  if (!isValidBbl(unitBbl)) return null;
+
+  const parsed = parseBbl(unitBbl);
+  if (!parsed) return null;
+
+  const unitLabelCol = firstCol(unitsCols, ['unit_designation', 'unit_desig', 'unit', 'apt', 'apartment']);
+
+  const labelRaw = unitLabelCol ? row[unitLabelCol] : null;
+  const unitLabel = labelRaw !== null && labelRaw !== undefined && String(labelRaw).trim() !== ''
+    ? String(labelRaw).trim()
+    : null;
+
+  return {
+    unitBbl,
+    borough: parsed.borough,
+    block: String(parseInt(parsed.block, 10)),
+    lot: String(parseInt(parsed.lot, 10)),
+    unitLabel,
+    raw: row,
+  };
 }
 
 Deno.serve(async (req) => {
   const requestId = generateRequestId();
-  console.log(`[${requestId}] condo-units request received`);
-  
+
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
-  
+
   try {
     const url = new URL(req.url);
-    // Support both ?bbl= and ?buildingBbl= parameters
-    const bbl = url.searchParams.get('bbl') || url.searchParams.get('buildingBbl');
-    
-    // Validate BBL
-    if (!bbl || !/^\d{10}$/.test(bbl)) {
+
+    // Required by spec
+    const bbl = (url.searchParams.get('bbl') || '').trim();
+    const limitRaw = url.searchParams.get('limit');
+    const offsetRaw = url.searchParams.get('offset');
+
+    if (!isValidBbl(bbl)) {
       return new Response(
-        JSON.stringify({
-          error: 'Invalid BBL',
-          userMessage: 'BBL must be exactly 10 digits.',
-          requestId,
-        }),
+        JSON.stringify({ error: 'Invalid BBL', userMessage: 'BBL must be exactly 10 digits.', requestId }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
-    
-    // Check cache
-    const cacheKey = `condo-units-${bbl}`;
+
+    const limit = Math.min(Math.max(parseInt(limitRaw || '200', 10) || 200, 1), 1000);
+    const offset = Math.max(parseInt(offsetRaw || '0', 10) || 0, 0);
+
+    const cacheKey = `condo-units:v2:${bbl}:${limit}:${offset}`;
     const cached = responseCache.get(cacheKey);
     if (cached && Date.now() - cached.timestamp < RESPONSE_CACHE_TTL) {
-      console.log(`[${requestId}] Returning cached response`);
       return new Response(JSON.stringify(cached.data), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
-    
+
     const appToken = Deno.env.get('NYC_OPEN_DATA_APP_TOKEN') || '';
-    const parsed = parseBbl(bbl);
-    
-    if (!parsed) {
+    const ctx = await resolveCondoContext(bbl, appToken, requestId);
+
+    const unitsCols = await discoverSchema(CONDO_UNITS_DATASET_ID, appToken);
+
+    if (!ctx.isCondo) {
+      const resp: CondoUnitsListResponse = {
+        inputBbl: bbl,
+        billingBbl: null,
+        inputIsUnitLot: false,
+        isCondo: false,
+        units: [],
+        totalApprox: 0,
+        requestId,
+      };
+      responseCache.set(cacheKey, { data: resp, timestamp: Date.now() });
+      return new Response(JSON.stringify(resp), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    const { where, reason } = buildUnitsWhereClause(unitsCols, ctx, requestId);
+    if (!where) {
+      // Condo confirmed but can't query units due to schema mismatch.
+      console.log(`[${requestId}] Condo confirmed but cannot build unit WHERE. unitsCols=${Array.from(unitsCols).join(',')}`);
+      const resp: CondoUnitsListResponse = {
+        inputBbl: bbl,
+        billingBbl: ctx.billingBbl,
+        inputIsUnitLot: ctx.inputIsUnitLot,
+        isCondo: true,
+        units: [],
+        totalApprox: 0,
+        requestId,
+      };
+      responseCache.set(cacheKey, { data: resp, timestamp: Date.now() });
+      return new Response(JSON.stringify(resp), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    const totalApprox = await soqlCount(CONDO_UNITS_DATASET_ID, where, appToken);
+
+    const selectCols = [
+      ...(['unit_bbl', 'unit_boro', 'unit_block', 'unit_lot', 'unit_designation'].filter((c) => hasCol(unitsCols, c))),
+    ];
+
+    // Keep raw minimally large, but still provide a meaningful raw record.
+    // We include the full row from Socrata response (within the selected cols); this satisfies `raw`.
+    const q = new URLSearchParams();
+    q.set('$select', selectCols.join(',') || 'unit_bbl');
+    q.set('$where', where);
+    if (hasCol(unitsCols, 'unit_bbl')) q.set('$order', 'unit_bbl');
+    q.set('$limit', String(limit));
+    q.set('$offset', String(offset));
+
+    const { resp: unitsResp, url: unitsUrl } = await soqlFetch(CONDO_UNITS_DATASET_ID, q, appToken);
+    if (!unitsResp.ok) {
+      console.log(`[${requestId}] Units query failed: status=${unitsResp.status}; url=${unitsUrl}`);
       return new Response(
-        JSON.stringify({
-          error: 'Invalid BBL format',
-          userMessage: 'Could not parse BBL.',
-          requestId,
-        }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        JSON.stringify({ error: 'Upstream error', userMessage: 'Unable to load condo units right now.', requestId }),
+        { status: 502, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
-    
-    const notes: string[] = [];
-    
-    // Step 1: Query PLUTO for property info and condo detection
-    const plutoInfo = await queryPlutoProperty(bbl, appToken);
-    
-    if (!plutoInfo.found) {
-      notes.push('Property not found in PLUTO dataset.');
-      const response: CondoUnitsResponse = {
-        buildingBbl: bbl,
-        isCondo: false,
-        buildingContextBbl: null,
-        billingLotBbl: null,
-        condoId: null,
-        units: [],
-        totalApprox: 0,
-        notes,
-        requestId,
-      };
-      return new Response(JSON.stringify(response), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
-    
-    // Check if it's a condo
-    if (!plutoInfo.isCondo) {
-      notes.push('This property is not classified as a condominium based on building class and land use indicators.');
-      notes.push('Multifamily rental buildings typically have a single BBL with multiple residential units, not separate tax lots per apartment.');
-      
-      const response: CondoUnitsResponse = {
-        buildingBbl: bbl,
-        isCondo: false,
-        buildingContextBbl: bbl,
-        billingLotBbl: null,
-        condoId: null,
-        units: [],
-        totalApprox: 0,
-        notes,
-        requestId,
-      };
-      
-      responseCache.set(cacheKey, { data: response, timestamp: Date.now() });
-      return new Response(JSON.stringify(response), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
-    
-    // It's a condo - try to enumerate units
-    notes.push(`Condominium detected (Building Class: ${plutoInfo.buildingClass || 'N/A'}, Land Use: ${plutoInfo.landUse || 'N/A'}).`);
-    
-    let units: CondoUnit[] = [];
-    let totalApprox = 0;
-    const condoId = plutoInfo.condoNo;
-    
-    // Try Digital Tax Map: Condominium Units dataset first (eguu-7ie3)
-    console.log(`[${requestId}] Querying DTM Condo Units dataset...`);
-    const dtmResult = await queryCondoUnitsFromDTM(parsed.borough, parsed.block, condoId, appToken);
-    
-    if (dtmResult.units.length > 0) {
-      units = dtmResult.units;
-      totalApprox = dtmResult.totalApprox;
-      notes.push(`Found ${units.length} unit lots from Digital Tax Map dataset.`);
-    } else {
-      // Fallback to PLUTO
-      console.log(`[${requestId}] DTM returned no units, falling back to PLUTO...`);
-      const plutoResult = await queryCondoUnitsFromPluto(parsed.borough, parsed.block, condoId, appToken);
-      units = plutoResult.units;
-      totalApprox = plutoResult.totalApprox;
-      
-      if (units.length > 0) {
-        notes.push(`Found ${units.length} condo-classified lots from PLUTO dataset.`);
+
+    const rows = await unitsResp.json();
+    const units: CondoUnit[] = [];
+    if (Array.isArray(rows)) {
+      for (const r of rows) {
+        const unit = normalizeUnitFromRow(unitsCols, r as Record<string, unknown>);
+        if (unit) units.push(unit);
       }
     }
-    
-    // Filter out the input BBL from units if it's included (it's the building, not a unit)
-    const filteredUnits = units.filter(u => u.unitBbl !== bbl);
-    
-    if (filteredUnits.length === 0) {
-      notes.push('Unit lots could not be enumerated from available data sources. This BBL may itself be a unit lot, or the condo data may not be available.');
+
+    if (ctx.isCondo && totalApprox > 0 && units.length === 0) {
+      console.log(
+        `[${requestId}] DTM returned zero rows for condo though count>0. where=${where}; reason=${reason}; unitsUrl=${unitsUrl}`
+      );
     }
-    
-    // Building context BBL - use the input BBL as building context
-    const buildingContextBbl = bbl;
-    
-    const response: CondoUnitsResponse = {
-      buildingBbl: bbl,
+
+    const respBody: CondoUnitsListResponse = {
+      inputBbl: bbl,
+      billingBbl: ctx.billingBbl,
+      inputIsUnitLot: ctx.inputIsUnitLot,
       isCondo: true,
-      buildingContextBbl,
-      billingLotBbl: null, // Would need additional dataset to determine billing lot
-      condoId: condoId || null,
-      units: filteredUnits,
-      totalApprox: totalApprox > 0 ? totalApprox : filteredUnits.length,
-      notes,
+      units,
+      totalApprox,
       requestId,
     };
-    
-    responseCache.set(cacheKey, { data: response, timestamp: Date.now() });
-    
-    return new Response(JSON.stringify(response), {
+
+    responseCache.set(cacheKey, { data: respBody, timestamp: Date.now() });
+
+    return new Response(JSON.stringify(respBody), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
-    
   } catch (err) {
-    console.error(`[${requestId}] Error:`, err);
+    console.error(`[${requestId}] Error in condo-units:`, err);
     return new Response(
       JSON.stringify({
         error: 'Internal server error',
