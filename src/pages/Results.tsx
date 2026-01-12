@@ -31,6 +31,7 @@ import { useDobJobFilings } from '@/hooks/useDobJobFilings';
 import { useViolations } from '@/hooks/useViolations';
 import { useECB } from '@/hooks/useECB';
 import { usePermits } from '@/hooks/usePermits';
+import { useLandmarkStatus } from '@/hooks/useLandmarkStatus';
 
 const VALID_TABS = ['summary', 'violations', 'ecb', 'safety', 'permits', 'hpd', '311', 'all'] as const;
 type ValidTab = typeof VALID_TABS[number];
@@ -86,6 +87,9 @@ export default function Results() {
   const dobViolationsHook = useViolations(isCoop && isValidBBL ? bbl : null);
   const ecbHook = useECB(isCoop && isValidBBL ? bbl : null);
   const permitsHook = usePermits(isCoop && isValidBBL ? bbl : null);
+  
+  // Landmark status (stub for now)
+  const landmarkStatus = useLandmarkStatus({ bbl, bin, lat: latitude, lon: longitude });
   
   // Track if we've fetched data for insights
   const insightsFetchedRef = useRef(false);
