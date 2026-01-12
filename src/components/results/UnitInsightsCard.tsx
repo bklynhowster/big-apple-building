@@ -1383,7 +1383,7 @@ export function UnitInsightsCard({
           </Alert>
 
           {/* Empty State */}
-          {!hasData && (
+          {!hasData && !showScanningStatus && (
             <div className="flex flex-col items-center justify-center py-8 text-center">
               <AlertTriangle className="h-10 w-10 text-muted-foreground mb-3" />
               <p className="text-foreground font-medium mb-1">No mentioned units found</p>
@@ -1400,6 +1400,27 @@ export function UnitInsightsCard({
                 >
                   Check DOB NOW directly <ExternalLink className="h-3 w-3" />
                 </a>
+              )}
+              {/* Debug Panel - Development only */}
+              {process.env.NODE_ENV === 'development' && (
+                <Collapsible className="mt-4 w-full max-w-lg text-left">
+                  <CollapsibleTrigger className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1">
+                    <ChevronDown className="h-3 w-3" />
+                    Debug info
+                  </CollapsibleTrigger>
+                  <CollapsibleContent className="mt-2 p-3 bg-muted/50 rounded text-xs font-mono space-y-1">
+                    <p>BBL: {buildingBbl}</p>
+                    <p>HPD Violations: {hpdViolations.length}</p>
+                    <p>HPD Complaints: {hpdComplaints.length}</p>
+                    <p>311 Requests: {serviceRequests.length}</p>
+                    <p>DOB Filings Units: {dobFilingsUnits.length}</p>
+                    <p>DOB Violations: {dobViolations.length}</p>
+                    <p>ECB Violations: {ecbViolations.length}</p>
+                    <p>DOB Permits: {dobPermits.length}</p>
+                    <p>Sales Units: {salesUnits.length}</p>
+                    <p className="mt-2 text-amber-600">Check console for [UnitMentions] logs</p>
+                  </CollapsibleContent>
+                </Collapsible>
               )}
             </div>
           )}

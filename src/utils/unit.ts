@@ -560,9 +560,18 @@ export function extractUnitFromRecordWithTrace(
   // Records returned from NYC Open Data are already filtered to the building.
   // This is an additional safety check but not the primary validation.
   
-  // First pass: Check direct apartment fields in priority order
+  // Build a case-insensitive lookup map for the record keys
+  const lowerKeyMap = new Map<string, string>();
+  for (const key of Object.keys(record)) {
+    lowerKeyMap.set(key.toLowerCase(), key);
+  }
+  
+  // First pass: Check direct apartment fields in priority order (case-insensitive)
   for (const field of UNIT_FIELDS) {
-    const value = record[field];
+    const actualKey = lowerKeyMap.get(field.toLowerCase());
+    if (!actualKey) continue;
+    
+    const value = record[actualKey];
     if (value != null && value !== '') {
       const rawValue = String(value);
       const normalized = normalizeUnit(rawValue);
@@ -588,9 +597,12 @@ export function extractUnitFromRecordWithTrace(
     }
   }
   
-  // Second pass: Pattern-based extraction from free-text fields
+  // Second pass: Pattern-based extraction from free-text fields (case-insensitive)
   for (const field of TEXT_EXTRACTION_FIELDS) {
-    const value = record[field];
+    const actualKey = lowerKeyMap.get(field.toLowerCase());
+    if (!actualKey) continue;
+    
+    const value = record[actualKey];
     if (value != null && value !== '') {
       const extracted = extractUnitFromText(String(value), field);
       if (extracted) return extracted;
