@@ -88,6 +88,31 @@ interface CachedResult {
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
 const CACHE_KEY_PREFIX = 'unit_mentions_cache_';
 
+// Debug mode - set to true to enable console logging
+const DEBUG_MODE = process.env.NODE_ENV === 'development';
+
+// Debug stats collector
+interface DebugStats {
+  bbl: string;
+  recordCounts: Record<string, number>;
+  extractedCounts: Record<string, number>;
+  rejectedCounts: Record<string, number>;
+  sampleExtractions: Array<{ unit: string; source: string; field: string }>;
+  sampleRejections: Array<{ raw: string; reason: string }>;
+}
+
+let lastDebugStats: DebugStats | null = null;
+
+export function getDebugStats(): DebugStats | null {
+  return lastDebugStats;
+}
+
+function logDebug(message: string, ...args: unknown[]): void {
+  if (DEBUG_MODE) {
+    console.log(`[UnitMentions] ${message}`, ...args);
+  }
+}
+
 // ============================================================================
 // CACHE HELPERS
 // ============================================================================
@@ -105,8 +130,18 @@ function loadFromCache(bbl: string): CombinedUnitStats[] | null {
     if (parsed.bbl !== bbl) return null;
     if (Date.now() - parsed.timestamp > CACHE_TTL_MS) {
       localStorage.removeItem(getCacheKey(bbl));
+      logDebug(`Cache expired for BBL ${bbl}`);
       return null;
     }
+    
+    // BUGFIX: Don't return cached empty results - they might be from a failed load
+    if (parsed.stats.length === 0) {
+      logDebug(`Cache contains empty results for BBL ${bbl}, ignoring cache`);
+      localStorage.removeItem(getCacheKey(bbl));
+      return null;
+    }
+    
+    logDebug(`Cache hit for BBL ${bbl}: ${parsed.stats.length} units`);
     
     // Restore Date objects
     return parsed.stats.map(stat => ({
@@ -119,6 +154,12 @@ function loadFromCache(bbl: string): CombinedUnitStats[] | null {
 }
 
 function saveToCache(bbl: string, stats: CombinedUnitStats[]): void {
+  // BUGFIX: Don't cache empty results - they might be from incomplete loads
+  if (stats.length === 0) {
+    logDebug(`Not caching empty results for BBL ${bbl}`);
+    return;
+  }
+  
   try {
     const cached: CachedResult = {
       bbl,
@@ -126,8 +167,26 @@ function saveToCache(bbl: string, stats: CombinedUnitStats[]): void {
       timestamp: Date.now(),
     };
     localStorage.setItem(getCacheKey(bbl), JSON.stringify(cached));
+    logDebug(`Cached ${stats.length} units for BBL ${bbl}`);
   } catch {
     // localStorage full or disabled - ignore
+  }
+}
+
+// Helper to clear cache for debugging
+export function clearUnitMentionsCache(bbl?: string): void {
+  if (bbl) {
+    localStorage.removeItem(getCacheKey(bbl));
+    logDebug(`Cleared cache for BBL ${bbl}`);
+  } else {
+    // Clear all unit mentions caches
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const key = localStorage.key(i);
+      if (key?.startsWith(CACHE_KEY_PREFIX)) {
+        localStorage.removeItem(key);
+      }
+    }
+    logDebug('Cleared all unit mentions caches');
   }
 }
 
@@ -144,6 +203,8 @@ function processFilingsUnits(
   dobFilingsUnits: UnitFromFilings[],
   unitMap: Map<string, CombinedUnitStats>
 ): void {
+  logDebug(`Processing ${dobFilingsUnits.length} DOB filings units`);
+  
   for (const filingsEntry of dobFilingsUnits) {
     const entry = getOrCreateUnit(unitMap, filingsEntry.unit);
     entry.filingsCount = filingsEntry.count;
@@ -164,12 +225,16 @@ function processFilingsUnits(
       });
     }
   }
+  
+  logDebug(`After filings: ${unitMap.size} unique units`);
 }
 
 function processSalesUnits(
   salesUnits: UnitRosterEntry[],
   unitMap: Map<string, CombinedUnitStats>
 ): void {
+  logDebug(`Processing ${salesUnits.length} sales units`);
+  
   for (const salesEntry of salesUnits) {
     const entry = getOrCreateUnit(unitMap, salesEntry.unit);
     entry.salesCount = salesEntry.count;
@@ -181,6 +246,8 @@ function processSalesUnits(
       entry.lastActivity = lastSeenDate;
     }
   }
+  
+  logDebug(`After sales: ${unitMap.size} unique units`);
 }
 
 function processPermits(
@@ -238,8 +305,12 @@ function processHPD(
 ): number {
   let processed = 0;
   
+  logDebug(`Processing HPD: ${hpdViolations.length} violations, ${hpdComplaints.length} complaints`);
+  
   // Process violations
   const hpdViolationStats = getUnitStats(hpdViolations.map(r => r.raw));
+  logDebug(`HPD violations: ${hpdViolationStats.length} unique units found`);
+  
   for (const stat of hpdViolationStats) {
     const entry = getOrCreateUnit(unitMap, stat.unit);
     entry.hpdCount += stat.count;
@@ -266,6 +337,8 @@ function processHPD(
   
   // Process complaints
   const hpdComplaintStats = getUnitStats(hpdComplaints.map(r => r.raw));
+  logDebug(`HPD complaints: ${hpdComplaintStats.length} unique units found`);
+  
   for (const stat of hpdComplaintStats) {
     const entry = getOrCreateUnit(unitMap, stat.unit);
     entry.hpdCount += stat.count;
@@ -290,6 +363,7 @@ function processHPD(
     processed++;
   }
   
+  logDebug(`After HPD: ${unitMap.size} unique units total`);
   return processed;
 }
 
@@ -606,10 +680,13 @@ export function useUnitMentions(
       return;
     }
     
+    logDebug(`Stage 1 - Input data: filings=${dataSources.dobFilingsUnits.length}, sales=${dataSources.salesUnits.length}`);
+    
     processFilingsUnits(dataSources.dobFilingsUnits, unitMapRef.current);
     processSalesUnits(dataSources.salesUnits, unitMapRef.current);
     
     const sorted = filterAndSortStats(unitMapRef.current);
+    logDebug(`Stage 1 complete: ${sorted.length} units after filings/sales`);
     if (sorted.length > 0) {
       setStats(sorted);
     }
