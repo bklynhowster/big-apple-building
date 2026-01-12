@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { parseApiError, type ApiError } from '@/types/api-error';
+import { useTrackedFetch } from '@/hooks/useTrackedFetch';
 
 interface SafetyViolation {
   recordType: 'Safety';
@@ -50,6 +51,7 @@ export function useSafety(options: UseSafetyOptions): UseSafetyResult {
   const [error, setError] = useState<ApiError | null>(null);
   const [data, setData] = useState<SafetyResponse | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const { trackedFetch } = useTrackedFetch({ endpoint: 'dob-safety', dataset: 'DOB Safety' });
 
   const cacheKey = `${bbl}-${limit}-${offset}-${fromDate || ''}-${toDate || ''}-${status}`;
 
@@ -78,18 +80,21 @@ export function useSafety(options: UseSafetyOptions): UseSafetyResult {
     setError(null);
 
     try {
-      const params = new URLSearchParams({
+      const params: Record<string, string> = {
         bbl,
         limit: String(limit),
         offset: String(offset),
         status,
-      });
+      };
 
-      if (fromDate) params.set('fromDate', fromDate);
-      if (toDate) params.set('toDate', toDate);
+      if (fromDate) params.fromDate = fromDate;
+      if (toDate) params.toDate = toDate;
 
+      const urlParams = new URLSearchParams(params);
       const baseUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/dob-safety`;
-      const response = await fetch(`${baseUrl}?${params.toString()}`, {
+      const fullUrl = `${baseUrl}?${urlParams.toString()}`;
+
+      const response = await trackedFetch(fullUrl, params, {
         headers: {
           'Content-Type': 'application/json',
           'apikey': import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
@@ -121,7 +126,7 @@ export function useSafety(options: UseSafetyOptions): UseSafetyResult {
     } finally {
       setLoading(false);
     }
-  }, [bbl, limit, offset, fromDate, toDate, status, cacheKey, blocked]);
+  }, [bbl, limit, offset, fromDate, toDate, status, cacheKey, blocked, trackedFetch]);
 
   useEffect(() => {
     fetchData();

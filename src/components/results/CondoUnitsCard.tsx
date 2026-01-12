@@ -28,6 +28,7 @@ interface CondoUnitsCardProps {
   bbl: string;
   onContextChange?: (contextBbl: string, isUnit: boolean) => void;
   onUnitLabelResolved?: (unitLabel: string | null) => void;
+  onBillingBblResolved?: (billingBbl: string | null) => void;
 }
 
 function LoadingSkeleton() {
@@ -68,7 +69,7 @@ function formatLot(lot: string): string {
   return lot;
 }
 
-export function CondoUnitsCard({ bbl, onUnitLabelResolved }: CondoUnitsCardProps) {
+export function CondoUnitsCard({ bbl, onUnitLabelResolved, onBillingBblResolved }: CondoUnitsCardProps) {
   const navigate = useNavigate();
   const { loading, loadingMore, error, data, fetchFirstPage, fetchNextPage, retry } = useCondoUnits();
   const [searchQuery, setSearchQuery] = useState('');
@@ -93,6 +94,13 @@ export function CondoUnitsCard({ bbl, onUnitLabelResolved }: CondoUnitsCardProps
     }
     onUnitLabelResolved(null);
   }, [data, onUnitLabelResolved]);
+
+  // Pass billing BBL up to parent
+  useEffect(() => {
+    if (onBillingBblResolved) {
+      onBillingBblResolved(data?.billingBbl || null);
+    }
+  }, [data?.billingBbl, onBillingBblResolved]);
 
   useEffect(() => {
     if (bbl && bbl.length === 10) {

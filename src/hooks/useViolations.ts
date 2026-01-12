@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef } from 'react';
 import { parseApiError, type ApiError } from '@/types/api-error';
+import { useTrackedFetch } from '@/hooks/useTrackedFetch';
 
 export interface ViolationRecord {
   recordType: string;
@@ -61,7 +62,7 @@ export function useViolations(bbl?: string | null): UseViolationsReturn {
   });
   const [offset, setOffset] = useState(0);
   const [currentBBL, setCurrentBBL] = useState<string | null>(null);
-  const loggedUrlsRef = useRef<Set<string>>(new Set());
+  const { trackedFetch } = useTrackedFetch({ endpoint: 'dob-violations', dataset: 'DOB Violations' });
 
   const blocked = !bbl || bbl.length !== 10;
 
@@ -90,12 +91,7 @@ export function useViolations(bbl?: string | null): UseViolationsReturn {
       const urlParams = new URLSearchParams(queryParams);
       const fullUrl = `${baseUrl}?${urlParams.toString()}`;
 
-      if (!loggedUrlsRef.current.has(fullUrl)) {
-        console.log('[useViolations] fetching:', fullUrl);
-        loggedUrlsRef.current.add(fullUrl);
-      }
-
-      const response = await fetch(fullUrl, {
+      const response = await trackedFetch(fullUrl, queryParams, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
@@ -125,7 +121,7 @@ export function useViolations(bbl?: string | null): UseViolationsReturn {
     } finally {
       setLoading(false);
     }
-  }, [appliedFilters]);
+  }, [appliedFilters, trackedFetch]);
 
   const applyFilters = useCallback(() => {
     setAppliedFilters(filters);

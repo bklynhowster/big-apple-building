@@ -14,10 +14,12 @@ import { PermitsTab } from '@/components/results/PermitsTab';
 import { AllRecordsTab } from '@/components/results/AllRecordsTab';
 import { HPDTab } from '@/components/results/HPDTab';
 import { ThreeOneOneTab } from '@/components/results/ThreeOneOneTab';
+import { QueryDebugPanel } from '@/components/results/QueryDebugPanel';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { useQueryDebug } from '@/contexts/QueryDebugContext';
 
 const VALID_TABS = ['summary', 'violations', 'ecb', 'safety', 'permits', 'hpd', '311', 'all'] as const;
 type ValidTab = typeof VALID_TABS[number];
@@ -35,6 +37,7 @@ function isValidTab(tab: string | null): tab is ValidTab {
 export default function Results() {
   const location = useLocation();
   const navigate = useNavigate();
+  const { setContextInfo } = useQueryDebug();
 
   // Read all params from URL
   const params = useMemo(() => {
@@ -65,6 +68,7 @@ export default function Results() {
   const [contextBbl, setContextBbl] = useState<string>(bbl);
   const [isUnitContext, setIsUnitContext] = useState<boolean>(false);
   const [currentUnitLabel, setCurrentUnitLabel] = useState<string | null>(null);
+  const [billingBbl, setBillingBbl] = useState<string | null>(null);
   
   // Update context BBL when main BBL changes
   useEffect(() => {
@@ -72,6 +76,11 @@ export default function Results() {
     setIsUnitContext(false);
     setCurrentUnitLabel(null);
   }, [bbl]);
+  
+  // Update debug context whenever context changes
+  useEffect(() => {
+    setContextInfo(contextBbl, billingBbl, bin || null);
+  }, [contextBbl, billingBbl, bin, setContextInfo]);
   
   // Handle context switch from condo units card
   const handleContextChange = useCallback((newContextBbl: string, isUnit: boolean) => {
@@ -141,6 +150,9 @@ export default function Results() {
           {/* Results - render tabs only when we have a valid BBL */}
           {isValidBBL && (
             <div className="space-y-6">
+              {/* Query Debug Panel - visible when ?debug=1 */}
+              <QueryDebugPanel />
+              
               {/* Property Overview */}
               <PropertyOverview
                 bbl={bbl}
@@ -160,6 +172,7 @@ export default function Results() {
                 bbl={bbl} 
                 onContextChange={handleContextChange} 
                 onUnitLabelResolved={setCurrentUnitLabel}
+                onBillingBblResolved={setBillingBbl}
               />
               
               {/* Context Indicator - show when viewing unit vs building context */}
