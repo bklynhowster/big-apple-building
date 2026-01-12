@@ -17,6 +17,8 @@ interface SummaryTabProps {
   bbl: string;
   billingBbl?: string | null;
   address?: string;
+  isCoop?: boolean;
+  coopUnitContext?: string | null;
   onTabChange: (tab: string) => void;
 }
 
@@ -140,7 +142,7 @@ function LoadingSkeleton() {
   );
 }
 
-export function SummaryTab({ bbl, billingBbl, address, onTabChange }: SummaryTabProps) {
+export function SummaryTab({ bbl, billingBbl, address, isCoop = false, coopUnitContext, onTabChange }: SummaryTabProps) {
   // Determine if we're on a unit page
   const lotNumber = parseInt(bbl.slice(6), 10);
   const isUnitLot = lotNumber >= 1001 && lotNumber <= 6999;

@@ -1,4 +1,4 @@
-import { ArrowLeft, Building2, Home, ChevronRight, Eye } from 'lucide-react';
+import { ArrowLeft, Building2, Home, ChevronRight, Info } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -13,6 +13,7 @@ import {
   BreadcrumbSeparator,
 } from '@/components/ui/breadcrumb';
 import { ContextIndicator } from './ContextIndicator';
+import { CoopUnitContext } from './CoopUnitContext';
 
 export type QueryScope = 'unit' | 'building';
 
@@ -24,6 +25,9 @@ interface ContextBannerProps {
   bin?: string;
   borough?: string;
   isCondoUnit: boolean;
+  isCoop?: boolean;
+  coopUnitContext?: string | null;
+  onCoopUnitContextChange?: (unit: string | null) => void;
   scope: QueryScope;
   onScopeChange: (scope: QueryScope) => void;
 }
@@ -36,6 +40,9 @@ export function ContextBanner({
   bin,
   borough,
   isCondoUnit,
+  isCoop = false,
+  coopUnitContext,
+  onCoopUnitContextChange,
   scope,
   onScopeChange,
 }: ContextBannerProps) {
@@ -46,8 +53,138 @@ export function ContextBanner({
     ? `/results?bbl=${billingBbl}&borough=${encodeURIComponent(borough || '')}&address=${encodeURIComponent(address || '')}`
     : null;
 
+  // CO-OP BUILDING VIEW - Different banner with unit context selector
+  if (isCoop && !isCondoUnit) {
+    return (
+      <div className="space-y-3">
+        {/* Co-op Context Indicator Pills */}
+        {coopUnitContext && (
+          <div className="flex items-center gap-2 flex-wrap">
+            <Badge className="bg-blue-500 text-white gap-1.5 py-1.5 px-3 text-sm">
+              <Home className="h-4 w-4" />
+              Viewing: {coopUnitContext}
+            </Badge>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Badge variant="outline" className="gap-1.5 py-1.5 px-3 text-sm cursor-help">
+                  <Info className="h-3.5 w-3.5" />
+                  Context only
+                </Badge>
+              </TooltipTrigger>
+              <TooltipContent className="max-w-xs">
+                <p>NYC co-op units do not have individual tax lots or BBLs. All regulatory records apply to the building.</p>
+              </TooltipContent>
+            </Tooltip>
+          </div>
+        )}
+
+        {/* Main Banner */}
+        <div className="bg-blue-50 dark:bg-blue-950/30 border-2 border-blue-200 dark:border-blue-800 rounded-lg overflow-hidden">
+          {/* Breadcrumb Navigation */}
+          <div className="bg-background/50 px-4 py-2 border-b border-blue-200 dark:border-blue-800">
+            <Breadcrumb>
+              <BreadcrumbList>
+                <BreadcrumbItem>
+                  <BreadcrumbLink asChild>
+                    <Link to="/" className="text-muted-foreground hover:text-foreground">Search</Link>
+                  </BreadcrumbLink>
+                </BreadcrumbItem>
+                <BreadcrumbSeparator>
+                  <ChevronRight className="h-4 w-4" />
+                </BreadcrumbSeparator>
+                <BreadcrumbItem>
+                  <BreadcrumbPage>{address || `BBL ${unitBbl}`}</BreadcrumbPage>
+                </BreadcrumbItem>
+                {coopUnitContext && (
+                  <>
+                    <BreadcrumbSeparator>
+                      <ChevronRight className="h-4 w-4" />
+                    </BreadcrumbSeparator>
+                    <BreadcrumbItem>
+                      <BreadcrumbPage className="font-semibold">{coopUnitContext}</BreadcrumbPage>
+                    </BreadcrumbItem>
+                  </>
+                )}
+              </BreadcrumbList>
+            </Breadcrumb>
+          </div>
+
+          {/* Main Banner Content */}
+          <div className="p-4">
+            <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+              {/* Building / Unit Identity */}
+              <div className="flex items-start gap-4">
+                <div className="flex items-center justify-center w-12 h-12 bg-blue-100 dark:bg-blue-900 rounded-lg shrink-0">
+                  <Building2 className="h-6 w-6 text-blue-700 dark:text-blue-300" />
+                </div>
+                <div className="space-y-1">
+                  {coopUnitContext ? (
+                    <>
+                      <h1 className="text-xl font-bold text-foreground">
+                        Co-op Apartment: {coopUnitContext}
+                        <span className="ml-2 text-sm font-normal text-muted-foreground">(Context Only)</span>
+                      </h1>
+                      <p className="text-sm text-muted-foreground flex items-center gap-1">
+                        <Building2 className="h-3.5 w-3.5" />
+                        Located in: {address || 'Building'} (Building)
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <h1 className="text-xl font-bold text-foreground">
+                        {address || 'Co-op Building'}
+                      </h1>
+                      <div className="flex items-center gap-2">
+                        <Badge variant="secondary" className="bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200">
+                          Co-op
+                        </Badge>
+                      </div>
+                    </>
+                  )}
+                  
+                  {/* Identifiers */}
+                  <div className="flex flex-wrap items-center gap-3 pt-1">
+                    <Badge variant="outline" className="font-mono text-xs text-muted-foreground">
+                      BBL: {unitBbl}
+                    </Badge>
+                    {bin && (
+                      <Badge variant="outline" className="font-mono text-xs text-muted-foreground">
+                        BIN: {bin}
+                      </Badge>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Co-op Unit Context Selector */}
+              {onCoopUnitContextChange && (
+                <div className="shrink-0">
+                  <CoopUnitContext
+                    selectedUnit={coopUnitContext || null}
+                    onUnitChange={onCoopUnitContextChange}
+                  />
+                </div>
+              )}
+            </div>
+
+            {/* Info about co-op data */}
+            <div className="mt-4 pt-4 border-t border-blue-200 dark:border-blue-800">
+              <div className="flex items-start gap-2 text-sm text-blue-800 dark:text-blue-200">
+                <Info className="h-4 w-4 mt-0.5 shrink-0" />
+                <p>
+                  <strong>Co-op buildings:</strong> Unit-level regulatory records are not issued for NYC co-ops. 
+                  All data shown is at the building level. You can optionally set a unit context for navigation purposes.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // NON-CONDO / BUILDING VIEW - simpler banner
   if (!isCondoUnit) {
-    // Non-condo / Building view - simpler banner
     return (
       <div className="bg-card border border-border rounded-lg p-4">
         <Breadcrumb className="mb-3">
@@ -84,7 +221,7 @@ export function ContextBanner({
     );
   }
 
-  // Condo unit view - prominent banner with unit context
+  // CONDO UNIT VIEW - prominent banner with unit context
   return (
     <div className="space-y-3">
       {/* Pill-style Context Indicator - Impossible to miss */}

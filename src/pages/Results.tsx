@@ -21,6 +21,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { useQueryDebug } from '@/contexts/QueryDebugContext';
+import { usePropertyProfile } from '@/hooks/usePropertyProfile';
 
 const VALID_TABS = ['summary', 'violations', 'ecb', 'safety', 'permits', 'hpd', '311', 'all'] as const;
 type ValidTab = typeof VALID_TABS[number];
@@ -62,6 +63,10 @@ export default function Results() {
 
   const isValidBBL = bbl.length === 10;
 
+  // Get property profile to detect co-op status
+  const { profile } = usePropertyProfile(isValidBBL ? bbl : null);
+  const isCoop = profile?.propertyTenure === 'COOP';
+
   // State for passing keyword filter to tabs from "View in tab"
   const [tabKeywordFilter, setTabKeywordFilter] = useState<string | undefined>();
   
@@ -69,6 +74,9 @@ export default function Results() {
   const [billingBbl, setBillingBbl] = useState<string | null>(null);
   const [currentUnitLabel, setCurrentUnitLabel] = useState<string | null>(null);
   const [hasCondoUnits, setHasCondoUnits] = useState(false);
+  
+  // Co-op unit context (UI-only, no API calls)
+  const [coopUnitContext, setCoopUnitContext] = useState<string | null>(null);
   
   // Determine if current BBL is a unit lot (1001-6999) or billing lot (75xx)
   const lotNumber = useMemo(() => {
@@ -80,23 +88,31 @@ export default function Results() {
   const isBillingLot = lotNumber >= 7500 && lotNumber <= 7599;
   
   // Scope defaults: unit lot -> unit scope, billing lot -> building scope
+  // For co-ops, always use building scope (no unit-level data)
   const [scope, setScope] = useState<QueryScope>(() => {
-    return isUnitLot ? 'unit' : 'building';
+    return isUnitLot && !isCoop ? 'unit' : 'building';
   });
   
   // The BBL to use for queries based on scope
   const queryBbl = useMemo(() => {
+    // Co-ops always query at building level
+    if (isCoop) return bbl;
     if (scope === 'building' && billingBbl) {
       return billingBbl;
     }
     return bbl;
-  }, [scope, billingBbl, bbl]);
+  }, [scope, billingBbl, bbl, isCoop]);
   
-  // Update scope default when BBL changes
+  // Update scope default when BBL changes or co-op status changes
   useEffect(() => {
-    setScope(isUnitLot ? 'unit' : 'building');
+    if (isCoop) {
+      setScope('building');
+    } else {
+      setScope(isUnitLot ? 'unit' : 'building');
+    }
     setCurrentUnitLabel(null);
-  }, [bbl, isUnitLot]);
+    setCoopUnitContext(null);
+  }, [bbl, isUnitLot, isCoop]);
   
   // Update debug context whenever context changes
   useEffect(() => {
@@ -191,7 +207,10 @@ export default function Results() {
                 billingBbl={billingBbl}
                 bin={bin}
                 borough={borough}
-                isCondoUnit={hasCondoUnits && isUnitLot}
+                isCondoUnit={hasCondoUnits && isUnitLot && !isCoop}
+                isCoop={isCoop}
+                coopUnitContext={coopUnitContext}
+                onCoopUnitContextChange={isCoop ? setCoopUnitContext : undefined}
                 scope={scope}
                 onScopeChange={setScope}
               />
@@ -292,6 +311,8 @@ export default function Results() {
                         <SummaryTab 
                           bbl={bbl}
                           billingBbl={billingBbl}
+                          isCoop={isCoop}
+                          coopUnitContext={coopUnitContext}
                           onTabChange={handleTabChange}
                         />
                       </CardContent>
@@ -301,7 +322,7 @@ export default function Results() {
                   <TabsContent value="violations" className="mt-0">
                     <Card>
                       <CardContent className="p-6">
-                        <ViolationsTab bbl={queryBbl} bin={bin} scope={scope} />
+                        <ViolationsTab bbl={queryBbl} bin={bin} scope={scope} isCoop={isCoop} coopUnitContext={coopUnitContext} />
                       </CardContent>
                     </Card>
                   </TabsContent>
@@ -309,7 +330,7 @@ export default function Results() {
                   <TabsContent value="ecb" className="mt-0">
                     <Card>
                       <CardContent className="p-6">
-                        <ECBTab bbl={queryBbl} bin={bin} scope={scope} />
+                        <ECBTab bbl={queryBbl} bin={bin} scope={scope} isCoop={isCoop} coopUnitContext={coopUnitContext} />
                       </CardContent>
                     </Card>
                   </TabsContent>
@@ -317,7 +338,7 @@ export default function Results() {
                   <TabsContent value="safety" className="mt-0">
                     <Card>
                       <CardContent className="p-6">
-                        <SafetyTab bbl={queryBbl} bin={bin} scope={scope} />
+                        <SafetyTab bbl={queryBbl} bin={bin} scope={scope} isCoop={isCoop} coopUnitContext={coopUnitContext} />
                       </CardContent>
                     </Card>
                   </TabsContent>
@@ -325,7 +346,7 @@ export default function Results() {
                   <TabsContent value="permits" className="mt-0">
                     <Card>
                       <CardContent className="p-6">
-                        <PermitsTab bbl={queryBbl} bin={bin} scope={scope} />
+                        <PermitsTab bbl={queryBbl} bin={bin} scope={scope} isCoop={isCoop} coopUnitContext={coopUnitContext} />
                       </CardContent>
                     </Card>
                   </TabsContent>
@@ -333,7 +354,7 @@ export default function Results() {
                   <TabsContent value="hpd" className="mt-0">
                     <Card>
                       <CardContent className="p-6">
-                        <HPDTab bbl={queryBbl} bin={bin} scope={scope} />
+                        <HPDTab bbl={queryBbl} bin={bin} scope={scope} isCoop={isCoop} coopUnitContext={coopUnitContext} />
                       </CardContent>
                     </Card>
                   </TabsContent>
