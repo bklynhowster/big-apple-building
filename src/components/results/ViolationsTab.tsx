@@ -28,7 +28,7 @@ import {
 import { useViolations, ViolationsFilters, ViolationRecord } from '@/hooks/useViolations';
 
 interface ViolationsTabProps {
-  bbl: string | null;
+  bbl: string;
 }
 
 function StatusBadge({ status }: { status: ViolationRecord['status'] }) {
@@ -101,10 +101,10 @@ export function ViolationsTab({ bbl }: ViolationsTabProps) {
 
   // Fetch on mount when bbl is available
   useEffect(() => {
-    if (bbl) {
+    if (bbl && bbl.length === 10) {
       fetchViolations(bbl);
     }
-  }, [bbl]);
+  }, [bbl, fetchViolations]);
 
   const handleFilterChange = (updates: Partial<ViolationsFilters>) => {
     const newFilters = { ...localFilters, ...updates };

@@ -64,7 +64,11 @@ export function usePermits(bbl: string | null): UsePermitsReturn {
   const [currentBBL, setCurrentBBL] = useState<string | null>(null);
 
   const fetchPermits = useCallback(async (targetBBL: string, targetOffset = 0, targetFilters?: PermitsFilters) => {
-    if (!targetBBL) return;
+    // Guard: require valid 10-digit BBL
+    if (!targetBBL || targetBBL.length !== 10) {
+      setError('Valid 10-digit BBL is required');
+      return;
+    }
 
     setLoading(true);
     setError(null);

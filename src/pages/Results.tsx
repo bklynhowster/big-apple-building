@@ -16,12 +16,15 @@ import { usePropertySearch } from '@/hooks/usePropertySearch';
 
 export default function Results() {
   const [searchParams] = useSearchParams();
-  const { loading, error, data } = usePropertySearch();
+  const { loading, error, data, bbl } = usePropertySearch();
   const [activeTab, setActiveTab] = useState('summary');
 
   const handleTabChange = (tab: string) => {
     setActiveTab(tab);
   };
+
+  // Missing BBL state - shown when we can't determine the property
+  const showMissingBBL = !loading && !error && !bbl;
 
   return (
     <div className="flex flex-col min-h-screen">
@@ -63,8 +66,22 @@ export default function Results() {
             </Card>
           )}
 
-          {/* Results */}
-          {data && !loading && (
+          {/* Missing BBL State */}
+          {showMissingBBL && (
+            <Card className="border-warning/50">
+              <CardContent className="flex flex-col items-center justify-center py-16">
+                <AlertCircle className="h-8 w-8 text-warning mb-4" />
+                <p className="text-foreground font-medium mb-2">Missing property identifier (BBL)</p>
+                <p className="text-sm text-muted-foreground mb-4">Please run the search again.</p>
+                <Link to="/">
+                  <Button variant="outline">Return to Search</Button>
+                </Link>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Results - only render when we have both data and a valid bbl */}
+          {data && bbl && !loading && (
             <div className="space-y-6">
               <PropertyHeader info={data.info} />
               
@@ -107,7 +124,7 @@ export default function Results() {
                     <Card>
                       <CardContent className="p-6">
                         <SummaryTab 
-                          bbl={data.info.bbl} 
+                          bbl={bbl} 
                           address={data.info.address}
                           onTabChange={handleTabChange}
                         />
@@ -118,7 +135,7 @@ export default function Results() {
                   <TabsContent value="violations" className="mt-0">
                     <Card>
                       <CardContent className="p-6">
-                        <ViolationsTab bbl={data.info.bbl} />
+                        <ViolationsTab bbl={bbl} />
                       </CardContent>
                     </Card>
                   </TabsContent>
@@ -126,7 +143,7 @@ export default function Results() {
                   <TabsContent value="ecb" className="mt-0">
                     <Card>
                       <CardContent className="p-6">
-                        <ECBTab bbl={data.info.bbl} />
+                        <ECBTab bbl={bbl} />
                       </CardContent>
                     </Card>
                   </TabsContent>
@@ -134,7 +151,7 @@ export default function Results() {
                   <TabsContent value="safety" className="mt-0">
                     <Card>
                       <CardContent className="p-6">
-                        <SafetyTab bbl={data.info.bbl} />
+                        <SafetyTab bbl={bbl} />
                       </CardContent>
                     </Card>
                   </TabsContent>
@@ -142,7 +159,7 @@ export default function Results() {
                   <TabsContent value="permits" className="mt-0">
                     <Card>
                       <CardContent className="p-6">
-                        <PermitsTab bbl={data.info.bbl} />
+                        <PermitsTab bbl={bbl} />
                       </CardContent>
                     </Card>
                   </TabsContent>

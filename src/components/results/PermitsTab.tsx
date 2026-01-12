@@ -28,7 +28,7 @@ import {
 import { usePermits, PermitsFilters, PermitRecord } from '@/hooks/usePermits';
 
 interface PermitsTabProps {
-  bbl: string | null;
+  bbl: string;
 }
 
 function StatusBadge({ status }: { status: PermitRecord['status'] }) {
@@ -107,10 +107,10 @@ export function PermitsTab({ bbl }: PermitsTabProps) {
 
   // Fetch on mount when bbl is available
   useEffect(() => {
-    if (bbl) {
+    if (bbl && bbl.length === 10) {
       fetchPermits(bbl);
     }
-  }, [bbl]);
+  }, [bbl, fetchPermits]);
 
   const handleFilterChange = (updates: Partial<PermitsFilters>) => {
     const newFilters = { ...localFilters, ...updates };
