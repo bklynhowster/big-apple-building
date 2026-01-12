@@ -197,41 +197,45 @@ export function runUnitExtractionTests(): TestResults {
   // Test isLikelyUnitLabel directly
   console.log('\n=== isLikelyUnitLabel Direct Tests ===');
   const labelTests = [
-    // Core valid units (no strong evidence required)
-    { unit: '6M', expected: true },
-    { unit: '6G', expected: true },
-    { unit: '4J', expected: true },
-    { unit: '2H', expected: true },
-    { unit: '12B', expected: true },
-    { unit: '100A', expected: true },
-    { unit: '1', expected: true },
-    { unit: '12', expected: true },
-    { unit: '100', expected: true },
-    // Penthouse
-    { unit: 'PH', expected: true },
-    { unit: 'PHH', expected: true },
+    // Core valid units (no strong evidence required) - CRITICAL REGRESSION TESTS
+    { unit: '6M', expected: true, desc: 'digit+letter' },
+    { unit: '6G', expected: true, desc: 'digit+letter' },
+    { unit: '4J', expected: true, desc: 'digit+letter' },
+    { unit: '2H', expected: true, desc: 'digit+letter' },
+    { unit: '5K', expected: true, desc: 'digit+letter' },
+    { unit: '12B', expected: true, desc: 'double-digit+letter' },
+    { unit: '100A', expected: true, desc: 'triple-digit+letter' },
+    { unit: '12AA', expected: true, desc: 'digit+double-letter' },
+    { unit: '1', expected: true, desc: 'single digit' },
+    { unit: '12', expected: true, desc: 'double digit' },
+    { unit: '100', expected: true, desc: 'triple digit' },
+    // Penthouse/special
+    { unit: 'PH', expected: true, desc: 'penthouse' },
+    { unit: 'PHH', expected: true, desc: 'penthouse high' },
+    { unit: 'TH', expected: true, desc: 'townhouse' },
+    { unit: 'GF', expected: true, desc: 'ground floor' },
     // Letter+digits
-    { unit: 'A1', expected: true },
-    { unit: 'A12', expected: true },
-    // FALSE POSITIVES - must reject
-    { unit: 'ONLY', expected: false },
-    { unit: 'IF', expected: false },
-    { unit: 'AH', expected: false },
-    { unit: 'S', expected: false },
-    { unit: 'BROOKLYN', expected: false },
-    { unit: '1200', expected: false }, // 4+ digit number
-    { unit: 'B00123456', expected: false }, // Job number
-    { unit: '11201', expected: false }, // ZIP code
+    { unit: 'A1', expected: true, desc: 'letter+digit' },
+    { unit: 'A12', expected: true, desc: 'letter+digits' },
+    // FALSE POSITIVES - MUST REJECT
+    { unit: 'ONLY', expected: false, desc: 'stopword' },
+    { unit: 'IF', expected: false, desc: 'stopword' },
+    { unit: 'AH', expected: false, desc: 'stopword' },
+    { unit: 'S', expected: false, desc: 'single letter without evidence' },
+    { unit: 'BROOKLYN', expected: false, desc: 'borough name' },
+    { unit: '1200', expected: false, desc: '4+ digit number' },
+    { unit: 'B00123456', expected: false, desc: 'job number' },
+    { unit: '11201', expected: false, desc: 'ZIP code' },
   ];
   
-  for (const { unit, expected } of labelTests) {
+  for (const { unit, expected, desc } of labelTests) {
     const result = isLikelyUnitLabel(unit);
     if (result === expected) {
       passed++;
-      console.log(`✓ isLikelyUnitLabel("${unit}") = ${result}`);
+      console.log(`✓ isLikelyUnitLabel("${unit}") = ${result} (${desc})`);
     } else {
       failed++;
-      const error = `✗ isLikelyUnitLabel("${unit}"): expected ${expected}, got ${result}`;
+      const error = `✗ isLikelyUnitLabel("${unit}"): expected ${expected}, got ${result} (${desc})`;
       errors.push(error);
       console.error(error);
     }
