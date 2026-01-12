@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, MapPin, Grid3X3, Loader2 } from 'lucide-react';
+import { Search, MapPin, Grid3X3, Loader2, ChevronDown, ChevronUp } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -14,6 +14,11 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Card, CardContent } from '@/components/ui/card';
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible';
 import type { Borough } from '@/types/property';
 
 const BOROUGHS: { value: Borough; label: string }[] = [
@@ -25,7 +30,7 @@ const BOROUGHS: { value: Borough; label: string }[] = [
 ];
 
 const STREET_TYPES = [
-  { value: 'None', label: '(None / Already included)' },
+  { value: '', label: '(Auto-detect / None)' },
   { value: 'St', label: 'Street (St)' },
   { value: 'Ave', label: 'Avenue (Ave)' },
   { value: 'Rd', label: 'Road (Rd)' },
@@ -39,6 +44,20 @@ const STREET_TYPES = [
   { value: 'Way', label: 'Way' },
   { value: 'Hwy', label: 'Highway (Hwy)' },
 ];
+
+// Suggestion structure from geocode API
+interface StreetSuggestion {
+  streetName: string;
+  streetType?: string;
+  borough?: string;
+}
+
+// Error state with optional suggestions and debug info
+interface SearchError {
+  message: string;
+  suggestions?: StreetSuggestion[];
+  attemptedStreets?: string[];
+}
 
 // Mapping of full suffix words to abbreviations (case-insensitive)
 const SUFFIX_MAP: Record<string, string> = {
@@ -92,7 +111,9 @@ export function SearchForm() {
   const navigate = useNavigate();
   const [searchType, setSearchType] = useState<'address' | 'bbl'>('address');
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [addressError, setAddressError] = useState<SearchError | null>(null);
+  const [bblError, setBblError] = useState<string | null>(null);
+  const [showDetails, setShowDetails] = useState(false);
   
   // Address search state
   const [houseNumber, setHouseNumber] = useState('');
@@ -105,16 +126,34 @@ export function SearchForm() {
   const [block, setBlock] = useState('');
   const [lot, setLot] = useState('');
 
+  // Handle clicking a suggestion chip
+  const handleSuggestionClick = (suggestion: StreetSuggestion) => {
+    setStreetName(suggestion.streetName);
+    if (suggestion.streetType) {
+      setStreetType(suggestion.streetType);
+    }
+    if (suggestion.borough) {
+      const matchingBorough = BOROUGHS.find(
+        b => b.value.toUpperCase() === suggestion.borough?.toUpperCase()
+      );
+      if (matchingBorough) {
+        setBorough(matchingBorough.value);
+      }
+    }
+    setAddressError(null);
+  };
+
   const handleAddressSearch = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!houseNumber || !streetName || !borough) return;
     
     setLoading(true);
-    setError(null);
+    setAddressError(null);
+    setShowDetails(false);
     
     // Auto-detect suffix if streetType not explicitly set
     let finalStreetName = streetName.trim();
-    let finalStreetType = streetType || 'None';
+    let finalStreetType = streetType; // Empty string if not selected (no more "None")
     
     // If no street type selected, try to extract from street name
     if (!streetType) {
@@ -130,9 +169,13 @@ export function SearchForm() {
         type: 'address',
         house: houseNumber,
         streetName: finalStreetName,
-        streetType: finalStreetType,
         borough: borough,
       });
+      
+      // Only add streetType if it's not empty
+      if (finalStreetType) {
+        params.set('streetType', finalStreetType);
+      }
       
       const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/geocode?${params.toString()}`;
       console.log('[geocode] url:', url);
@@ -144,17 +187,28 @@ export function SearchForm() {
         },
       });
 
+      const data = await response.json().catch(() => ({}));
+
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.userMessage || errorData.error || 'Geocoding failed');
+        // Handle 404 gracefully - this is a "not found" result, not an exception
+        console.log('[search] geocode returned error:', data);
+        
+        const errorState: SearchError = {
+          message: data.userMessage || data.error || 'Address not found. Check spelling and try again.',
+          suggestions: data.suggestions,
+          attemptedStreets: data.attemptedStreets,
+        };
+        
+        setAddressError(errorState);
+        setLoading(false);
+        return;
       }
 
-      const geocodeData = await response.json();
-      const bbl = geocodeData.bbl;
+      const bbl = data.bbl;
 
       if (!bbl) {
-        console.error('[search] geocode response missing bbl:', geocodeData);
-        setError('Geocoding succeeded but no BBL was returned. Please try again.');
+        console.error('[search] geocode response missing bbl:', data);
+        setAddressError({ message: 'Geocoding succeeded but no BBL was returned. Please try again.' });
         setLoading(false);
         return;
       }
@@ -163,26 +217,28 @@ export function SearchForm() {
       console.log('[search] geocode success bbl:', bbl10);
 
       // Navigate with BBL (and optional address for display)
-      const address = geocodeData.address || '';
+      const address = data.address || '';
       const resultParams = new URLSearchParams({ bbl: bbl10 });
       if (address) {
         resultParams.set('address', address);
       }
-      if (geocodeData.bin) {
-        resultParams.set('bin', geocodeData.bin);
+      if (data.bin) {
+        resultParams.set('bin', data.bin);
       }
-      if (geocodeData.latitude) {
-        resultParams.set('lat', String(geocodeData.latitude));
+      if (data.latitude) {
+        resultParams.set('lat', String(data.latitude));
       }
-      if (geocodeData.longitude) {
-        resultParams.set('lon', String(geocodeData.longitude));
+      if (data.longitude) {
+        resultParams.set('lon', String(data.longitude));
       }
-      resultParams.set('borough', geocodeData.borough || borough);
+      resultParams.set('borough', data.borough || borough);
 
       navigate(`/results?${resultParams.toString()}`);
     } catch (err) {
       console.error('[search] geocode error:', err);
-      setError(err instanceof Error ? err.message : 'Search failed. Please try again.');
+      setAddressError({ 
+        message: err instanceof Error ? err.message : 'Search failed. Please try again.' 
+      });
     } finally {
       setLoading(false);
     }
@@ -193,7 +249,7 @@ export function SearchForm() {
     if (!bblBorough || !block || !lot) return;
     
     setLoading(true);
-    setError(null);
+    setBblError(null);
     
     try {
       const params = new URLSearchParams({
@@ -215,7 +271,9 @@ export function SearchForm() {
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.userMessage || errorData.error || 'BBL lookup failed');
+        setBblError(errorData.userMessage || errorData.error || 'BBL lookup failed');
+        setLoading(false);
+        return;
       }
 
       const geocodeData = await response.json();
@@ -223,7 +281,7 @@ export function SearchForm() {
 
       if (!bbl) {
         console.error('[search] BBL geocode response missing bbl:', geocodeData);
-        setError('BBL lookup succeeded but no BBL was returned. Please try again.');
+        setBblError('BBL lookup succeeded but no BBL was returned. Please try again.');
         setLoading(false);
         return;
       }
@@ -252,7 +310,7 @@ export function SearchForm() {
       navigate(`/results?${resultParams.toString()}`);
     } catch (err) {
       console.error('[search] BBL geocode error:', err);
-      setError(err instanceof Error ? err.message : 'Search failed. Please try again.');
+      setBblError(err instanceof Error ? err.message : 'Search failed. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -328,9 +386,48 @@ export function SearchForm() {
                   </SelectContent>
                 </Select>
               </div>
-              {error && searchType === 'address' && (
-                <div className="text-sm text-destructive bg-destructive/10 p-3 rounded-md">
-                  {error}
+              {addressError && (
+                <div className="text-sm bg-destructive/10 border border-destructive/30 p-3 rounded-md space-y-2">
+                  <p className="text-destructive font-medium">{addressError.message}</p>
+                  
+                  {/* Suggestion chips */}
+                  {addressError.suggestions && addressError.suggestions.length > 0 && (
+                    <div className="flex flex-wrap gap-2 pt-1">
+                      <span className="text-xs text-muted-foreground">Try:</span>
+                      {addressError.suggestions.map((suggestion, idx) => (
+                        <button
+                          key={idx}
+                          type="button"
+                          onClick={() => handleSuggestionClick(suggestion)}
+                          className="inline-flex items-center px-2 py-1 text-xs font-medium rounded-md bg-primary/10 text-primary hover:bg-primary/20 transition-colors"
+                        >
+                          {suggestion.streetName}
+                          {suggestion.streetType && ` ${suggestion.streetType}`}
+                          {suggestion.borough && ` (${suggestion.borough})`}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  
+                  {/* Collapsible debug details */}
+                  {addressError.attemptedStreets && addressError.attemptedStreets.length > 0 && (
+                    <Collapsible open={showDetails} onOpenChange={setShowDetails}>
+                      <CollapsibleTrigger className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors">
+                        {showDetails ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                        {showDetails ? 'Hide' : 'Show'} details
+                      </CollapsibleTrigger>
+                      <CollapsibleContent className="pt-2">
+                        <div className="text-xs text-muted-foreground bg-muted/50 rounded p-2">
+                          <p className="font-medium mb-1">Attempted variations:</p>
+                          <ul className="list-disc list-inside space-y-0.5">
+                            {addressError.attemptedStreets.map((street, idx) => (
+                              <li key={idx}>{street}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      </CollapsibleContent>
+                    </Collapsible>
+                  )}
                 </div>
               )}
               <Button type="submit" className="w-full" size="lg" disabled={loading}>
@@ -382,9 +479,9 @@ export function SearchForm() {
                   />
                 </div>
               </div>
-              {error && searchType === 'bbl' && (
-                <div className="text-sm text-destructive bg-destructive/10 p-3 rounded-md">
-                  {error}
+              {bblError && (
+                <div className="text-sm text-destructive bg-destructive/10 border border-destructive/30 p-3 rounded-md">
+                  {bblError}
                 </div>
               )}
               <Button type="submit" className="w-full" size="lg" disabled={loading}>

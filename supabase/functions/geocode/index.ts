@@ -393,7 +393,7 @@ async function geocodeAddress(
       error: 'Address not found',
       details: message,
       normalizedStreetTried: suffixNormalized,
-      userMessage: "Street name not recognized. Try using abbreviations like 'St', 'Ave', 'Blvd'.",
+      userMessage: "Street name not recognized—check spelling or try a different borough.",
     };
   }
 
@@ -404,9 +404,61 @@ async function geocodeAddress(
     error: 'Address not found',
     details: message,
     userMessage: isNotRecognizedError(data1) 
-      ? "Street name not recognized. Check spelling or try abbreviations like 'St', 'Ave'."
+      ? "Street name not recognized—check spelling or try a different borough."
       : undefined,
   };
+}
+
+// Parse suggestions from Geoclient error messages like "IS IT 'TEHAMA STREET'?"
+interface StreetSuggestion {
+  streetName: string;
+  streetType?: string;
+  borough?: string;
+}
+
+function parseSuggestionsFromMessage(message: string, borough: string): StreetSuggestion[] {
+  const suggestions: StreetSuggestion[] = [];
+  
+  // Pattern: "IS IT 'TEHAMA STREET'?" or "DID YOU MEAN 'TEHAMA ST'?"
+  const suggestionPatterns = [
+    /IS IT ['"]([^'"]+)['"][\s?]*/gi,
+    /DID YOU MEAN ['"]([^'"]+)['"][\s?]*/gi,
+    /SIMILAR TO ['"]([^'"]+)['"][\s?]*/gi,
+  ];
+  
+  for (const pattern of suggestionPatterns) {
+    let match;
+    while ((match = pattern.exec(message)) !== null) {
+      const suggested = match[1].trim();
+      if (suggested) {
+        // Try to extract street type from suggestion
+        const words = suggested.split(/\s+/);
+        if (words.length >= 2) {
+          const lastWord = words[words.length - 1].toUpperCase();
+          const suffixAbbrev = STREET_SUFFIX_MAP[lastWord.toLowerCase()];
+          if (suffixAbbrev) {
+            suggestions.push({
+              streetName: words.slice(0, -1).join(' '),
+              streetType: suffixAbbrev.charAt(0).toUpperCase() + suffixAbbrev.slice(1),
+              borough: BOROUGH_NAMES[borough.toUpperCase()] || borough,
+            });
+          } else {
+            suggestions.push({
+              streetName: suggested,
+              borough: BOROUGH_NAMES[borough.toUpperCase()] || borough,
+            });
+          }
+        } else {
+          suggestions.push({
+            streetName: suggested,
+            borough: BOROUGH_NAMES[borough.toUpperCase()] || borough,
+          });
+        }
+      }
+    }
+  }
+  
+  return suggestions;
 }
 
 // Geocode with suffix fallback for single-token streets
@@ -425,20 +477,28 @@ async function geocodeWithFallback(
   error: string; 
   details: string; 
   attemptedStreets?: string[]; 
-  userMessage?: string; 
+  userMessage?: string;
+  suggestions?: StreetSuggestion[];
 }> {
   
-  // If streetType is provided and not "None", use it directly
-  if (streetType && streetType !== 'None') {
+  // If streetType is provided and not empty, use it directly
+  if (streetType && streetType.trim() !== '') {
     const constructedStreet = `${streetName} ${streetType}`;
     const result = await geocodeAddress(houseNumber, constructedStreet, borough);
     if (result.success) {
       return { ...result, usedFallback: false };
     }
-    return result;
+    
+    // Parse suggestions from error message if available
+    const suggestions = result.details ? parseSuggestionsFromMessage(result.details, borough) : [];
+    
+    return {
+      ...result,
+      suggestions: suggestions.length > 0 ? suggestions : undefined,
+    };
   }
   
-  // streetType is "None" or empty
+  // streetType is empty or not provided
   // First, try streetName as-is (handles "Broadway", "Park Avenue South", etc.)
   console.log(`Trying street as-is: "${streetName}"`);
   const directResult = await geocodeAddress(houseNumber, streetName, borough);
@@ -448,8 +508,13 @@ async function geocodeWithFallback(
   
   // If direct attempt failed and it's a single-token street, try suffix fallback
   if (!isSingleTokenStreet(streetName)) {
-    // Multi-token street that failed - return the original error
-    return directResult;
+    // Multi-token street that failed - return the original error with suggestions
+    const suggestions = directResult.details ? parseSuggestionsFromMessage(directResult.details, borough) : [];
+    
+    return {
+      ...directResult,
+      suggestions: suggestions.length > 0 ? suggestions : undefined,
+    };
   }
   
   // Single-token street name without suffix - try suffix fallback
@@ -483,7 +548,7 @@ async function geocodeWithFallback(
     error: 'Address not found',
     details: `Street "${streetName}" not recognized with any common suffix`,
     attemptedStreets,
-    userMessage: "Please select a street type (St, Ave, Rd, etc.) from the dropdown.",
+    userMessage: `Street name not recognized—check spelling or try a different borough.`,
   };
 }
 
@@ -556,7 +621,8 @@ serve(async (req) => {
             error: geocodeResult.error,
             details: geocodeResult.details,
             attemptedStreets: geocodeResult.attemptedStreets,
-            userMessage: geocodeResult.userMessage,
+            suggestions: geocodeResult.suggestions,
+            userMessage: geocodeResult.userMessage || 'Street name not recognized—check spelling or try a different borough.',
             receivedHouseNumber: houseNumber,
             receivedStreetName: streetName,
             receivedStreetType: streetType,
