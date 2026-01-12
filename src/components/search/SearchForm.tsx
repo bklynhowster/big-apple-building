@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Search, MapPin, Grid3X3, Loader2 } from 'lucide-react';
-import { supabase } from '@/integrations/supabase/client';
+
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -134,21 +134,15 @@ export function SearchForm() {
         borough: borough,
       });
       
-      const { data, error: fnError } = await supabase.functions.invoke('geocode', {
-        body: null,
-        headers: {},
+      const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/geocode?${params.toString()}`;
+      console.log('[geocode] url:', url);
+      
+      const response = await fetch(url, {
+        headers: {
+          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
+          'Content-Type': 'application/json',
+        },
       });
-
-      // Use query params for the edge function call
-      const response = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/geocode?${params.toString()}`,
-        {
-          headers: {
-            'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
-            'Content-Type': 'application/json',
-          },
-        }
-      );
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
@@ -203,15 +197,15 @@ export function SearchForm() {
         lot: lot,
       });
       
-      const response = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/geocode?${params.toString()}`,
-        {
-          headers: {
-            'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
-            'Content-Type': 'application/json',
-          },
-        }
-      );
+      const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/geocode?${params.toString()}`;
+      console.log('[geocode] url:', url);
+      
+      const response = await fetch(url, {
+        headers: {
+          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
+          'Content-Type': 'application/json',
+        },
+      });
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
