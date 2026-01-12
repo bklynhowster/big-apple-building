@@ -1,4 +1,5 @@
 import { useState, useCallback } from 'react';
+import { parseApiError, type ApiError } from '@/types/api-error';
 
 export interface PermitRecord {
   recordType: string;
@@ -23,6 +24,7 @@ export interface PermitsApiResponse {
   totalApprox: number;
   items: PermitRecord[];
   nextOffset: number | null;
+  requestId?: string;
 }
 
 export interface PermitsFilters {
@@ -34,7 +36,7 @@ export interface PermitsFilters {
 
 export interface UsePermitsReturn {
   loading: boolean;
-  error: string | null;
+  error: ApiError | null;
   data: PermitsApiResponse | null;
   items: PermitRecord[];
   blocked: boolean;
@@ -46,29 +48,23 @@ export interface UsePermitsReturn {
   goToNextPage: () => void;
   goToPrevPage: () => void;
   reset: () => void;
+  retry: () => void;
 }
 
 const DEFAULT_LIMIT = 50;
 
 export function usePermits(bbl?: string | null): UsePermitsReturn {
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<ApiError | null>(null);
   const [data, setData] = useState<PermitsApiResponse | null>(null);
-  const [filters, setFilters] = useState<PermitsFilters>({
-    status: 'all',
-    keyword: '',
-  });
-  const [appliedFilters, setAppliedFilters] = useState<PermitsFilters>({
-    status: 'all',
-    keyword: '',
-  });
+  const [filters, setFilters] = useState<PermitsFilters>({ status: 'all', keyword: '' });
+  const [appliedFilters, setAppliedFilters] = useState<PermitsFilters>({ status: 'all', keyword: '' });
   const [offset, setOffset] = useState(0);
   const [currentBBL, setCurrentBBL] = useState<string | null>(null);
 
   const blocked = !bbl || bbl.length !== 10;
 
   const fetchPermits = useCallback(async (targetBBL: string, targetOffset = 0, targetFilters?: PermitsFilters) => {
-    // Hard gate: never fetch unless we have a valid 10-digit BBL
     if (!targetBBL || targetBBL.length !== 10) return;
 
     setLoading(true);
@@ -78,25 +74,16 @@ export function usePermits(bbl?: string | null): UsePermitsReturn {
     const filtersToUse = targetFilters || appliedFilters;
 
     try {
-      // Build query params
       const queryParams: Record<string, string> = {
         bbl: targetBBL,
         limit: String(DEFAULT_LIMIT),
         offset: String(targetOffset),
       };
 
-      if (filtersToUse.status !== 'all') {
-        queryParams.status = filtersToUse.status;
-      }
-      if (filtersToUse.fromDate) {
-        queryParams.fromDate = filtersToUse.fromDate;
-      }
-      if (filtersToUse.toDate) {
-        queryParams.toDate = filtersToUse.toDate;
-      }
-      if (filtersToUse.keyword) {
-        queryParams.q = filtersToUse.keyword;
-      }
+      if (filtersToUse.status !== 'all') queryParams.status = filtersToUse.status;
+      if (filtersToUse.fromDate) queryParams.fromDate = filtersToUse.fromDate;
+      if (filtersToUse.toDate) queryParams.toDate = filtersToUse.toDate;
+      if (filtersToUse.keyword) queryParams.q = filtersToUse.keyword;
 
       const baseUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/dob-permits`;
       const urlParams = new URLSearchParams(queryParams);
@@ -111,8 +98,10 @@ export function usePermits(bbl?: string | null): UsePermitsReturn {
       });
 
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || errorData.details || `HTTP ${response.status}`);
+        const apiError = await parseApiError(response);
+        setError(apiError);
+        setData(null);
+        return;
       }
 
       const result: PermitsApiResponse = await response.json();
@@ -120,7 +109,12 @@ export function usePermits(bbl?: string | null): UsePermitsReturn {
       setOffset(targetOffset);
     } catch (err) {
       console.error('Error fetching permits:', err);
-      setError(err instanceof Error ? err.message : 'Failed to fetch permits');
+      setError({
+        error: 'Network error',
+        details: err instanceof Error ? err.message : 'Unknown error',
+        userMessage: 'Unable to connect to the server. Please check your connection and try again.',
+        requestId: 'unknown',
+      });
       setData(null);
     } finally {
       setLoading(false);
@@ -130,22 +124,15 @@ export function usePermits(bbl?: string | null): UsePermitsReturn {
   const applyFilters = useCallback(() => {
     setAppliedFilters(filters);
     setOffset(0);
-    if (currentBBL) {
-      fetchPermits(currentBBL, 0, filters);
-    }
+    if (currentBBL) fetchPermits(currentBBL, 0, filters);
   }, [filters, currentBBL, fetchPermits]);
 
   const goToNextPage = useCallback(() => {
-    if (data?.nextOffset !== null && currentBBL) {
-      fetchPermits(currentBBL, data.nextOffset!, appliedFilters);
-    }
+    if (data?.nextOffset !== null && currentBBL) fetchPermits(currentBBL, data.nextOffset!, appliedFilters);
   }, [data, currentBBL, appliedFilters, fetchPermits]);
 
   const goToPrevPage = useCallback(() => {
-    if (offset > 0 && currentBBL) {
-      const newOffset = Math.max(0, offset - DEFAULT_LIMIT);
-      fetchPermits(currentBBL, newOffset, appliedFilters);
-    }
+    if (offset > 0 && currentBBL) fetchPermits(currentBBL, Math.max(0, offset - DEFAULT_LIMIT), appliedFilters);
   }, [offset, currentBBL, appliedFilters, fetchPermits]);
 
   const reset = useCallback(() => {
@@ -156,16 +143,15 @@ export function usePermits(bbl?: string | null): UsePermitsReturn {
     setError(null);
   }, []);
 
-  const derivedLoading = blocked ? false : loading;
-  const derivedError = blocked ? null : error;
-  const derivedData = blocked ? null : data;
-  const derivedItems = blocked ? [] : (data?.items || []);
+  const retry = useCallback(() => {
+    if (currentBBL) fetchPermits(currentBBL, offset, appliedFilters);
+  }, [currentBBL, offset, appliedFilters, fetchPermits]);
 
   return {
-    loading: derivedLoading,
-    error: derivedError,
-    data: derivedData,
-    items: derivedItems,
+    loading: blocked ? false : loading,
+    error: blocked ? null : error,
+    data: blocked ? null : data,
+    items: blocked ? [] : (data?.items || []),
     blocked,
     filters,
     offset: blocked ? 0 : offset,
@@ -175,5 +161,6 @@ export function usePermits(bbl?: string | null): UsePermitsReturn {
     goToNextPage,
     goToPrevPage,
     reset,
+    retry,
   };
 }

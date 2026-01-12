@@ -1,6 +1,5 @@
 import { useState } from 'react';
 import { useSafety } from '@/hooks/useSafety';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -25,6 +24,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { AlertCircle, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Download } from 'lucide-react';
 import { exportToCSV, SAFETY_COLUMNS } from '@/lib/csv-export';
 import { toast } from '@/hooks/use-toast';
+import { ErrorBanner } from '@/components/ui/error-banner';
 
 interface SafetyTabProps {
   bbl: string;
@@ -32,25 +32,16 @@ interface SafetyTabProps {
 
 function StatusBadge({ status }: { status: 'open' | 'closed' | 'unknown' }) {
   const variants: Record<string, 'destructive' | 'default' | 'secondary' | 'outline'> = {
-    open: 'destructive',
-    closed: 'secondary',
-    unknown: 'outline',
+    open: 'destructive', closed: 'secondary', unknown: 'outline',
   };
-  return (
-    <Badge variant={variants[status] || 'outline'} className="capitalize">
-      {status}
-    </Badge>
-  );
+  return <Badge variant={variants[status] || 'outline'} className="capitalize">{status}</Badge>;
 }
 
 function formatDate(dateString: string | null): string {
   if (!dateString) return 'N/A';
   try {
-    const date = new Date(dateString);
-    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-  } catch {
-    return 'N/A';
-  }
+    return new Date(dateString).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  } catch { return 'N/A'; }
 }
 
 function LoadingSkeleton() {
@@ -63,9 +54,7 @@ function LoadingSkeleton() {
       </div>
       <div className="border rounded-md">
         <div className="p-4 space-y-3">
-          {[1, 2, 3, 4, 5].map((i) => (
-            <Skeleton key={i} className="h-12 w-full" />
-          ))}
+          {[1, 2, 3, 4, 5].map((i) => <Skeleton key={i} className="h-12 w-full" />)}
         </div>
       </div>
     </div>
@@ -80,22 +69,16 @@ export function SafetyTab({ bbl }: SafetyTabProps) {
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
   const limit = 50;
 
-  const { loading, error, data } = useSafety({
-    bbl,
-    limit,
-    offset,
-    status,
+  const { loading, error, data, refetch } = useSafety({
+    bbl, limit, offset, status,
     fromDate: fromDate || undefined,
     toDate: toDate || undefined,
   });
 
   const toggleRow = (id: string) => {
     const newExpanded = new Set(expandedRows);
-    if (newExpanded.has(id)) {
-      newExpanded.delete(id);
-    } else {
-      newExpanded.add(id);
-    }
+    if (newExpanded.has(id)) newExpanded.delete(id);
+    else newExpanded.add(id);
     setExpandedRows(newExpanded);
   };
 
@@ -105,28 +88,13 @@ export function SafetyTab({ bbl }: SafetyTabProps) {
   };
 
   const handleDateChange = (type: 'from' | 'to', value: string) => {
-    if (type === 'from') {
-      setFromDate(value);
-    } else {
-      setToDate(value);
-    }
+    if (type === 'from') setFromDate(value);
+    else setToDate(value);
     setOffset(0);
   };
 
-  if (loading && !data) {
-    return <LoadingSkeleton />;
-  }
-
-  if (error) {
-    return (
-      <Alert variant="destructive">
-        <AlertCircle className="h-4 w-4" />
-        <AlertDescription>
-          Failed to load safety violations: {error}
-        </AlertDescription>
-      </Alert>
-    );
-  }
+  if (loading && !data) return <LoadingSkeleton />;
+  if (error) return <div className="space-y-4"><ErrorBanner error={error} onRetry={refetch} retrying={loading} /></div>;
 
   const items = data?.items || [];
   const totalApprox = data?.totalApprox || 0;
@@ -137,22 +105,16 @@ export function SafetyTab({ bbl }: SafetyTabProps) {
       filename: `safety_violations_${bbl}_${new Date().toISOString().split('T')[0]}.csv`,
       columns: SAFETY_COLUMNS,
     });
-    toast({
-      title: 'Export complete',
-      description: `Exported ${items.length} safety violations to CSV`,
-    });
+    toast({ title: 'Export complete', description: `Exported ${items.length} safety violations to CSV` });
   };
 
   return (
     <div className="space-y-4">
-      {/* Filters */}
       <div className="flex flex-wrap gap-4 items-end">
         <div className="space-y-1">
           <Label htmlFor="status-filter">Status</Label>
           <Select value={status} onValueChange={handleStatusChange}>
-            <SelectTrigger id="status-filter" className="w-32">
-              <SelectValue />
-            </SelectTrigger>
+            <SelectTrigger id="status-filter" className="w-32"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All</SelectItem>
               <SelectItem value="open">Open</SelectItem>
@@ -160,59 +122,27 @@ export function SafetyTab({ bbl }: SafetyTabProps) {
             </SelectContent>
           </Select>
         </div>
-
         <div className="space-y-1">
           <Label htmlFor="from-date">From Date</Label>
-          <Input
-            id="from-date"
-            type="date"
-            value={fromDate}
-            onChange={(e) => handleDateChange('from', e.target.value)}
-            className="w-40"
-          />
+          <Input id="from-date" type="date" value={fromDate} onChange={(e) => handleDateChange('from', e.target.value)} className="w-40" />
         </div>
-
         <div className="space-y-1">
           <Label htmlFor="to-date">To Date</Label>
-          <Input
-            id="to-date"
-            type="date"
-            value={toDate}
-            onChange={(e) => handleDateChange('to', e.target.value)}
-            className="w-40"
-          />
+          <Input id="to-date" type="date" value={toDate} onChange={(e) => handleDateChange('to', e.target.value)} className="w-40" />
         </div>
       </div>
 
-      {/* Results count with Export */}
       <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">
-          Showing {items.length} of {totalApprox} safety violations
-          {loading && ' (updating...)'}
-        </p>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={handleExportCSV}
-          disabled={items.length === 0 || loading}
-          className="gap-1.5"
-        >
-          <Download className="h-3.5 w-3.5" />
-          Export CSV
+        <p className="text-sm text-muted-foreground">Showing {items.length} of {totalApprox} safety violations{loading && ' (updating...)'}</p>
+        <Button variant="outline" size="sm" onClick={handleExportCSV} disabled={items.length === 0 || loading} className="gap-1.5">
+          <Download className="h-3.5 w-3.5" />Export CSV
         </Button>
       </div>
 
-      {/* Empty State */}
       {items.length === 0 && !loading && (
-        <Alert>
-          <AlertCircle className="h-4 w-4" />
-          <AlertDescription>
-            No safety violations found for this property with current filters.
-          </AlertDescription>
-        </Alert>
+        <Alert><AlertCircle className="h-4 w-4" /><AlertDescription>No safety violations found for this property with current filters.</AlertDescription></Alert>
       )}
 
-      {/* Table */}
       {items.length > 0 && (
         <div className="border rounded-md">
           <Table>
@@ -231,49 +161,21 @@ export function SafetyTab({ bbl }: SafetyTabProps) {
                 const isExpanded = expandedRows.has(item.recordId);
                 return (
                   <>
-                    <TableRow 
-                      key={item.recordId} 
-                      className="cursor-pointer hover:bg-muted/50"
-                      onClick={() => toggleRow(item.recordId)}
-                    >
-                      <TableCell>
-                        {isExpanded ? (
-                          <ChevronUp className="h-4 w-4" />
-                        ) : (
-                          <ChevronDown className="h-4 w-4" />
-                        )}
-                      </TableCell>
-                      <TableCell className="whitespace-nowrap">
-                        {formatDate(item.issueDate)}
-                      </TableCell>
-                      <TableCell>
-                        <StatusBadge status={item.status} />
-                      </TableCell>
+                    <TableRow key={item.recordId} className="cursor-pointer hover:bg-muted/50" onClick={() => toggleRow(item.recordId)}>
+                      <TableCell>{isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}</TableCell>
+                      <TableCell className="whitespace-nowrap">{formatDate(item.issueDate)}</TableCell>
+                      <TableCell><StatusBadge status={item.status} /></TableCell>
                       <TableCell>{item.category || 'N/A'}</TableCell>
-                      <TableCell className="max-w-xs">
-                        <span className={isExpanded ? '' : 'line-clamp-2'}>
-                          {item.description || 'No description available'}
-                        </span>
-                      </TableCell>
-                      <TableCell className="font-mono text-sm">
-                        {item.recordId}
-                      </TableCell>
+                      <TableCell className="max-w-xs"><span className={isExpanded ? '' : 'line-clamp-2'}>{item.description || 'No description available'}</span></TableCell>
+                      <TableCell className="font-mono text-sm">{item.recordId}</TableCell>
                     </TableRow>
                     {isExpanded && (
                       <TableRow key={`${item.recordId}-details`}>
                         <TableCell colSpan={6} className="bg-muted/30">
                           <div className="p-4 space-y-2">
-                            <p className="text-sm">
-                              <strong>Full Description:</strong> {item.description || 'N/A'}
-                            </p>
-                            <p className="text-sm">
-                              <strong>Issue Date:</strong> {formatDate(item.issueDate)}
-                            </p>
-                            {item.resolvedDate && (
-                              <p className="text-sm">
-                                <strong>Resolved Date:</strong> {formatDate(item.resolvedDate)}
-                              </p>
-                            )}
+                            <p className="text-sm"><strong>Full Description:</strong> {item.description || 'N/A'}</p>
+                            <p className="text-sm"><strong>Issue Date:</strong> {formatDate(item.issueDate)}</p>
+                            {item.resolvedDate && <p className="text-sm"><strong>Resolved Date:</strong> {formatDate(item.resolvedDate)}</p>}
                           </div>
                         </TableCell>
                       </TableRow>
@@ -286,30 +188,11 @@ export function SafetyTab({ bbl }: SafetyTabProps) {
         </div>
       )}
 
-      {/* Pagination */}
       {totalApprox > limit && (
         <div className="flex items-center justify-between">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setOffset(Math.max(0, offset - limit))}
-            disabled={offset === 0 || loading}
-          >
-            <ChevronLeft className="h-4 w-4 mr-1" />
-            Previous
-          </Button>
-          <span className="text-sm text-muted-foreground">
-            Page {Math.floor(offset / limit) + 1} of {Math.ceil(totalApprox / limit)}
-          </span>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setOffset(offset + limit)}
-            disabled={!data?.nextOffset || loading}
-          >
-            Next
-            <ChevronRight className="h-4 w-4 ml-1" />
-          </Button>
+          <Button variant="outline" size="sm" onClick={() => setOffset(Math.max(0, offset - limit))} disabled={offset === 0 || loading}><ChevronLeft className="h-4 w-4 mr-1" />Previous</Button>
+          <span className="text-sm text-muted-foreground">Page {Math.floor(offset / limit) + 1} of {Math.ceil(totalApprox / limit)}</span>
+          <Button variant="outline" size="sm" onClick={() => setOffset(offset + limit)} disabled={!data?.nextOffset || loading}>Next<ChevronRight className="h-4 w-4 ml-1" /></Button>
         </div>
       )}
     </div>

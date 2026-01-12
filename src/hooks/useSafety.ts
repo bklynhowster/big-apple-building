@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { parseApiError, type ApiError } from '@/types/api-error';
 
 interface SafetyViolation {
   recordType: 'Safety';
@@ -17,6 +18,7 @@ interface SafetyResponse {
   totalApprox: number;
   items: SafetyViolation[];
   nextOffset: number | null;
+  requestId?: string;
 }
 
 interface UseSafetyOptions {
@@ -30,7 +32,7 @@ interface UseSafetyOptions {
 
 interface UseSafetyResult {
   loading: boolean;
-  error: string | null;
+  error: ApiError | null;
   data: SafetyResponse | null;
   items: SafetyViolation[];
   blocked: boolean;
@@ -45,7 +47,7 @@ export function useSafety(options: UseSafetyOptions): UseSafetyResult {
   const { bbl, limit = 50, offset = 0, fromDate, toDate, status = 'all' } = options;
   const blocked = !bbl || bbl.length !== 10;
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<ApiError | null>(null);
   const [data, setData] = useState<SafetyResponse | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
 
@@ -96,22 +98,26 @@ export function useSafety(options: UseSafetyOptions): UseSafetyResult {
       });
 
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || `HTTP ${response.status}`);
+        const apiError = await parseApiError(response);
+        setError(apiError);
+        setData(null);
+        return;
       }
 
       const result: SafetyResponse = await response.json();
-      
-      // Update cache
       cache.set(cacheKey, { data: result, timestamp: Date.now() });
-      
       setData(result);
     } catch (err) {
       if (err instanceof Error && err.name === 'AbortError') {
-        return; // Ignore aborted requests
+        return;
       }
       console.error('Error fetching safety data:', err);
-      setError(err instanceof Error ? err.message : 'Failed to fetch safety data');
+      setError({
+        error: 'Network error',
+        details: err instanceof Error ? err.message : 'Unknown error',
+        userMessage: 'Unable to connect to the server. Please check your connection and try again.',
+        requestId: 'unknown',
+      });
     } finally {
       setLoading(false);
     }
@@ -119,23 +125,21 @@ export function useSafety(options: UseSafetyOptions): UseSafetyResult {
 
   useEffect(() => {
     fetchData();
-
     return () => {
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort();
-      }
+      if (abortControllerRef.current) abortControllerRef.current.abort();
     };
   }, [fetchData]);
 
-  const derivedLoading = blocked ? false : loading;
-  const derivedError = blocked ? null : error;
-  const derivedData = blocked ? null : data;
-  const derivedItems = blocked ? [] : (data?.items || []);
-
-  return { loading: derivedLoading, error: derivedError, data: derivedData, items: derivedItems, blocked, refetch: fetchData };
+  return {
+    loading: blocked ? false : loading,
+    error: blocked ? null : error,
+    data: blocked ? null : data,
+    items: blocked ? [] : (data?.items || []),
+    blocked,
+    refetch: fetchData,
+  };
 }
 
-// Export cache clear function for when BBL changes
 export function clearSafetyCache() {
   cache.clear();
 }
