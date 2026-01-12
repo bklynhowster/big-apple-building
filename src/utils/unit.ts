@@ -288,39 +288,37 @@ export function normalizeUnit(
 ): string | null {
   if (raw == null) return null;
   
-  // Trim and uppercase
+  // 1. Trim and uppercase
   let value = String(raw).trim().toUpperCase();
   
-  // Check junk values early
+  // 2. Check junk values early
   if (JUNK_VALUES.has(value)) return null;
   
-  // Check STOPLIST early (even before prefix stripping)
-  if (isStopword(value)) return null;
-  
-  // Reject if contains address-like substrings (before stripping prefixes)
+  // 3. Reject if contains address-like substrings (before stripping prefixes)
   if (containsAddressSubstring(value)) return null;
   
-  // Strip common prefixes (with optional spaces/punctuation after)
+  // 4. Strip common prefixes FIRST (APT, UNIT, #, etc.)
   const prefixPattern = new RegExp(`^(${STRIP_PREFIXES.join('|')})\\s*[:\\-\\.\\s]*`, 'i');
   value = value.replace(prefixPattern, '');
   
-  // Remove all whitespace, hyphens, and common separators between characters
+  // 5. Remove all whitespace, hyphens, and common separators between characters
   // e.g., "12-B" → "12B", "12 B" → "12B", "12.B" → "12B"
   value = value.replace(/[\s\-\.]+/g, '');
   
-  // Remove any remaining punctuation except alphanumeric
+  // 6. Remove any remaining punctuation except alphanumeric
   value = value.replace(/[^A-Z0-9]/g, '');
   
-  // Final junk check after normalization
+  // 7. Final junk check after normalization
   if (!value || JUNK_VALUES.has(value)) return null;
   
-  // Check STOPLIST again after normalization
-  if (isStopword(value)) return null;
-  
-  // Additional validation: must contain at least one letter or digit
+  // 8. Additional validation: must contain at least one letter or digit
   if (!/[A-Z0-9]/.test(value)) return null;
   
-  // Validate against unit label patterns
+  // 9. NOW check stoplist (after stripping prefixes and cleaning up)
+  // Skip stoplist check for digit-containing tokens (valid units like 6M)
+  if (!/\d/.test(value) && isStopword(value)) return null;
+  
+  // 10. Validate against unit label patterns
   if (relaxed) {
     if (!isLikelyUnitLabelRelaxed(value)) return null;
   } else {
@@ -593,15 +591,66 @@ function determineConfidence(
 // ============================================================================
 
 /**
- * Regex patterns to extract unit tokens from free-text fields.
- * Each pattern has a capture group for the unit value.
- * 
- * TIGHTENED: Patterns require explicit unit keywords (APT, APARTMENT, UNIT, #)
- * followed by the unit value. Does NOT match "near apt" or contextual mentions
- * without an explicit unit identifier.
+ * Regex patterns to extract unit candidates from text.
+ * Uses capturing groups for the unit value portion.
+ * Ordered by evidence strength: strong-evidence prefixes first, then bare patterns.
+ */
+const UNIT_CANDIDATE_REGEXES: { pattern: RegExp; strong: boolean }[] = [
+  // Strong-evidence patterns (explicit prefix-based)
+  { pattern: /\b(?:APT|APARTMENT)\.?\s*#?\s*([0-9]{1,3}\s*[A-Z]{0,2}|PHH?|TH|GF|BSMT)\b/gi, strong: true },
+  { pattern: /\bUNIT\s*#?\s*([0-9]{1,3}\s*[A-Z]{0,2}|PHH?|TH|GF|BSMT)\b/gi, strong: true },
+  { pattern: /\b(?:RM|ROOM)\.?\s*#?\s*([0-9]{1,3}\s*[A-Z]{0,2}|PHH?|TH|GF|BSMT)\b/gi, strong: true },
+  { pattern: /\b(?:STE|SUITE)\.?\s*#?\s*([0-9]{1,3}\s*[A-Z]{0,2}|PHH?|TH|GF|BSMT)\b/gi, strong: true },
+  // Hash pattern: #6G
+  { pattern: /#\s*([0-9]{1,3}\s*[A-Z]{0,2}|PHH?|TH|GF|BSMT)\b/gi, strong: true },
+  // Penthouse patterns
+  { pattern: /\bPENTHOUSE\s*([A-Z0-9]{0,3})\b/gi, strong: true },
+  { pattern: /\bPH\s*([A-Z0-9]{0,3})\b/gi, strong: true },
+  // Bare unit patterns (weaker evidence): 6G, 12B, 100A, PH
+  // Only match digit+letter combos to avoid false positives
+  { pattern: /\b([0-9]{1,3}[A-Z]{1,2})\b/g, strong: false },
+];
+
+/**
+ * Extract unit candidates from text using regex patterns.
+ * Returns array of { token, strong } where strong indicates prefix-based evidence.
+ * Does NOT split text into words - uses regex matching on full string.
+ */
+export function extractUnitCandidatesFromText(text: string): Array<{ token: string; strong: boolean }> {
+  const out: Array<{ token: string; strong: boolean }> = [];
+  const seen = new Set<string>();
+  
+  for (const { pattern, strong } of UNIT_CANDIDATE_REGEXES) {
+    // Reset lastIndex for global patterns
+    pattern.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    
+    while ((m = pattern.exec(text)) !== null) {
+      const raw = (m[1] ?? '').toUpperCase().replace(/\s+/g, ''); // collapse spaces: "6 G" → "6G"
+      if (!raw) continue;
+      
+      // Handle PH/PENTHOUSE specially
+      let token = raw;
+      if (m[0].toUpperCase().includes('PENTHOUSE') || m[0].toUpperCase().match(/\bPH\b/)) {
+        token = raw ? `PH${raw.replace(/^PH/i, '')}` : 'PH';
+      }
+      
+      const key = `${token}|${strong ? 'strong' : 'weak'}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      
+      out.push({ token, strong });
+    }
+  }
+  
+  return out;
+}
+
+/**
+ * Legacy extraction patterns for backward compatibility.
+ * Kept for extractUnitFromText function.
  */
 const UNIT_EXTRACTION_PATTERNS: { pattern: RegExp; keyword: string }[] = [
-  // Allow optional whitespace so we match "APT6G", "APT.6G", "APT 6G", "[Apt 6G]" etc.
   { pattern: /\bAPT\.?\s*([A-Z0-9]{1,8})\b/i, keyword: 'APT' },
   { pattern: /\bAPARTMENT\s*([A-Z0-9]{1,8})\b/i, keyword: 'APARTMENT' },
   { pattern: /\bUNIT\s*([A-Z0-9]{1,8})\b/i, keyword: 'UNIT' },
@@ -610,7 +659,6 @@ const UNIT_EXTRACTION_PATTERNS: { pattern: RegExp; keyword: string }[] = [
   { pattern: /\bSTE\.?\s*([A-Z0-9]{1,8})\b/i, keyword: 'STE' },
   { pattern: /\bSUITE\s*([A-Z0-9]{1,8})\b/i, keyword: 'SUITE' },
   { pattern: /\b#\s*([A-Z0-9]{1,8})\b/i, keyword: '#' },
-  // Penthouse patterns
   { pattern: /\bPENTHOUSE\s*([A-Z0-9]{0,3})\b/i, keyword: 'PENTHOUSE' },
   { pattern: /\bPH\s*([A-Z0-9]{0,3})\b/i, keyword: 'PH' },
 ];
