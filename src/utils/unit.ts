@@ -581,10 +581,14 @@ export function recordMentionsUnit(
 }
 
 // ------------------------------
-// DEV globals for sanity / tests
+// DEV-only sanity check (exported, not on window)
 // ------------------------------
 
-function runSanity(): Record<string, unknown> {
+/**
+ * DEV-only sanity check for unit validation logic.
+ * Call manually in dev console: import { runUnitSanityCheck } from '@/utils/unit'; runUnitSanityCheck();
+ */
+export function runUnitSanityCheck(): Record<string, unknown> {
   const cases: Array<{ name: string; got: boolean; want: boolean }> = [
     { name: '6G digit+letter allowed', got: isLikelyUnitLabel('6G', false), want: true },
     { name: '12B digit+letter allowed', got: isLikelyUnitLabel('12B', false), want: true },
@@ -596,18 +600,4 @@ function runSanity(): Record<string, unknown> {
   ];
   const failures = cases.filter(c => c.got !== c.want);
   return { ok: failures.length === 0, failures, cases };
-}
-
-declare global {
-  interface Window {
-    runUnitSanityChecks?: () => void;
-    runUnitExtractionTests?: () => void;
-  }
-}
-
-if (typeof window !== 'undefined' && (import.meta as any)?.env?.DEV) {
-  window.runUnitSanityChecks = () => {
-    const res = runSanity();
-    console.log('[UnitSanity]', res);
-  };
 }

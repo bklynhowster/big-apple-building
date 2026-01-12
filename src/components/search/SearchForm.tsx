@@ -200,7 +200,7 @@ export function SearchForm() {
       }
       
       const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/geocode?${params.toString()}`;
-      console.log('[geocode] url:', url);
+      if (import.meta.env.DEV) console.log('[geocode] url:', url);
       
       const response = await fetch(url, {
         headers: {
@@ -213,7 +213,7 @@ export function SearchForm() {
 
       if (!response.ok) {
         // Handle 404 gracefully - this is a "not found" result, not an exception
-        console.log('[search] geocode returned error:', data);
+        if (import.meta.env.DEV) console.log('[search] geocode returned error:', data);
         
         const errorState: SearchError = {
           message: data.userMessage || data.error || 'Address not found. Check spelling and try again.',
@@ -237,7 +237,7 @@ export function SearchForm() {
       }
 
       const bbl10 = String(bbl).padStart(10, '0');
-      console.log('[search] geocode success bbl:', bbl10);
+      if (import.meta.env.DEV) console.log('[search] geocode success bbl:', bbl10);
 
       // Navigate with BBL (and optional address for display)
       const address = data.address || '';
@@ -258,7 +258,7 @@ export function SearchForm() {
 
       navigate(`/results?${resultParams.toString()}`);
     } catch (err) {
-      console.error('[search] geocode error:', err);
+      if (import.meta.env.DEV) console.error('[search] geocode error:', err);
       setAddressError({ 
         message: err instanceof Error ? err.message : 'Search failed. Please try again.' 
       });
@@ -283,7 +283,7 @@ export function SearchForm() {
       });
       
       const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/geocode?${params.toString()}`;
-      console.log('[geocode] url:', url);
+      if (import.meta.env.DEV) console.log('[geocode] url:', url);
       
       const response = await fetch(url, {
         headers: {
@@ -303,14 +303,14 @@ export function SearchForm() {
       const bbl = geocodeData.bbl;
 
       if (!bbl) {
-        console.error('[search] BBL geocode response missing bbl:', geocodeData);
+        if (import.meta.env.DEV) console.error('[search] BBL geocode response missing bbl:', geocodeData);
         setBblError('BBL lookup succeeded but no BBL was returned. Please try again.');
         setLoading(false);
         return;
       }
 
       const bbl10 = String(bbl).padStart(10, '0');
-      console.log('[search] geocode success bbl:', bbl10);
+      if (import.meta.env.DEV) console.log('[search] geocode success bbl:', bbl10);
 
       // Navigate with BBL
       const resultParams = new URLSearchParams({ bbl: bbl10 });

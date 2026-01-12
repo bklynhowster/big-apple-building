@@ -39,8 +39,8 @@ export function useTrackedFetch(options: TrackedFetchOptions) {
       });
     }
 
-    // Also log to console for debugging (only once per unique URL)
-    if (!loggedUrlsRef.current.has(url)) {
+    // DEV-only: log to console for debugging (only once per unique URL)
+    if (import.meta.env.DEV && !loggedUrlsRef.current.has(url)) {
       console.log(`[${options.endpoint}] fetching:`, url, 'params:', params);
       loggedUrlsRef.current.add(url);
     }
