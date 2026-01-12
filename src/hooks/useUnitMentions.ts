@@ -606,6 +606,15 @@ export interface UseUnitMentionsResult {
   isPaused: boolean;
   isCached: boolean;
   hasAnyData: boolean;
+  allLoadingComplete: boolean;
+  totalSourceRecords: number;
+  debugStats: {
+    recordCounts: Record<string, number>;
+    totalRecords: number;
+    extractedUnits: number;
+    allLoadingComplete: boolean;
+    stage: ScanStage;
+  };
   stopScanning: () => void;
   refreshData: () => void;
 }
@@ -822,20 +831,54 @@ export function useUnitMentions(
     }
   }, [loadingStates.ecbLoading, dataSources.ecbViolations, bbl, isCached, isPaused, loadingStates]);
   
+  // Determine if all loading states are complete
+  const allLoadingComplete = useMemo(() => {
+    return !loadingStates.filingsLoading && !loadingStates.permitsLoading && 
+      !loadingStates.hpdLoading && !loadingStates.threeOneOneLoading && 
+      !loadingStates.violationsLoading && !loadingStates.ecbLoading;
+  }, [loadingStates]);
+  
   const isScanning = useMemo(() => {
+    // If all loading is complete, we're not scanning anymore
+    if (allLoadingComplete && progress.stage !== 'complete') {
+      return false;
+    }
     return progress.stage !== 'idle' && progress.stage !== 'complete' && progress.stage !== 'paused';
-  }, [progress.stage]);
+  }, [progress.stage, allLoadingComplete]);
+  
+  // Count total source records
+  const totalSourceRecords = useMemo(() => {
+    return dataSources.dobFilingsUnits.length +
+      dataSources.salesUnits.length +
+      dataSources.dobPermits.length +
+      dataSources.hpdViolations.length +
+      dataSources.hpdComplaints.length +
+      dataSources.serviceRequests.length +
+      dataSources.dobViolations.length +
+      dataSources.ecbViolations.length;
+  }, [dataSources]);
   
   const hasAnyData = useMemo(() => {
-    return stats.length > 0 || 
-      dataSources.dobFilingsUnits.length > 0 ||
-      dataSources.dobPermits.length > 0 ||
-      dataSources.hpdViolations.length > 0 ||
-      dataSources.hpdComplaints.length > 0 ||
-      dataSources.serviceRequests.length > 0 ||
-      dataSources.dobViolations.length > 0 ||
-      dataSources.ecbViolations.length > 0;
-  }, [stats, dataSources]);
+    return stats.length > 0 || totalSourceRecords > 0;
+  }, [stats, totalSourceRecords]);
+  
+  // Debug stats for troubleshooting
+  const debugStats = useMemo(() => ({
+    recordCounts: {
+      dobFilingsUnits: dataSources.dobFilingsUnits.length,
+      salesUnits: dataSources.salesUnits.length,
+      dobPermits: dataSources.dobPermits.length,
+      hpdViolations: dataSources.hpdViolations.length,
+      hpdComplaints: dataSources.hpdComplaints.length,
+      serviceRequests: dataSources.serviceRequests.length,
+      dobViolations: dataSources.dobViolations.length,
+      ecbViolations: dataSources.ecbViolations.length,
+    },
+    totalRecords: totalSourceRecords,
+    extractedUnits: stats.length,
+    allLoadingComplete,
+    stage: progress.stage,
+  }), [dataSources, stats, totalSourceRecords, allLoadingComplete, progress.stage]);
   
   const stopScanning = useCallback(() => {
     abortRef.current = true;
@@ -862,6 +905,9 @@ export function useUnitMentions(
     isPaused,
     isCached,
     hasAnyData,
+    allLoadingComplete,
+    totalSourceRecords,
+    debugStats,
     stopScanning,
     refreshData,
   };
