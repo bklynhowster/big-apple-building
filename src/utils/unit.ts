@@ -1188,3 +1188,33 @@ export function recordMentionsUnit(
   const recordUnit = extractUnitFromRecord(record);
   return recordUnit === normalizedContext;
 }
+
+// ============================================================================
+// DEV-ONLY SANITY CHECK (runs on module load)
+// ============================================================================
+
+if (typeof window !== 'undefined' && import.meta.env?.DEV) {
+  // Sanity tests that MUST pass
+  const sanityTests = [
+    { test: () => isLikelyUnitLabel('6G', false), expected: true, desc: 'isLikelyUnitLabel("6G", false) → true' },
+    { test: () => normalizeUnit('6G', false, false), expected: '6G', desc: 'normalizeUnit("6G", false, false) → "6G"' },
+    { test: () => normalizeUnit('APT 12', false, true), expected: '12', desc: 'normalizeUnit("APT 12", false, true) → "12"' },
+    { test: () => normalizeUnit('12', false, false), expected: null, desc: 'normalizeUnit("12", false, false) → null' },
+    { test: () => normalizeUnit('12', false, true), expected: '12', desc: 'normalizeUnit("12", false, true) → "12"' },
+    { test: () => isLikelyUnitLabel('6TH', false), expected: false, desc: 'isLikelyUnitLabel("6TH", false) → false (ordinal)' },
+  ];
+
+  let allPassed = true;
+  for (const { test, expected, desc } of sanityTests) {
+    const result = test();
+    const passed = result === expected;
+    if (!passed) {
+      console.error(`[UnitSanity] FAIL: ${desc} — got ${JSON.stringify(result)}`);
+      allPassed = false;
+    }
+  }
+  
+  if (allPassed) {
+    console.log('[UnitSanity] All sanity checks passed ✓');
+  }
+}
