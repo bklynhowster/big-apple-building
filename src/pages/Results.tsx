@@ -4,6 +4,7 @@ import { ArrowLeft, AlertCircle } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
 import { Footer } from '@/components/layout/Footer';
 import { PropertyOverview } from '@/components/results/PropertyOverview';
+import { PropertyProfileCard } from '@/components/results/PropertyProfileCard';
 import { SummaryTab } from '@/components/results/SummaryTab';
 import { ViolationsTab } from '@/components/results/ViolationsTab';
 import { ECBTab } from '@/components/results/ECBTab';
@@ -129,6 +130,9 @@ export default function Results() {
                 latitude={latitude}
                 longitude={longitude}
               />
+
+              {/* Property Profile */}
+              <PropertyProfileCard bbl={bbl} />
 
               <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
                 <TabsList className="w-full justify-start bg-card border-b border-border rounded-none h-auto p-0 flex-wrap">
