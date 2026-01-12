@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { Eye, Info, Users, AlertTriangle, Phone } from 'lucide-react';
+import { Eye, Info, Users, AlertTriangle, Phone, ShoppingBag } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -9,21 +9,25 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { getUnitStats, UnitStats } from '@/utils/unit';
 import type { HPDComplaintRecord, HPDViolationRecord } from '@/hooks/useHPD';
 import type { ServiceRequestRecord } from '@/hooks/use311';
+import type { UnitRosterEntry } from '@/hooks/useCoopUnitRoster';
 
 interface UnitInsightsCardProps {
   buildingBbl: string;
   hpdViolations: HPDViolationRecord[];
   hpdComplaints: HPDComplaintRecord[];
   serviceRequests: ServiceRequestRecord[];
+  salesUnits: UnitRosterEntry[];
   selectedUnit: string | null;
   onUnitSelect: (unit: string) => void;
   loading?: boolean;
+  salesWarning?: string | null;
 }
 
 interface CombinedUnitStats {
   unit: string;
   hpdCount: number;
   threeOneOneCount: number;
+  salesCount: number;
   totalCount: number;
   lastActivity: Date | null;
 }
@@ -31,7 +35,8 @@ interface CombinedUnitStats {
 function combineUnitStats(
   hpdViolationStats: UnitStats[],
   hpdComplaintStats: UnitStats[],
-  threeOneOneStats: UnitStats[]
+  threeOneOneStats: UnitStats[],
+  salesUnits: UnitRosterEntry[]
 ): CombinedUnitStats[] {
   const unitMap = new Map<string, CombinedUnitStats>();
 
@@ -62,6 +67,7 @@ function combineUnitStats(
       unit,
       hpdCount: data.count,
       threeOneOneCount: 0,
+      salesCount: 0,
       totalCount: data.count,
       lastActivity: data.lastActivity,
     });
@@ -81,21 +87,59 @@ function combineUnitStats(
         unit: stat.unit,
         hpdCount: 0,
         threeOneOneCount: stat.count,
+        salesCount: 0,
         totalCount: stat.count,
         lastActivity: stat.lastActivity,
       });
     }
   }
 
+  // Add Rolling Sales stats
+  for (const salesEntry of salesUnits) {
+    const existing = unitMap.get(salesEntry.unit);
+    const lastSeenDate = salesEntry.lastSeen ? new Date(salesEntry.lastSeen) : null;
+    
+    if (existing) {
+      existing.salesCount = salesEntry.count;
+      existing.totalCount += salesEntry.count;
+      if (lastSeenDate && !isNaN(lastSeenDate.getTime()) && 
+          (!existing.lastActivity || lastSeenDate > existing.lastActivity)) {
+        existing.lastActivity = lastSeenDate;
+      }
+    } else {
+      unitMap.set(salesEntry.unit, {
+        unit: salesEntry.unit,
+        hpdCount: 0,
+        threeOneOneCount: 0,
+        salesCount: salesEntry.count,
+        totalCount: salesEntry.count,
+        lastActivity: lastSeenDate && !isNaN(lastSeenDate.getTime()) ? lastSeenDate : null,
+      });
+    }
+  }
+
   // Apply building consistency filter:
-  // Only include units that appear in at least 2 records total OR appear in HPD at least once
+  // Only include units that appear in at least 2 records total OR appear in HPD at least once OR appear in Sales
   const filteredStats = Array.from(unitMap.values()).filter(stat => {
-    return stat.hpdCount >= 1 || stat.totalCount >= 2;
+    return stat.hpdCount >= 1 || stat.salesCount >= 1 || stat.totalCount >= 2;
   });
 
-  // Sort by total count descending
+  // Sort by lastActivity descending (most recent first), then by total count
   return filteredStats.sort((a, b) => {
+    // First sort by last activity (most recent first)
+    if (a.lastActivity && b.lastActivity) {
+      const dateDiff = b.lastActivity.getTime() - a.lastActivity.getTime();
+      if (dateDiff !== 0) return dateDiff;
+    } else if (a.lastActivity && !b.lastActivity) {
+      return -1;
+    } else if (!a.lastActivity && b.lastActivity) {
+      return 1;
+    }
+    
+    // Then by total count descending
     if (b.totalCount !== a.totalCount) return b.totalCount - a.totalCount;
+    
+    // Finally by unit alphanumerically
     return a.unit.localeCompare(b.unit, undefined, { numeric: true });
   });
 }
@@ -114,9 +158,11 @@ export function UnitInsightsCard({
   hpdViolations,
   hpdComplaints,
   serviceRequests,
+  salesUnits,
   selectedUnit,
   onUnitSelect,
   loading = false,
+  salesWarning,
 }: UnitInsightsCardProps) {
   // Calculate unit stats from records
   const combinedStats = useMemo(() => {
@@ -124,10 +170,11 @@ export function UnitInsightsCard({
     const hpdComplaintStats = getUnitStats(hpdComplaints.map(r => r.raw));
     const threeOneOneStats = getUnitStats(serviceRequests.map(r => r.raw));
     
-    return combineUnitStats(hpdViolationStats, hpdComplaintStats, threeOneOneStats);
-  }, [hpdViolations, hpdComplaints, serviceRequests]);
+    return combineUnitStats(hpdViolationStats, hpdComplaintStats, threeOneOneStats, salesUnits);
+  }, [hpdViolations, hpdComplaints, serviceRequests, salesUnits]);
 
   const hasData = combinedStats.length > 0;
+  const hasSalesData = salesUnits.length > 0;
 
   if (loading) {
     return (
@@ -165,7 +212,7 @@ export function UnitInsightsCard({
           )}
         </div>
         <CardDescription className="text-sm text-muted-foreground">
-          Units are inferred from HPD/311 apartment fields and validated to exclude addresses.
+          Units are inferred from HPD/311 apartment fields and Rolling Sales data, validated to exclude addresses.
         </CardDescription>
       </CardHeader>
 
@@ -176,6 +223,11 @@ export function UnitInsightsCard({
           <AlertDescription className="text-sm text-amber-800 dark:text-amber-200">
             <strong>Co-ops:</strong> NYC data is generally issued at the building level. 
             Unit Insights are inferred from records that explicitly mention an apartment/unit.
+            {salesWarning === 'rolling_sales_unavailable' && (
+              <span className="block mt-1 text-amber-600 dark:text-amber-400">
+                Note: Rolling Sales data is currently unavailable.
+              </span>
+            )}
           </AlertDescription>
         </Alert>
 
@@ -185,7 +237,7 @@ export function UnitInsightsCard({
             <AlertTriangle className="h-10 w-10 text-muted-foreground mb-3" />
             <p className="text-foreground font-medium mb-1">No reliable unit references found</p>
             <p className="text-sm text-muted-foreground max-w-md">
-              No reliable unit references found in HPD/311 for this building.
+              No reliable unit references found in HPD/311/Sales for this building.
               All records are building-wide.
             </p>
           </div>
@@ -208,6 +260,12 @@ export function UnitInsightsCard({
                     <span className="flex items-center justify-center gap-1">
                       <Phone className="h-3.5 w-3.5" />
                       311
+                    </span>
+                  </TableHead>
+                  <TableHead className="text-center">
+                    <span className="flex items-center justify-center gap-1">
+                      <ShoppingBag className="h-3.5 w-3.5" />
+                      Sales
                     </span>
                   </TableHead>
                   <TableHead>Last Activity</TableHead>
@@ -245,6 +303,15 @@ export function UnitInsightsCard({
                       {stat.threeOneOneCount > 0 ? (
                         <Badge variant="outline" className="font-mono">
                           {stat.threeOneOneCount}
+                        </Badge>
+                      ) : (
+                        <span className="text-muted-foreground">-</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-center">
+                      {stat.salesCount > 0 ? (
+                        <Badge variant="outline" className="font-mono">
+                          {stat.salesCount}
                         </Badge>
                       ) : (
                         <span className="text-muted-foreground">-</span>

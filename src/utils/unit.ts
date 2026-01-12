@@ -116,24 +116,81 @@ const UNIT_FIELDS = [
   'apt_no',
   'apartment_number',
   'apartmentnumber',
+  'apartmentno',
+  'apt_num',
+  'apt_number',
   'unit',
   'unit_number',
   'unitnumber',
 ];
 
 /**
+ * Regex patterns to extract unit tokens from free-text fields.
+ * Each pattern has a capture group for the unit value.
+ */
+const UNIT_EXTRACTION_PATTERNS = [
+  /\bAPT\.?\s*([A-Z0-9]{1,6})\b/i,
+  /\bAPARTMENT\s*([A-Z0-9]{1,6})\b/i,
+  /\bUNIT\s*([A-Z0-9]{1,6})\b/i,
+  /\b#\s*([A-Z0-9]{1,6})\b/i,
+  /\bRM\.?\s*([A-Z0-9]{1,6})\b/i,
+  /\bROOM\s*([A-Z0-9]{1,6})\b/i,
+];
+
+/**
+ * Try to extract a unit token from a free-text field using regex patterns.
+ * Returns null if no valid unit found.
+ */
+function extractUnitFromText(text: string | null | undefined): string | null {
+  if (!text) return null;
+  
+  for (const pattern of UNIT_EXTRACTION_PATTERNS) {
+    const match = String(text).match(pattern);
+    if (match && match[1]) {
+      const normalized = normalizeUnit(match[1]);
+      if (normalized) return normalized;
+    }
+  }
+  
+  return null;
+}
+
+/**
+ * Free-text fields to check for pattern-based unit extraction (lower priority).
+ * These are used only if direct apartment fields don't yield a unit.
+ */
+const TEXT_EXTRACTION_FIELDS = [
+  'descriptor',
+  'resolution_description',
+  'complaint_type',
+  'problem_description',
+  'minorcat',
+  'spacetype',
+];
+
+/**
  * Extract and normalize a unit from a record by checking apartment-specific fields only.
+ * Falls back to pattern-based extraction from descriptor/resolution fields.
  * Returns null if no unit can be found or it's invalid.
  */
 export function extractUnitFromRecord(record: Record<string, unknown> | null | undefined): string | null {
   if (!record) return null;
   
-  // Check each field in priority order
+  // First pass: Check direct apartment fields in priority order
   for (const field of UNIT_FIELDS) {
     const value = record[field];
     if (value != null && value !== '') {
       const normalized = normalizeUnit(String(value));
       if (normalized) return normalized;
+    }
+  }
+  
+  // Second pass: Pattern-based extraction from free-text fields
+  for (const field of TEXT_EXTRACTION_FIELDS) {
+    const value = record[field];
+    if (value != null && value !== '') {
+      const extracted = extractUnitFromText(String(value));
+      if (extracted) return extracted;
     }
   }
   
