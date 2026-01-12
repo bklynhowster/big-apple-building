@@ -339,7 +339,19 @@ async function geocodeAddress(
   houseNumber: string,
   street: string,
   borough: string
-): Promise<{ success: true; data: GeoclientResponse; streetUsed: string } | { success: false; error: string; details: string; normalizedStreetTried?: string; attemptedStreets?: string[]; userMessage?: string }> {
+): Promise<{ 
+  success: true; 
+  data: GeoclientResponse; 
+  streetUsed: string 
+} | { 
+  success: false; 
+  error: string; 
+  details: string; 
+  upstreamMessage?: string;
+  normalizedStreetTried?: string; 
+  attemptedStreets?: string[]; 
+  userMessage?: string 
+}> {
   
   // First attempt with original street (after basic normalization)
   const normalizedStreet = normalizeStreetInput(street);
@@ -364,6 +376,10 @@ async function geocodeAddress(
     }
   }
 
+  // Capture upstream message for suggestion parsing
+  const upstreamMessage = data1.address?.message || '';
+  console.log(`Geoclient upstream message: "${upstreamMessage}"`);
+
   // If NOT RECOGNIZED, try with suffix-normalized street
   const { normalized: suffixNormalized, wasNormalized } = normalizeStreetSuffix(normalizedStreet);
   
@@ -387,22 +403,22 @@ async function geocodeAddress(
     }
 
     // Both attempts failed
-    const message = data1.address?.message || 'Street not recognized';
     return {
       success: false,
       error: 'Address not found',
-      details: message,
+      details: upstreamMessage || 'Street not recognized',
+      upstreamMessage,
       normalizedStreetTried: suffixNormalized,
       userMessage: "Street name not recognized—check spelling or try a different borough.",
     };
   }
 
   // Original attempt failed without suffix to normalize
-  const message = data1.address?.message || 'Address not found';
   return {
     success: false,
     error: 'Address not found',
-    details: message,
+    details: upstreamMessage || 'Address not found',
+    upstreamMessage,
     userMessage: isNotRecognizedError(data1) 
       ? "Street name not recognized—check spelling or try a different borough."
       : undefined,
@@ -414,51 +430,83 @@ interface StreetSuggestion {
   streetName: string;
   streetType?: string;
   borough?: string;
+  label: string; // Display label for the chip
 }
 
 function parseSuggestionsFromMessage(message: string, borough: string): StreetSuggestion[] {
   const suggestions: StreetSuggestion[] = [];
+  const upperMessage = message.toUpperCase();
   
   // Pattern: "IS IT 'TEHAMA STREET'?" or "DID YOU MEAN 'TEHAMA ST'?"
+  // Also handle without quotes: "IS IT TEHAMA STREET?"
   const suggestionPatterns = [
     /IS IT ['"]([^'"]+)['"][\s?]*/gi,
     /DID YOU MEAN ['"]([^'"]+)['"][\s?]*/gi,
     /SIMILAR TO ['"]([^'"]+)['"][\s?]*/gi,
+    /IS IT\s+([A-Z0-9][A-Z0-9\s]+(?:STREET|ST|AVENUE|AVE|ROAD|RD|BOULEVARD|BLVD|PLACE|PL|DRIVE|DR|COURT|CT|LANE|LN|TERRACE|TER|PARKWAY|PKWY|WAY|HIGHWAY|HWY))\s*\?/gi,
   ];
   
   for (const pattern of suggestionPatterns) {
     let match;
     while ((match = pattern.exec(message)) !== null) {
       const suggested = match[1].trim();
-      if (suggested) {
+      if (suggested && suggested.length > 1) {
         // Try to extract street type from suggestion
         const words = suggested.split(/\s+/);
         if (words.length >= 2) {
           const lastWord = words[words.length - 1].toUpperCase();
           const suffixAbbrev = STREET_SUFFIX_MAP[lastWord.toLowerCase()];
           if (suffixAbbrev) {
+            const streetName = words.slice(0, -1).join(' ');
+            const streetType = suffixAbbrev.charAt(0).toUpperCase() + suffixAbbrev.slice(1);
             suggestions.push({
-              streetName: words.slice(0, -1).join(' '),
-              streetType: suffixAbbrev.charAt(0).toUpperCase() + suffixAbbrev.slice(1),
+              streetName: streetName,
+              streetType: streetType,
               borough: BOROUGH_NAMES[borough.toUpperCase()] || borough,
+              label: `${streetName} ${streetType}`,
             });
           } else {
-            suggestions.push({
-              streetName: suggested,
-              borough: BOROUGH_NAMES[borough.toUpperCase()] || borough,
-            });
+            // Check if last word IS a known suffix abbreviation (ST, AVE, etc.)
+            const knownAbbrevs: Record<string, string> = {
+              'ST': 'St', 'AVE': 'Ave', 'RD': 'Rd', 'BLVD': 'Blvd',
+              'PL': 'Pl', 'DR': 'Dr', 'CT': 'Ct', 'LN': 'Ln',
+              'TER': 'Ter', 'PKWY': 'Pkwy', 'HWY': 'Hwy'
+            };
+            if (knownAbbrevs[lastWord]) {
+              const streetName = words.slice(0, -1).join(' ');
+              suggestions.push({
+                streetName: streetName,
+                streetType: knownAbbrevs[lastWord],
+                borough: BOROUGH_NAMES[borough.toUpperCase()] || borough,
+                label: `${streetName} ${knownAbbrevs[lastWord]}`,
+              });
+            } else {
+              suggestions.push({
+                streetName: suggested,
+                borough: BOROUGH_NAMES[borough.toUpperCase()] || borough,
+                label: suggested,
+              });
+            }
           }
         } else {
           suggestions.push({
             streetName: suggested,
             borough: BOROUGH_NAMES[borough.toUpperCase()] || borough,
+            label: suggested,
           });
         }
       }
     }
   }
   
-  return suggestions;
+  // Deduplicate by label
+  const seen = new Set<string>();
+  return suggestions.filter(s => {
+    const key = s.label.toUpperCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 // Geocode with suffix fallback for single-token streets
@@ -479,6 +527,7 @@ async function geocodeWithFallback(
   attemptedStreets?: string[]; 
   userMessage?: string;
   suggestions?: StreetSuggestion[];
+  upstreamMessage?: string;
 }> {
   
   // If streetType is provided and not empty, use it directly
@@ -489,11 +538,13 @@ async function geocodeWithFallback(
       return { ...result, usedFallback: false };
     }
     
-    // Parse suggestions from error message if available
-    const suggestions = result.details ? parseSuggestionsFromMessage(result.details, borough) : [];
+    // Parse suggestions from upstream message if available
+    const upstreamMsg = 'upstreamMessage' in result ? result.upstreamMessage : result.details;
+    const suggestions = upstreamMsg ? parseSuggestionsFromMessage(upstreamMsg, borough) : [];
     
     return {
       ...result,
+      upstreamMessage: upstreamMsg,
       suggestions: suggestions.length > 0 ? suggestions : undefined,
     };
   }
@@ -506,13 +557,17 @@ async function geocodeWithFallback(
     return { ...directResult, usedFallback: false };
   }
   
+  // Capture upstream message from initial attempt
+  const upstreamMsg = 'upstreamMessage' in directResult ? directResult.upstreamMessage : directResult.details;
+  
   // If direct attempt failed and it's a single-token street, try suffix fallback
   if (!isSingleTokenStreet(streetName)) {
     // Multi-token street that failed - return the original error with suggestions
-    const suggestions = directResult.details ? parseSuggestionsFromMessage(directResult.details, borough) : [];
+    const suggestions = upstreamMsg ? parseSuggestionsFromMessage(upstreamMsg, borough) : [];
     
     return {
       ...directResult,
+      upstreamMessage: upstreamMsg,
       suggestions: suggestions.length > 0 ? suggestions : undefined,
     };
   }
@@ -520,6 +575,7 @@ async function geocodeWithFallback(
   // Single-token street name without suffix - try suffix fallback
   console.log(`Single-token street "${streetName}" failed, trying suffix fallback`);
   const attemptedStreets: string[] = [streetName];
+  let lastUpstreamMessage = upstreamMsg || '';
   
   for (const suffix of SUFFIX_FALLBACK_LIST) {
     const constructedStreet = `${streetName} ${suffix}`;
@@ -532,22 +588,33 @@ async function geocodeWithFallback(
       borough,
     });
     
-    if (!('error' in result) && result.data.address && !isNotRecognizedError(result.data)) {
-      const returnCode = result.data.address.returnCode1a;
-      if (returnCode === '00' || returnCode === '01') {
-        console.log(`Fallback succeeded with: ${constructedStreet}`);
-        return { success: true, data: result.data, streetUsed: constructedStreet, usedFallback: true };
+    if (!('error' in result)) {
+      // Capture the upstream message from this attempt
+      if (result.data.address?.message) {
+        lastUpstreamMessage = result.data.address.message;
+      }
+      
+      if (!isNotRecognizedError(result.data)) {
+        const returnCode = result.data.address?.returnCode1a;
+        if (returnCode === '00' || returnCode === '01') {
+          console.log(`Fallback succeeded with: ${constructedStreet}`);
+          return { success: true, data: result.data, streetUsed: constructedStreet, usedFallback: true };
+        }
       }
     }
   }
   
-  // All fallback attempts failed
-  console.log(`All fallback attempts failed for "${streetName}"`);
+  // All fallback attempts failed - try to parse suggestions from any upstream messages
+  console.log(`All fallback attempts failed for "${streetName}". Last upstream message: "${lastUpstreamMessage}"`);
+  const suggestions = lastUpstreamMessage ? parseSuggestionsFromMessage(lastUpstreamMessage, borough) : [];
+  
   return {
     success: false,
     error: 'Address not found',
-    details: `Street "${streetName}" not recognized with any common suffix`,
+    details: lastUpstreamMessage || `Street "${streetName}" not recognized with any common suffix`,
     attemptedStreets,
+    upstreamMessage: lastUpstreamMessage,
+    suggestions: suggestions.length > 0 ? suggestions : undefined,
     userMessage: `Street name not recognized—check spelling or try a different borough.`,
   };
 }

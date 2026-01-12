@@ -63,6 +63,7 @@ interface StreetSuggestion {
   streetName: string;
   streetType?: string;
   borough?: string;
+  label?: string; // Display label for the chip
 }
 
 // Error state with optional suggestions and debug info
@@ -70,6 +71,7 @@ interface SearchError {
   message: string;
   suggestions?: StreetSuggestion[];
   attemptedStreets?: string[];
+  upstreamMessage?: string; // Raw message from Geoclient for debugging
 }
 
 // Mapping of full suffix words to abbreviations (case-insensitive)
@@ -217,6 +219,7 @@ export function SearchForm() {
           message: data.userMessage || data.error || 'Address not found. Check spelling and try again.',
           suggestions: data.suggestions,
           attemptedStreets: data.attemptedStreets,
+          upstreamMessage: data.upstreamMessage || data.details,
         };
         
         setAddressError(errorState);
@@ -407,43 +410,53 @@ export function SearchForm() {
                 </Select>
               </div>
               {addressError && (
-                <div className="text-sm bg-destructive/10 border border-destructive/30 p-3 rounded-md space-y-2">
+                <div className="text-sm bg-destructive/10 border border-destructive/30 p-3 rounded-md space-y-3">
                   <p className="text-destructive font-medium">{addressError.message}</p>
                   
-                  {/* Suggestion chips */}
+                  {/* Did you mean... section with suggestion chips */}
                   {addressError.suggestions && addressError.suggestions.length > 0 && (
-                    <div className="flex flex-wrap gap-2 pt-1">
-                      <span className="text-xs text-muted-foreground">Try:</span>
-                      {addressError.suggestions.map((suggestion, idx) => (
-                        <button
-                          key={idx}
-                          type="button"
-                          onClick={() => handleSuggestionClick(suggestion)}
-                          className="inline-flex items-center px-2 py-1 text-xs font-medium rounded-md bg-primary/10 text-primary hover:bg-primary/20 transition-colors"
-                        >
-                          {suggestion.streetName}
-                          {suggestion.streetType && ` ${suggestion.streetType}`}
-                          {suggestion.borough && ` (${suggestion.borough})`}
-                        </button>
-                      ))}
+                    <div className="bg-card border border-border rounded-md p-3 space-y-2">
+                      <p className="text-xs font-medium text-foreground">Did you mean…</p>
+                      <div className="flex flex-wrap gap-2">
+                        {addressError.suggestions.map((suggestion, idx) => (
+                          <button
+                            key={idx}
+                            type="button"
+                            onClick={() => handleSuggestionClick(suggestion)}
+                            className="inline-flex items-center px-3 py-1.5 text-sm font-medium rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors shadow-sm"
+                          >
+                            {suggestion.label || `${suggestion.streetName}${suggestion.streetType ? ` ${suggestion.streetType}` : ''}`}
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   )}
                   
-                  {/* Collapsible debug details */}
-                  {addressError.attemptedStreets && addressError.attemptedStreets.length > 0 && (
+                  {/* Collapsible debug details - only show when there's debug info */}
+                  {(addressError.attemptedStreets?.length || addressError.upstreamMessage) && (
                     <Collapsible open={showDetails} onOpenChange={setShowDetails}>
                       <CollapsibleTrigger className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors">
                         {showDetails ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
                         {showDetails ? 'Hide' : 'Show'} details
                       </CollapsibleTrigger>
                       <CollapsibleContent className="pt-2">
-                        <div className="text-xs text-muted-foreground bg-muted/50 rounded p-2">
-                          <p className="font-medium mb-1">Attempted variations:</p>
-                          <ul className="list-disc list-inside space-y-0.5">
-                            {addressError.attemptedStreets.map((street, idx) => (
-                              <li key={idx}>{street}</li>
-                            ))}
-                          </ul>
+                        <div className="text-xs text-muted-foreground bg-muted/50 rounded p-2 space-y-2">
+                          {addressError.upstreamMessage && (
+                            <div>
+                              <p className="font-medium mb-0.5">Geocoder response:</p>
+                              <p className="font-mono text-[10px] break-all">{addressError.upstreamMessage}</p>
+                            </div>
+                          )}
+                          {addressError.attemptedStreets && addressError.attemptedStreets.length > 0 && (
+                            <div>
+                              <p className="font-medium mb-1">Attempted variations:</p>
+                              <ul className="list-disc list-inside space-y-0.5">
+                                {addressError.attemptedStreets.map((street, idx) => (
+                                  <li key={idx}>{street}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
                         </div>
                       </CollapsibleContent>
                     </Collapsible>
