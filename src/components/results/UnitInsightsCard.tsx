@@ -1158,9 +1158,9 @@ export function UnitInsightsCard({
           {/* Unit Stats Table */}
           {hasData && (
             <div className="space-y-2">
-              {/* Filter explanation - one line */}
-              <p className="text-xs text-muted-foreground">
-                Filtering highlights records that mention this unit. All records remain building-level.
+              {/* Table context explainer */}
+              <p className="text-sm text-muted-foreground">
+                Units appear here only when explicitly mentioned in DOB filings, HPD complaints, or 311 requests tied to this building.
               </p>
               <div className="rounded-md border border-amber-200 dark:border-amber-800 overflow-hidden">
               <Table>
@@ -1207,9 +1207,16 @@ export function UnitInsightsCard({
                       </TooltipProvider>
                     </TableHead>
                     <TableHead className="text-center w-16">
-                      <span title="Based on source count: ●●● = 2+ DOB filings, ●●○ = DOB+other, ●○○ = single source">
-                        Conf.
-                      </span>
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="cursor-help">Conf.</span>
+                          </TooltipTrigger>
+                          <TooltipContent className="max-w-xs">
+                            <p>Confidence reflects how consistently this unit identifier appears across multiple records and sources for this building.</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
                     </TableHead>
                     <TableHead className="min-w-[120px]">Referenced In</TableHead>
                     <TableHead>Last Activity</TableHead>
@@ -1233,10 +1240,19 @@ export function UnitInsightsCard({
                           {selectedUnit === stat.unit && (
                             <Badge className="bg-amber-600 text-white text-xs">Active</Badge>
                           )}
-                          <span title="Unit label as written in city records">{stat.unit}</span>
-                          <span className="text-[10px] text-muted-foreground italic" title="As reported in city records">
-                            as reported
-                          </span>
+                          <span>{stat.unit}</span>
+                          <TooltipProvider>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <span className="text-[10px] text-muted-foreground italic cursor-help">
+                                  as reported
+                                </span>
+                              </TooltipTrigger>
+                              <TooltipContent className="max-w-xs">
+                                <p>Unit identifier appears exactly as written in city records and has not been normalized to an official unit roster.</p>
+                              </TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
                         </div>
                       </TableCell>
                       <TableCell className="text-center">
@@ -1308,9 +1324,9 @@ export function UnitInsightsCard({
                               variant={selectedUnit === stat.unit ? 'secondary' : 'outline'}
                               onClick={() => onUnitSelect(stat.unit)}
                               className="h-7 px-3 text-xs"
-                              title="Filtering highlights records that mention this unit. All records remain building-level."
+                              title="Filter to records that mention this unit. Building totals remain unchanged."
                             >
-                              {selectedUnit === stat.unit ? 'Viewing' : 'Filter'}
+                              {selectedUnit === stat.unit ? 'Viewing' : 'Filter records'}
                             </Button>
                           </div>
                         </div>
@@ -1320,6 +1336,10 @@ export function UnitInsightsCard({
                 </TableBody>
               </Table>
               </div>
+              {/* Exclusion footnote */}
+              <p className="text-xs text-muted-foreground mt-2">
+                Units not listed were not explicitly referenced in available city records.
+              </p>
             </div>
           )}
 
