@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
 import { ArrowLeft, Loader2, AlertCircle } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
@@ -16,6 +17,11 @@ import { usePropertySearch } from '@/hooks/usePropertySearch';
 export default function Results() {
   const [searchParams] = useSearchParams();
   const { loading, error, data } = usePropertySearch();
+  const [activeTab, setActiveTab] = useState('summary');
+
+  const handleTabChange = (tab: string) => {
+    setActiveTab(tab);
+  };
 
   return (
     <div className="flex flex-col min-h-screen">
@@ -62,7 +68,7 @@ export default function Results() {
             <div className="space-y-6">
               <PropertyHeader info={data.info} />
               
-              <Tabs defaultValue="summary" className="w-full">
+              <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
                 <TabsList className="w-full justify-start bg-card border-b border-border rounded-none h-auto p-0 flex-wrap">
                   <TabsTrigger 
                     value="summary" 
@@ -86,7 +92,7 @@ export default function Results() {
                     value="safety" 
                     className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent py-3 px-6"
                   >
-                    Safety ({data.safetyViolations.length})
+                    Safety
                   </TabsTrigger>
                   <TabsTrigger 
                     value="permits" 
@@ -98,7 +104,15 @@ export default function Results() {
 
                 <div className="mt-6">
                   <TabsContent value="summary" className="mt-0">
-                    <SummaryTab data={data} />
+                    <Card>
+                      <CardContent className="p-6">
+                        <SummaryTab 
+                          bbl={data.info.bbl} 
+                          address={data.info.address}
+                          onTabChange={handleTabChange}
+                        />
+                      </CardContent>
+                    </Card>
                   </TabsContent>
                   
                   <TabsContent value="violations" className="mt-0">
@@ -120,7 +134,7 @@ export default function Results() {
                   <TabsContent value="safety" className="mt-0">
                     <Card>
                       <CardContent className="p-6">
-                        <SafetyTab violations={data.safetyViolations} />
+                        <SafetyTab bbl={data.info.bbl} />
                       </CardContent>
                     </Card>
                   </TabsContent>
