@@ -11,6 +11,15 @@ const CONDO_COMPLEX_DATASET_ID = 'p8u6-a6it';
 // - Unit-level lots
 const CONDO_UNITS_DATASET_ID = 'eguu-7ie3';
 
+// Pass 2 fallback datasets (must have borough/block/lot + ideally bbl)
+// Try these in order and pick the first whose schema supports the required filters.
+const TAX_LOT_DATASET_CANDIDATES = [
+  // Department of Finance Digital Tax Map (polygons; typically has bbl/block/lot)
+  'smk3-tmxj',
+  // NYC Zoning Tax Lot Database (contains bbl/block/lot)
+  'fdkv-4t4z',
+];
+
 // -------- Caches --------
 
 const schemaCache = new Map<string, { columns: Set<string>; timestamp: number }>();
@@ -22,6 +31,7 @@ const RESPONSE_CACHE_TTL = 30 * 60 * 1000; // 30 minutes
 // -------- Types --------
 
 export type InputRole = 'billing' | 'unit' | 'unknown';
+export type StrategyUsed = 'condoDataset' | 'blockLotFallback';
 
 export interface CondoUnit {
   unitBbl: string;
@@ -38,6 +48,7 @@ export interface CondoUnitsListResponse {
   billingBbl: string | null;
   inputIsUnitLot: boolean;
   isCondo: boolean;
+  strategyUsed: StrategyUsed;
   units: CondoUnit[];
   totalApprox: number;
   requestId: string;
@@ -85,6 +96,38 @@ function normalizeIntString(val: unknown): string {
   const n = Number(String(val).trim());
   if (Number.isFinite(n)) return String(Math.trunc(n));
   return String(val).trim();
+}
+
+function normalizeBblString(val: unknown): string | null {
+  if (val === null || val === undefined) return null;
+  const raw = String(val).trim();
+  if (!raw) return null;
+
+  // Common case
+  if (isValidBbl(raw)) return raw;
+
+  // Socrata sometimes returns numeric-like strings (or floats rendered as strings)
+  const n = Number(raw);
+  if (Number.isFinite(n)) {
+    const asInt = String(Math.trunc(n));
+    if (isValidBbl(asInt)) return asInt;
+  }
+
+  // Last resort: strip non-digits
+  const digits = raw.replace(/\D/g, '');
+  if (isValidBbl(digits)) return digits;
+
+  return null;
+}
+
+function getInputRoleFromLot(lot4: string): InputRole {
+  if (looksLikeBillingLot(lot4)) return 'billing';
+  if (looksLikeUnitLot(lot4)) return 'unit';
+  return 'unknown';
+}
+
+function getUnitBblColumn(unitsCols: Set<string>): string | null {
+  return firstCol(unitsCols, ['unit_bbl', 'bbl']);
 }
 
 function discoverColumnSetFromRow(row: Record<string, unknown>): Set<string> {
@@ -520,11 +563,11 @@ function buildUnitsWhereClause(
 }
 
 function normalizeUnitFromRow(unitsCols: Set<string>, row: Record<string, unknown>): CondoUnit | null {
-  const unitBblCol = hasCol(unitsCols, 'unit_bbl') ? 'unit_bbl' : null;
+  const unitBblCol = getUnitBblColumn(unitsCols);
   if (!unitBblCol) return null;
 
-  const unitBbl = String(row[unitBblCol] || '').trim();
-  if (!isValidBbl(unitBbl)) return null;
+  const unitBbl = normalizeBblString(row[unitBblCol]);
+  if (!unitBbl) return null;
 
   const parsed = parseBbl(unitBbl);
   if (!parsed) return null;
@@ -545,6 +588,127 @@ function normalizeUnitFromRow(unitsCols: Set<string>, row: Record<string, unknow
     unitLabel,
     raw: row,
   };
+}
+
+function pickTaxLotDataset(
+  appToken: string,
+  requestId: string
+): Promise<{ datasetId: string; cols: Set<string> } | null> {
+  return (async () => {
+    for (const datasetId of TAX_LOT_DATASET_CANDIDATES) {
+      const cols = await discoverSchema(datasetId, appToken);
+      const boroCol = firstCol(cols, ['borocode', 'boro', 'borough', 'boro_code']);
+      const blockCol = firstCol(cols, ['block', 'tax_block']);
+      const lotCol = firstCol(cols, ['lot', 'tax_lot']);
+      const bblCol = firstCol(cols, ['bbl']);
+
+      const ok = Boolean(boroCol && blockCol && lotCol && (bblCol || (boroCol && blockCol && lotCol)));
+      console.log(
+        `[${requestId}] pass2 candidate dataset=${datasetId} ok=${ok} colsNeeded={boro:${boroCol},block:${blockCol},lot:${lotCol},bbl:${bblCol}}`
+      );
+      if (ok) return { datasetId, cols };
+    }
+    return null;
+  })();
+}
+
+async function enumerateUnitsByBlockLotFallback(args: {
+  inputBbl: string;
+  limit: number;
+  offset: number;
+  appToken: string;
+  requestId: string;
+}): Promise<{ units: CondoUnit[]; totalApprox: number; datasetId: string | null; where: string | null }> {
+  const parsed = parseBbl(args.inputBbl);
+  if (!parsed) return { units: [], totalApprox: 0, datasetId: null, where: null };
+
+  const chosen = await pickTaxLotDataset(args.appToken, args.requestId);
+  if (!chosen) {
+    console.log(`[${args.requestId}] pass2 no suitable tax lot dataset found from candidates=${TAX_LOT_DATASET_CANDIDATES.join(',')}`);
+    return { units: [], totalApprox: 0, datasetId: null, where: null };
+  }
+
+  const { datasetId, cols } = chosen;
+  const boroCol = firstCol(cols, ['borocode', 'boro', 'borough', 'boro_code']);
+  const blockCol = firstCol(cols, ['block', 'tax_block']);
+  const lotCol = firstCol(cols, ['lot', 'tax_lot']);
+  const bblCol = firstCol(cols, ['bbl']);
+
+  if (!boroCol || !blockCol || !lotCol) {
+    return { units: [], totalApprox: 0, datasetId, where: null };
+  }
+
+  // Socrata often stores numeric columns without leading zeros.
+  const boro = normalizeIntString(parsed.borough);
+  const block = String(parseInt(parsed.block, 10));
+
+  const where = `${boroCol}='${escapeSoqlLiteral(boro)}' AND ${blockCol}='${escapeSoqlLiteral(block)}' AND ${lotCol} BETWEEN 1001 AND 6999`;
+
+  console.log(`[${args.requestId}] pass2 enumerate dataset=${datasetId} where=${where}`);
+
+  const totalApprox = await soqlCount(datasetId, where, args.appToken);
+
+  const labelCol = firstCol(cols, ['unit', 'apt', 'apartment', 'unit_designation', 'unit_desig']);
+
+  const selectCols = [
+    ...(bblCol ? [bblCol] : []),
+    ...(boroCol ? [boroCol] : []),
+    ...(blockCol ? [blockCol] : []),
+    ...(lotCol ? [lotCol] : []),
+    ...(labelCol ? [labelCol] : []),
+  ].filter(Boolean);
+
+  const q = new URLSearchParams();
+  q.set('$select', Array.from(new Set(selectCols)).join(','));
+  q.set('$where', where);
+  q.set('$order', `${lotCol}`);
+  q.set('$limit', String(args.limit));
+  q.set('$offset', String(args.offset));
+
+  const { resp, url } = await soqlFetch(datasetId, q, args.appToken);
+  if (!resp.ok) {
+    console.log(`[${args.requestId}] pass2 query failed dataset=${datasetId} status=${resp.status} url=${url}`);
+    return { units: [], totalApprox, datasetId, where };
+  }
+
+  const rows = await resp.json();
+  const units: CondoUnit[] = [];
+
+  if (Array.isArray(rows)) {
+    for (const r of rows) {
+      const row = r as Record<string, unknown>;
+
+      const lot = normalizeIntString(row[lotCol]);
+      if (!lot) continue;
+
+      const unitBbl =
+        (bblCol ? normalizeBblString(row[bblCol]) : null) ||
+        composeBbl(boro, block, lot);
+
+      if (!isValidBbl(unitBbl)) continue;
+
+      const unitLabelRaw = labelCol ? row[labelCol] : null;
+      const unitLabel =
+        unitLabelRaw !== null && unitLabelRaw !== undefined && String(unitLabelRaw).trim() !== ''
+          ? String(unitLabelRaw).trim()
+          : `Lot ${String(parseInt(lot, 10))}`;
+
+      units.push({
+        unitBbl,
+        borough: boro,
+        block,
+        lot: String(parseInt(lot, 10)),
+        unitLabel,
+        raw: row,
+      });
+    }
+  }
+
+  console.log(
+    `[${args.requestId}] pass2 result dataset=${datasetId} where=${where} totalApprox=${totalApprox} returned=${units.length}`
+  );
+
+  return { units, totalApprox, datasetId, where };
 }
 
 Deno.serve(async (req) => {
@@ -572,7 +736,7 @@ Deno.serve(async (req) => {
     const limit = Math.min(Math.max(parseInt(limitRaw || '2000', 10) || 2000, 1), 5000);
     const offset = Math.max(parseInt(offsetRaw || '0', 10) || 0, 0);
 
-    const cacheKey = `condo-units:v3:${bbl}:${limit}:${offset}`;
+    const cacheKey = `condo-units:v4:${bbl}:${limit}:${offset}`;
     const cached = responseCache.get(cacheKey);
     if (cached && Date.now() - cached.timestamp < RESPONSE_CACHE_TTL) {
       return new Response(JSON.stringify(cached.data), {
@@ -581,104 +745,117 @@ Deno.serve(async (req) => {
     }
 
     const appToken = Deno.env.get('NYC_OPEN_DATA_APP_TOKEN') || '';
-    const ctx = await resolveCondoContext(bbl, appToken, requestId);
+    const parsed = parseBbl(bbl);
+    const inputRole: InputRole = parsed ? getInputRoleFromLot(parsed.lot) : 'unknown';
+    const inputIsUnitLot = inputRole === 'unit';
 
+    // Pass 1: attempt to resolve condo context using condo datasets (DTM).
+    const ctx = await resolveCondoContext(bbl, appToken, requestId);
     const unitsCols = await discoverSchema(CONDO_UNITS_DATASET_ID, appToken);
 
-    if (!ctx.isCondo) {
-      const resp: CondoUnitsListResponse = {
-        inputBbl: bbl,
-        inputRole: ctx.inputRole,
-        billingBbl: null,
-        inputIsUnitLot: false,
-        isCondo: false,
-        units: [],
-        totalApprox: 0,
-        requestId,
-      };
-      responseCache.set(cacheKey, { data: resp, timestamp: Date.now() });
-      return new Response(JSON.stringify(resp), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
+    let pass1Units: CondoUnit[] = [];
+    let pass1TotalApprox = 0;
+    let pass1Where: string | null = null;
 
-    const { where, reason } = buildUnitsWhereClause(unitsCols, ctx);
+    if (ctx.isCondo) {
+      const { where, reason } = buildUnitsWhereClause(unitsCols, ctx);
+      pass1Where = where;
 
-    // Strong debugging requirement (logs only): dataset ids + exact WHERE.
-    console.log(
-      `[${requestId}] enumerateCondoUnits dataset=${CONDO_UNITS_DATASET_ID} where=${where ?? 'null'} reason=${reason}`
-    );
-
-    if (!where) {
       console.log(
-        `[${requestId}] Condo confirmed but cannot build unit WHERE. unitsCols=${Array.from(unitsCols).join(',')}`
+        `[${requestId}] pass1 dataset=${CONDO_UNITS_DATASET_ID} where=${where ?? 'null'} reason=${reason}`
       );
 
-      const resp: CondoUnitsListResponse = {
-        inputBbl: bbl,
-        inputRole: ctx.inputRole,
-        billingBbl: ctx.billingBbl,
-        inputIsUnitLot: ctx.inputIsUnitLot,
-        isCondo: true,
-        units: [],
-        totalApprox: 0,
-        requestId,
-      };
+      if (where) {
+        pass1TotalApprox = await soqlCount(CONDO_UNITS_DATASET_ID, where, appToken);
 
-      responseCache.set(cacheKey, { data: resp, timestamp: Date.now() });
-      return new Response(JSON.stringify(resp), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
+        const unitBblCol = getUnitBblColumn(unitsCols);
+        const selectCols = [
+          ...(unitBblCol ? [unitBblCol] : []),
+          ...['unit_boro', 'unit_block', 'unit_lot', 'unit_designation'].filter((c) => hasCol(unitsCols, c)),
+        ];
 
-    const totalApprox = await soqlCount(CONDO_UNITS_DATASET_ID, where, appToken);
+        const q = new URLSearchParams();
+        q.set('$select', Array.from(new Set(selectCols)).join(',') || (unitBblCol ?? 'bbl'));
+        q.set('$where', where);
+        if (unitBblCol) q.set('$order', unitBblCol);
+        q.set('$limit', String(limit));
+        q.set('$offset', String(offset));
 
-    // Keep raw minimally large, but still provide a meaningful raw record.
-    const selectCols = [...['unit_bbl', 'unit_boro', 'unit_block', 'unit_lot', 'unit_designation'].filter((c) => hasCol(unitsCols, c))];
+        const { resp: unitsResp, url: unitsUrl } = await soqlFetch(CONDO_UNITS_DATASET_ID, q, appToken);
 
-    const q = new URLSearchParams();
-    q.set('$select', selectCols.join(',') || 'unit_bbl');
-    q.set('$where', where);
-    if (hasCol(unitsCols, 'unit_bbl')) q.set('$order', 'unit_bbl');
-    q.set('$limit', String(limit));
-    q.set('$offset', String(offset));
-
-    const { resp: unitsResp, url: unitsUrl } = await soqlFetch(CONDO_UNITS_DATASET_ID, q, appToken);
-
-    if (!unitsResp.ok) {
-      console.log(`[${requestId}] Units query failed: status=${unitsResp.status}; url=${unitsUrl}`);
-      return new Response(
-        JSON.stringify({ error: 'Upstream error', userMessage: 'Unable to load condo units right now.', requestId }),
-        { status: 502, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    const rows = await unitsResp.json();
-    const units: CondoUnit[] = [];
-    if (Array.isArray(rows)) {
-      for (const r of rows) {
-        const unit = normalizeUnitFromRow(unitsCols, r as Record<string, unknown>);
-        if (unit) units.push(unit);
+        if (!unitsResp.ok) {
+          console.log(`[${requestId}] pass1 query failed dataset=${CONDO_UNITS_DATASET_ID} status=${unitsResp.status} url=${unitsUrl}`);
+          pass1Units = [];
+          pass1TotalApprox = 0;
+        } else {
+          const rows = await unitsResp.json();
+          if (Array.isArray(rows)) {
+            for (const r of rows) {
+              const unit = normalizeUnitFromRow(unitsCols, r as Record<string, unknown>);
+              if (unit) pass1Units.push(unit);
+            }
+          }
+          console.log(
+            `[${requestId}] pass1 result dataset=${CONDO_UNITS_DATASET_ID} where=${where} totalApprox=${pass1TotalApprox} returned=${pass1Units.length}`
+          );
+        }
+      } else {
+        console.log(
+          `[${requestId}] pass1 Condo confirmed but cannot build unit WHERE. unitsCols=${Array.from(unitsCols).join(',')}`
+        );
       }
+    } else {
+      console.log(`[${requestId}] pass1 resolveCondoContext isCondo=false (will consider pass2 fallback)`);
     }
 
-    console.log(
-      `[${requestId}] enumerateCondoUnits result dataset=${CONDO_UNITS_DATASET_ID} where=${where} totalApprox=${totalApprox} returned=${units.length}`
-    );
+    // Pass 2: block/lot-range fallback.
+    const lotLooksBilling = parsed ? looksLikeBillingLot(parsed.lot) : false;
+    const lotLooksUnit = parsed ? looksLikeUnitLot(parsed.lot) : false;
+    const shouldRunPass2 = pass1Units.length === 0 && (lotLooksBilling || lotLooksUnit || ctx.isCondo);
 
-    if (totalApprox === 0) {
+    let strategyUsed: StrategyUsed = 'condoDataset';
+    let finalUnits = pass1Units;
+    let totalApprox = pass1TotalApprox;
+
+    if (shouldRunPass2) {
+      const pass2 = await enumerateUnitsByBlockLotFallback({
+        inputBbl: bbl,
+        limit,
+        offset,
+        appToken,
+        requestId,
+      });
+
+      strategyUsed = 'blockLotFallback';
+      finalUnits = pass2.units;
+      totalApprox = pass2.totalApprox;
+
       console.log(
-        `[${requestId}] Condo context resolved but 0 unit lots returned from unit dataset. where=${where} reason=${reason}`
+        `[${requestId}] strategyUsed=${strategyUsed} pass1={dataset:${CONDO_UNITS_DATASET_ID},where:${pass1Where ?? 'null'},count:${pass1Units.length}} pass2={dataset:${pass2.datasetId ?? 'null'},where:${pass2.where ?? 'null'},count:${pass2.units.length}}`
+      );
+
+      if (ctx.isCondo && pass2.units.length === 0) {
+        console.log(
+          `[${requestId}] Condo detected but 0 unit lots returned from pass2 tax lot dataset. pass2dataset=${pass2.datasetId ?? 'null'} where=${pass2.where ?? 'null'}`
+        );
+      }
+    } else {
+      console.log(
+        `[${requestId}] strategyUsed=${strategyUsed} pass1={dataset:${CONDO_UNITS_DATASET_ID},where:${pass1Where ?? 'null'},count:${pass1Units.length}}`
       );
     }
+
+    const inferredIsCondo = ctx.isCondo || lotLooksBilling || lotLooksUnit;
+    const billingBbl = ctx.billingBbl || (inputRole === 'billing' ? bbl : null);
 
     const respBody: CondoUnitsListResponse = {
       inputBbl: bbl,
-      inputRole: ctx.inputRole,
-      billingBbl: ctx.billingBbl,
-      inputIsUnitLot: ctx.inputIsUnitLot,
-      isCondo: true,
-      units,
+      inputRole,
+      billingBbl,
+      inputIsUnitLot,
+      isCondo: inferredIsCondo,
+      strategyUsed,
+      units: finalUnits,
       totalApprox,
       requestId,
     };
@@ -700,4 +877,5 @@ Deno.serve(async (req) => {
     );
   }
 });
+
 
