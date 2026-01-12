@@ -491,6 +491,95 @@ export function extractUnitCandidatesFromText(text: string): Array<{ token: stri
   return out;
 }
 
+// ============================================================================
+// PUBLIC HELPERS (exported API expected by other modules)
+// ============================================================================
+
+/**
+ * Group records by extracted unit.
+ * Records with no extractable unit are grouped under the null key.
+ */
+export function groupRecordsByUnit<T extends Record<string, unknown>>(
+  records: T[]
+): Map<string | null, T[]> {
+  const groups = new Map<string | null, T[]>();
+  for (const record of records) {
+    const unit = extractUnitFromRecord(record);
+    const arr = groups.get(unit) ?? [];
+    arr.push(record);
+    groups.set(unit, arr);
+  }
+  return groups;
+}
+
+export interface UnitStats {
+  unit: string;
+  count: number;
+  lastActivity: Date | null;
+}
+
+/**
+ * Aggregate per-unit counts + latest date seen in the provided dateField.
+ */
+export function getUnitStats<T extends Record<string, unknown>>(
+  records: T[],
+  dateField: string = 'issueDate'
+): UnitStats[] {
+  const groups = groupRecordsByUnit(records);
+  const stats: UnitStats[] = [];
+
+  for (const [unit, recs] of groups.entries()) {
+    if (!unit) continue;
+    let maxDate: Date | null = null;
+    for (const r of recs) {
+      const v = r[dateField] as unknown;
+      if (typeof v === 'string' && v) {
+        const d = new Date(v);
+        if (!Number.isNaN(d.getTime())) {
+          if (!maxDate || d > maxDate) maxDate = d;
+        }
+      }
+    }
+    stats.push({ unit, count: recs.length, lastActivity: maxDate });
+  }
+
+  return stats.sort((a, b) => {
+    if (b.count !== a.count) return b.count - a.count;
+    return a.unit.localeCompare(b.unit, undefined, { numeric: true });
+  });
+}
+
+/**
+ * Filter records to those that match a specific unit context.
+ * If unitContext is null/empty/invalid, returns the original array.
+ */
+export function filterRecordsByUnit<T extends Record<string, unknown>>(
+  records: T[],
+  unitContext: string | null
+): T[] {
+  if (!unitContext) return records;
+  // IMPORTANT: unit context is a user-selected filter; treat as "strong evidence"
+  // so numeric-only contexts (e.g., "12") can still function in the UI.
+  const normalizedContext = normalizeUnit(unitContext, false, true);
+  if (!normalizedContext) return records;
+  return records.filter((record) => extractUnitFromRecord(record) === normalizedContext);
+}
+
+/**
+ * Convenience helper used by UI for highlighting.
+ */
+export function recordMentionsUnit(
+  record: Record<string, unknown> | null | undefined,
+  unitContext: string | null
+): boolean {
+  if (!record || !unitContext) return false;
+  // Same rationale as filterRecordsByUnit: UI context should be treated as strong.
+  const normalizedContext = normalizeUnit(unitContext, false, true);
+  if (!normalizedContext) return false;
+  const recordUnit = extractUnitFromRecord(record);
+  return recordUnit === normalizedContext;
+}
+
 // ------------------------------
 // DEV globals for sanity / tests
 // ------------------------------
