@@ -124,6 +124,14 @@ export function ThreeOneOneTab({ lat, lon, scope = 'building' }: ThreeOneOneTabP
 
   return (
     <div className="space-y-4">
+      {/* Queried Identifier */}
+      <QueriedIdentifier
+        bbl=""
+        scope={scope}
+        datasetCapability="geo"
+        datasetName="311 Service Requests (erm2-nwe9)"
+      />
+      
       <div className="flex items-center gap-2 text-sm text-muted-foreground p-3 bg-muted/30 rounded-lg">
         <Info className="h-4 w-4 flex-shrink-0" />
         <span>Nearby 311 service requests within <strong>{data?.radiusMeters || localFilters.radiusMeters}m</strong> of property coordinates.</span>

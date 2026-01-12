@@ -1,27 +1,31 @@
-import { useSummary } from '@/hooks/useSummary';
+import { useDualScopeSummary, DualScopeSummaryData } from '@/hooks/useDualScopeSummary';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { AlertCircle, FileText, Shield, Hammer, AlertTriangle, Download, Printer } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
+import { AlertCircle, FileText, Shield, Hammer, AlertTriangle, Download, Printer, Home, Building2, Info } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { exportToCSV, SUMMARY_COLUMNS } from '@/lib/csv-export';
 import { toast } from '@/hooks/use-toast';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
 interface SummaryTabProps {
   bbl: string;
+  billingBbl?: string | null;
   address?: string;
   onTabChange: (tab: string) => void;
 }
 
-interface SummaryCardProps {
+interface DualCountCardProps {
   title: string;
   icon: React.ReactNode;
-  totalCount: number;
-  openCount: number;
-  lastActivityDate: string | null;
+  unitData: { totalCount: number; openCount: number; lastActivityDate: string | null } | null;
+  buildingData: { totalCount: number; openCount: number; lastActivityDate: string | null } | null;
+  isUnitCapable: boolean;
   tabKey: string;
   onTabChange: (tab: string) => void;
+  showDualCounts: boolean;
 }
 
 function getStatusColor(openCount: number): string {
@@ -46,7 +50,20 @@ function formatDate(dateString: string | null): string {
   }
 }
 
-function SummaryCard({ title, icon, totalCount, openCount, lastActivityDate, tabKey, onTabChange }: SummaryCardProps) {
+function DualCountCard({ 
+  title, 
+  icon, 
+  unitData, 
+  buildingData, 
+  isUnitCapable, 
+  tabKey, 
+  onTabChange,
+  showDualCounts 
+}: DualCountCardProps) {
+  // Use building data for the border color since that's the primary view
+  const primaryData = buildingData || unitData;
+  const openCount = primaryData?.openCount || 0;
+
   return (
     <Card 
       className={cn(
@@ -59,25 +76,81 @@ function SummaryCard({ title, icon, totalCount, openCount, lastActivityDate, tab
         <CardTitle className="flex items-center gap-2 text-base">
           {icon}
           {title}
+          {!isUnitCapable && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Badge variant="outline" className="text-[10px] px-1 py-0 font-normal">
+                  Building-level
+                </Badge>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>This dataset only supports building-level queries</p>
+              </TooltipContent>
+            </Tooltip>
+          )}
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
+        {showDualCounts ? (
+          <>
+            {/* Dual counts view */}
+            <div className="grid grid-cols-2 gap-2">
+              <div className="bg-muted/30 rounded p-2 text-center">
+                <div className="flex items-center justify-center gap-1 text-xs text-muted-foreground mb-1">
+                  <Home className="h-3 w-3" />
+                  <span>Unit</span>
+                </div>
+                {isUnitCapable && unitData ? (
+                  <span className={cn("text-lg font-semibold", unitData.openCount > 0 ? 'text-destructive' : 'text-green-600')}>
+                    {unitData.openCount}
+                  </span>
+                ) : (
+                  <span className="text-muted-foreground text-sm">—</span>
+                )}
+              </div>
+              <div className="bg-muted/30 rounded p-2 text-center">
+                <div className="flex items-center justify-center gap-1 text-xs text-muted-foreground mb-1">
+                  <Building2 className="h-3 w-3" />
+                  <span>Building</span>
+                </div>
+                {buildingData ? (
+                  <span className={cn("text-lg font-semibold", buildingData.openCount > 0 ? 'text-destructive' : 'text-green-600')}>
+                    {buildingData.openCount}
+                  </span>
+                ) : (
+                  <span className="text-muted-foreground text-sm">—</span>
+                )}
+              </div>
+            </div>
+            
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-muted-foreground">Total (Building)</span>
+              <span className="font-medium">{buildingData?.totalCount || 0}</span>
+            </div>
+          </>
+        ) : (
+          <>
+            {/* Single count view (building only) */}
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-muted-foreground">Total</span>
+              <span className="font-semibold text-lg">{primaryData?.totalCount || 0}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-muted-foreground">Open</span>
+              <span className={cn("px-2 py-0.5 rounded-full text-sm font-medium", getStatusBadgeColor(openCount))}>
+                {openCount}
+              </span>
+            </div>
+          </>
+        )}
+        
         <div className="flex items-center justify-between">
-          <span className="text-sm text-muted-foreground">Total</span>
-          <span className="font-semibold text-lg">{totalCount}</span>
+          <span className="text-xs text-muted-foreground">Last Activity</span>
+          <span className="text-xs">{formatDate(primaryData?.lastActivityDate || null)}</span>
         </div>
-        <div className="flex items-center justify-between">
-          <span className="text-sm text-muted-foreground">Open</span>
-          <span className={cn("px-2 py-0.5 rounded-full text-sm font-medium", getStatusBadgeColor(openCount))}>
-            {openCount}
-          </span>
-        </div>
-        <div className="flex items-center justify-between">
-          <span className="text-sm text-muted-foreground">Last Activity</span>
-          <span className="text-sm">{formatDate(lastActivityDate)}</span>
-        </div>
+        
         <button 
-          className="w-full text-sm text-primary hover:underline text-center pt-2"
+          className="w-full text-sm text-primary hover:underline text-center pt-1"
           onClick={(e) => {
             e.stopPropagation();
             onTabChange(tabKey);
@@ -113,36 +186,59 @@ function LoadingSkeleton() {
   );
 }
 
-export function SummaryTab({ bbl, address, onTabChange }: SummaryTabProps) {
-  const { loading, error, data } = useSummary(bbl);
+export function SummaryTab({ bbl, billingBbl, address, onTabChange }: SummaryTabProps) {
+  // Determine if we're on a unit page
+  const lotNumber = parseInt(bbl.slice(6), 10);
+  const isUnitLot = lotNumber >= 1001 && lotNumber <= 6999;
+  
+  // For dual scope, use the current BBL as unit and billingBbl as building
+  const unitBbl = isUnitLot ? bbl : null;
+  const buildingBblToUse = billingBbl || bbl;
+  
+  const { loading, error, data } = useDualScopeSummary(unitBbl, buildingBblToUse);
+  
+  // Show dual counts only when we have both unit and building data and they're different
+  const showDualCounts = isUnitLot && billingBbl && billingBbl !== bbl;
 
   const handleExportSummaryCSV = () => {
-    if (!data) return;
+    if (!data?.building) return;
     
+    const buildingData = data.building;
     const summaryData = [
       {
         recordType: 'Violations',
-        totalCount: data.violations.totalCount,
-        openCount: data.violations.openCount,
-        lastActivityDate: data.violations.lastActivityDate || '',
+        scope: 'Building',
+        totalCount: buildingData.violations.totalCount,
+        openCount: buildingData.violations.openCount,
+        lastActivityDate: buildingData.violations.lastActivityDate || '',
       },
       {
         recordType: 'ECB',
-        totalCount: data.ecb.totalCount,
-        openCount: data.ecb.openCount,
-        lastActivityDate: data.ecb.lastActivityDate || '',
+        scope: 'Building',
+        totalCount: buildingData.ecb.totalCount,
+        openCount: buildingData.ecb.openCount,
+        lastActivityDate: buildingData.ecb.lastActivityDate || '',
       },
       {
         recordType: 'Permits',
-        totalCount: data.permits.totalCount,
-        openCount: data.permits.openCount,
-        lastActivityDate: data.permits.lastActivityDate || '',
+        scope: 'Building',
+        totalCount: buildingData.permits.totalCount,
+        openCount: buildingData.permits.openCount,
+        lastActivityDate: buildingData.permits.lastActivityDate || '',
       },
       {
         recordType: 'Safety',
-        totalCount: data.safety.totalCount,
-        openCount: data.safety.openCount,
-        lastActivityDate: data.safety.lastActivityDate || '',
+        scope: 'Building',
+        totalCount: buildingData.safety.totalCount,
+        openCount: buildingData.safety.openCount,
+        lastActivityDate: buildingData.safety.lastActivityDate || '',
+      },
+      {
+        recordType: 'HPD',
+        scope: 'Building',
+        totalCount: buildingData.hpd.totalCount,
+        openCount: buildingData.hpd.openCount,
+        lastActivityDate: buildingData.hpd.lastActivityDate || '',
       },
     ];
 
@@ -177,7 +273,7 @@ export function SummaryTab({ bbl, address, onTabChange }: SummaryTabProps) {
     );
   }
 
-  if (!data) {
+  if (!data?.building && !data?.unit) {
     return (
       <Alert>
         <AlertCircle className="h-4 w-4" />
@@ -186,19 +282,44 @@ export function SummaryTab({ bbl, address, onTabChange }: SummaryTabProps) {
     );
   }
 
+  const buildingData = data.building;
+  const unitData = data.unit;
+  const totalOpenCount = buildingData?.overall.totalOpenCount || 0;
+
   return (
     <div className="space-y-6">
       {/* Header with Export Actions */}
       <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
         <div className="space-y-1">
-          <p className="text-sm text-muted-foreground">BBL: {bbl}</p>
+          {showDualCounts && (
+            <div className="flex items-center gap-2 mb-2">
+              <Badge variant="outline" className="gap-1">
+                <Home className="h-3 w-3" />
+                Unit: {bbl}
+              </Badge>
+              <Badge variant="secondary" className="gap-1">
+                <Building2 className="h-3 w-3" />
+                Building: {billingBbl}
+              </Badge>
+            </div>
+          )}
+          {!showDualCounts && (
+            <p className="text-sm text-muted-foreground">BBL: {bbl}</p>
+          )}
           {address && <p className="font-medium">{address}</p>}
-          {data.overall.totalOpenCount > 0 ? (
+          {totalOpenCount > 0 ? (
             <p className="text-sm text-destructive font-medium">
-              {data.overall.totalOpenCount} open issue{data.overall.totalOpenCount !== 1 ? 's' : ''} across all categories
+              {totalOpenCount} open issue{totalOpenCount !== 1 ? 's' : ''} across all categories (building-level)
             </p>
           ) : (
             <p className="text-sm text-green-600 font-medium">No open issues</p>
+          )}
+          
+          {showDualCounts && (
+            <p className="text-xs text-muted-foreground flex items-center gap-1 mt-1">
+              <Info className="h-3 w-3" />
+              Cards show Unit vs Building open counts. Most datasets are building-level only.
+            </p>
           )}
         </div>
         
@@ -225,50 +346,64 @@ export function SummaryTab({ bbl, address, onTabChange }: SummaryTabProps) {
       </div>
 
       {/* Summary Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <SummaryCard
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+        <DualCountCard
           title="Violations"
           icon={<FileText className="h-4 w-4" />}
-          totalCount={data.violations.totalCount}
-          openCount={data.violations.openCount}
-          lastActivityDate={data.violations.lastActivityDate}
+          unitData={unitData?.violations || null}
+          buildingData={buildingData?.violations || null}
+          isUnitCapable={data.isUnitCapable.violations}
           tabKey="violations"
           onTabChange={onTabChange}
+          showDualCounts={showDualCounts}
         />
-        <SummaryCard
+        <DualCountCard
           title="ECB"
           icon={<AlertTriangle className="h-4 w-4" />}
-          totalCount={data.ecb.totalCount}
-          openCount={data.ecb.openCount}
-          lastActivityDate={data.ecb.lastActivityDate}
+          unitData={unitData?.ecb || null}
+          buildingData={buildingData?.ecb || null}
+          isUnitCapable={data.isUnitCapable.ecb}
           tabKey="ecb"
           onTabChange={onTabChange}
+          showDualCounts={showDualCounts}
         />
-        <SummaryCard
+        <DualCountCard
           title="Permits"
           icon={<Hammer className="h-4 w-4" />}
-          totalCount={data.permits.totalCount}
-          openCount={data.permits.openCount}
-          lastActivityDate={data.permits.lastActivityDate}
+          unitData={unitData?.permits || null}
+          buildingData={buildingData?.permits || null}
+          isUnitCapable={data.isUnitCapable.permits}
           tabKey="permits"
           onTabChange={onTabChange}
+          showDualCounts={showDualCounts}
         />
-        <SummaryCard
+        <DualCountCard
           title="Safety"
           icon={<Shield className="h-4 w-4" />}
-          totalCount={data.safety.totalCount}
-          openCount={data.safety.openCount}
-          lastActivityDate={data.safety.lastActivityDate}
+          unitData={unitData?.safety || null}
+          buildingData={buildingData?.safety || null}
+          isUnitCapable={data.isUnitCapable.safety}
           tabKey="safety"
           onTabChange={onTabChange}
+          showDualCounts={showDualCounts}
+        />
+        <DualCountCard
+          title="HPD"
+          icon={<AlertCircle className="h-4 w-4" />}
+          unitData={unitData?.hpd || null}
+          buildingData={buildingData?.hpd || null}
+          isUnitCapable={data.isUnitCapable.hpd}
+          tabKey="hpd"
+          onTabChange={onTabChange}
+          showDualCounts={showDualCounts}
         />
       </div>
 
       {/* Overall Summary */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-sm text-muted-foreground">
-        {data.overall.overallLastActivityDate && (
+        {buildingData?.overall.overallLastActivityDate && (
           <p>
-            Last activity across all records: {formatDate(data.overall.overallLastActivityDate)}
+            Last activity across all records: {formatDate(buildingData.overall.overallLastActivityDate)}
           </p>
         )}
         <p className="print:block hidden">

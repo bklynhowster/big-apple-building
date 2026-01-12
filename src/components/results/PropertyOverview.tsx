@@ -13,6 +13,8 @@ interface PropertyOverviewProps {
   latitude?: number;
   longitude?: number;
   unitLabel?: string | null;
+  billingBbl?: string | null;
+  isCondoUnit?: boolean;
 }
 
 // Extract block and lot from BBL
@@ -75,6 +77,8 @@ export function PropertyOverview({
   latitude,
   longitude,
   unitLabel,
+  billingBbl,
+  isCondoUnit,
 }: PropertyOverviewProps) {
   const { boroughCode, block, lot } = parseBBL(bbl);
   const derivedBorough = borough || BOROUGH_NAMES[boroughCode] || '';
@@ -156,8 +160,20 @@ export function PropertyOverview({
                 {derivedBorough && (
                   <span className="text-muted-foreground">{derivedBorough}</span>
                 )}
+                
+                {/* Show building BBL for condo units */}
+                {isCondoUnit && billingBbl && (
+                  <div className="flex items-center gap-1 bg-muted/50 px-2 py-0.5 rounded">
+                    <span className="text-muted-foreground text-xs">Building:</span>
+                    <span className="font-mono text-xs">{billingBbl}</span>
+                    <CopyButton value={billingBbl} label="Building BBL" />
+                  </div>
+                )}
+                
                 <div className="flex items-center gap-1">
-                  <span className="font-mono text-muted-foreground">BBL:</span>
+                  <span className="font-mono text-muted-foreground">
+                    {isCondoUnit ? 'Unit BBL:' : 'BBL:'}
+                  </span>
                   <span className="font-mono font-medium">{bbl}</span>
                   <CopyButton value={bbl} label="BBL" />
                 </div>
