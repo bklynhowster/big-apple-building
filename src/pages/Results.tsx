@@ -7,6 +7,7 @@ import { ContextBanner, QueryScope } from '@/components/results/ContextBanner';
 import { PropertyOverview } from '@/components/results/PropertyOverview';
 import { PropertyProfileCard } from '@/components/results/PropertyProfileCard';
 import { CondoUnitsCard } from '@/components/results/CondoUnitsCard';
+import { ResidentialUnitsCard } from '@/components/results/ResidentialUnitsCard';
 import { SummaryTab } from '@/components/results/SummaryTab';
 import { ViolationsTab } from '@/components/results/ViolationsTab';
 import { ECBTab } from '@/components/results/ECBTab';
@@ -248,8 +249,8 @@ export default function Results() {
                 parentAddress={address}
               />
               
-              {/* Condo Units Discovery - only show when NOT on a unit page */}
-              {!isUnitLot && (
+              {/* Condo Units Discovery - only show when NOT on a unit page and NOT a co-op */}
+              {!isUnitLot && !isCoop && (
                 <CondoUnitsCard 
                   bbl={bbl} 
                   onUnitLabelResolved={setCurrentUnitLabel}
@@ -258,12 +259,21 @@ export default function Results() {
               )}
               
               {/* Hidden component to resolve billing BBL when on unit page */}
-              {isUnitLot && (
+              {isUnitLot && !isCoop && (
                 <CondoUnitsCard 
                   bbl={bbl} 
                   onUnitLabelResolved={setCurrentUnitLabel}
                   onBillingBblResolved={handleBillingBblResolved}
                   hidden
+                />
+              )}
+
+              {/* Residential Units Card - Co-ops only (informational unit enumeration) */}
+              {isCoop && (
+                <ResidentialUnitsCard
+                  buildingBbl={bbl}
+                  selectedUnit={coopUnitContext}
+                  onUnitSelect={handleCoopUnitContextChange}
                 />
               )}
 
