@@ -10,7 +10,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { getUnitStats, UnitStats, extractUnitFromRecord } from '@/utils/unit';
+import { getUnitStats, UnitStats, extractUnitFromRecord, extractUnitFromRecordWithTrace } from '@/utils/unit';
 import type { HPDComplaintRecord, HPDViolationRecord } from '@/hooks/useHPD';
 import type { ServiceRequestRecord } from '@/hooks/use311';
 import type { UnitRosterEntry } from '@/hooks/useCoopUnitRoster';
@@ -49,6 +49,10 @@ interface ViolationMentionRef {
   status: string;
   issueDate: string | null;
   description: string | null;
+  /** Field where unit was found */
+  sourceField: string | null;
+  /** Text snippet showing context */
+  snippet: string | null;
 }
 
 interface PermitMentionRef {
@@ -59,6 +63,9 @@ interface PermitMentionRef {
   status: string;
   issueDate: string | null;
   description: string | null;
+  /** Field where unit was found */
+  sourceField: string | null;
+  /** Text snippet showing context */
   snippet: string | null;
 }
 
@@ -281,8 +288,9 @@ function combineUnitStats(
 
   // Process DOB Violations that mention units
   for (const record of dobViolations) {
-    const unit = extractUnitFromRecord(record.raw);
-    if (unit) {
+    const extraction = extractUnitFromRecordWithTrace(record.raw);
+    if (extraction) {
+      const unit = extraction.normalizedUnit;
       const entry = getOrCreate(unit);
       entry.dobViolationsCount += 1;
       entry.totalCount += 1;
@@ -304,7 +312,7 @@ function combineUnitStats(
         });
       }
       
-      // Add to violation refs for the new section
+      // Add to violation refs for the new section with traceability
       entry.violationRefs.push({
         type: 'dob-violation',
         id: record.recordId,
@@ -312,14 +320,17 @@ function combineUnitStats(
         status: record.status,
         issueDate: record.issueDate,
         description: record.description,
+        sourceField: extraction.sourceField,
+        snippet: extraction.snippet,
       });
     }
   }
 
   // Process ECB Violations that mention units
   for (const record of ecbViolations) {
-    const unit = extractUnitFromRecord(record.raw);
-    if (unit) {
+    const extraction = extractUnitFromRecordWithTrace(record.raw);
+    if (extraction) {
+      const unit = extraction.normalizedUnit;
       const entry = getOrCreate(unit);
       entry.ecbViolationsCount += 1;
       entry.totalCount += 1;
@@ -341,7 +352,7 @@ function combineUnitStats(
         });
       }
       
-      // Add to violation refs for the new section
+      // Add to violation refs for the new section with traceability
       entry.violationRefs.push({
         type: 'ecb',
         id: record.recordId,
@@ -349,14 +360,17 @@ function combineUnitStats(
         status: record.status,
         issueDate: record.issueDate,
         description: record.description,
+        sourceField: extraction.sourceField,
+        snippet: extraction.snippet,
       });
     }
   }
 
   // Process DOB Permits that mention units
   for (const record of dobPermits) {
-    const unit = extractUnitFromRecord(record.raw);
-    if (unit) {
+    const extraction = extractUnitFromRecordWithTrace(record.raw);
+    if (extraction) {
+      const unit = extraction.normalizedUnit;
       const entry = getOrCreate(unit);
       entry.permitsCount += 1;
       entry.totalCount += 1;
@@ -379,18 +393,7 @@ function combineUnitStats(
         });
       }
       
-      // Extract snippet showing unit mention
-      let snippet: string | null = null;
-      const descText = record.description || '';
-      if (descText) {
-        const unitPattern = new RegExp(`(.{0,30})(APT\\.?|APARTMENT|UNIT|#)\\s*${unit}(.{0,30})`, 'i');
-        const match = descText.match(unitPattern);
-        if (match) {
-          snippet = `...${match[1]}${match[2]} ${unit}${match[3]}...`.trim();
-        }
-      }
-      
-      // Add to permit refs
+      // Add to permit refs with traceability from extraction
       entry.permitRefs.push({
         type: 'permit',
         id: record.recordId,
@@ -399,7 +402,8 @@ function combineUnitStats(
         status: record.status,
         issueDate: record.issueDate,
         description: record.description,
-        snippet,
+        sourceField: extraction.sourceField,
+        snippet: extraction.snippet,
       });
     }
   }
@@ -592,8 +596,18 @@ function ViolationsMentioningUnitsSection({
                             <p><strong>{vio.label}</strong></p>
                             <p>Status: {vio.status}</p>
                             {vio.issueDate && <p>Issued: {vio.issueDate}</p>}
-                            {vio.description && <p className="line-clamp-2">{vio.description}</p>}
-                            <p className="text-muted-foreground italic">Mentions unit in record text</p>
+                            {vio.sourceField && (
+                              <p className="text-muted-foreground">
+                                Found in: <code className="bg-muted px-1 py-0.5 rounded text-[10px]">{vio.sourceField}</code>
+                              </p>
+                            )}
+                            {vio.snippet && (
+                              <p className="bg-yellow-100 dark:bg-yellow-900/30 px-1 py-0.5 rounded italic">
+                                {vio.snippet}
+                              </p>
+                            )}
+                            {!vio.snippet && vio.description && <p className="line-clamp-2">{vio.description}</p>}
+                            <p className="text-muted-foreground italic">Unit mentioned in record text</p>
                           </div>
                         </TooltipContent>
                       </Tooltip>
@@ -718,15 +732,20 @@ function PermitsMentioningUnitsSection({
                             <p><strong>{permit.label}</strong></p>
                             <p>Status: {permit.status}</p>
                             {permit.issueDate && <p>Issued: {permit.issueDate}</p>}
+                            {permit.sourceField && (
+                              <p className="text-muted-foreground">
+                                Found in: <code className="bg-muted px-1 py-0.5 rounded text-[10px]">{permit.sourceField}</code>
+                              </p>
+                            )}
                             {permit.snippet && (
                               <p className="bg-yellow-100 dark:bg-yellow-900/30 px-1 py-0.5 rounded italic">
                                 {permit.snippet}
                               </p>
                             )}
-                            {permit.description && !permit.snippet && (
+                            {!permit.snippet && permit.description && (
                               <p className="line-clamp-2">{permit.description}</p>
                             )}
-                            <p className="text-muted-foreground italic">Mentions unit in filing text</p>
+                            <p className="text-muted-foreground italic">Unit mentioned in filing text</p>
                             {dobNowUrl && (
                               <a 
                                 href={dobNowUrl} 
