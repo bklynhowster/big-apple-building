@@ -13,6 +13,9 @@ import type { ViolationRecord } from '@/hooks/useViolations';
 import type { ECBRecord } from '@/hooks/useECB';
 import type { PermitRecord } from '@/hooks/usePermits';
 
+// Unit-like patterns for fallback detection
+const UNIT_PATTERN_INDICATORS = /\b(APT|APARTMENT|UNIT|#\d|PH|PENTHOUSE|FL\s*\d|RM|ROOM|STE|SUITE)\b/i;
+
 // ============================================================================
 // TYPES
 // ============================================================================
@@ -824,12 +827,60 @@ export function useUnitMentions(
         elapsedMs: Date.now() - startTimeRef.current,
       }));
       
+      // FALLBACK CHECK: If we found 0 units but records have unit-like patterns, log a warning
+      if (sorted.length === 0) {
+        const totalRecords = dataSources.dobFilingsUnits.length + dataSources.dobPermits.length +
+          dataSources.hpdViolations.length + dataSources.hpdComplaints.length +
+          dataSources.serviceRequests.length + dataSources.dobViolations.length +
+          dataSources.ecbViolations.length;
+        
+        if (totalRecords > 0) {
+          // Check a sample of records for unit-like patterns
+          const sampleRecords: Record<string, unknown>[] = [];
+          
+          // Add raw data from various sources
+          dataSources.hpdViolations.slice(0, 10).forEach(r => sampleRecords.push(r.raw));
+          dataSources.hpdComplaints.slice(0, 10).forEach(r => sampleRecords.push(r.raw));
+          dataSources.serviceRequests.slice(0, 10).forEach(r => sampleRecords.push(r.raw));
+          dataSources.dobViolations.slice(0, 10).forEach(r => sampleRecords.push(r.raw));
+          
+          // Check for unit-like patterns in record text
+          let foundPatterns = 0;
+          const patternExamples: string[] = [];
+          
+          for (const record of sampleRecords) {
+            const textFields = Object.values(record).filter(v => typeof v === 'string') as string[];
+            for (const text of textFields) {
+              if (UNIT_PATTERN_INDICATORS.test(text)) {
+                foundPatterns++;
+                if (patternExamples.length < 3) {
+                  const match = text.match(UNIT_PATTERN_INDICATORS);
+                  if (match) {
+                    patternExamples.push(`"...${text.substring(Math.max(0, match.index! - 20), match.index! + match[0].length + 20)}..."`);
+                  }
+                }
+                break; // Only count once per record
+              }
+            }
+          }
+          
+          if (foundPatterns > 0) {
+            console.warn(
+              `[UnitMentions] FALLBACK WARNING: Extracted 0 units from ${totalRecords} records, ` +
+              `but found ${foundPatterns} records with unit-like patterns in sample of ${sampleRecords.length}.\n` +
+              `This may indicate overly strict validation. Sample patterns found:\n` +
+              patternExamples.join('\n')
+            );
+          }
+        }
+      }
+      
       // Cache results
       if (sorted.length > 0) {
         saveToCache(bbl, sorted);
       }
     }
-  }, [loadingStates.ecbLoading, dataSources.ecbViolations, bbl, isCached, isPaused, loadingStates]);
+  }, [loadingStates.ecbLoading, dataSources.ecbViolations, bbl, isCached, isPaused, loadingStates, dataSources]);
   
   // Determine if all loading states are complete
   const allLoadingComplete = useMemo(() => {

@@ -119,18 +119,54 @@ export function isLikelyUnitLabel(unit: string): boolean {
   // Rule: Reject if it looks like a ZIP code (exactly 5 digits)
   if (/^\d{5}$/.test(unit)) return false;
   
-  // Allowed patterns for co-op units (TIGHTENED for short units)
+  // Allowed patterns for co-op units (EXPANDED for better coverage)
   const allowedPatterns = [
-    /^\d{1,2}[A-Z]$/,              // 2G, 12B (number + single letter)
-    /^\d{1,2}[A-Z]{2}$/,           // 12AB (number + two letters)
+    /^\d{1,2}[A-Z]$/,              // 2G, 6M, 12B (number + single letter)
+    /^\d{1,2}[A-Z]{2}$/,           // 12AB, 2GH (number + two letters)
+    /^\d{1,3}[A-Z]{1,2}$/,         // 100A, 123AB (extended for larger buildings)
     /^(PH|TH|LH|RH|BS|GF|PHS?)\d?[A-Z]?$/, // PH, PH2, PH2A, TH, GF, PHS
-    /^[A-Z]{1,2}\d{1,2}$/,         // A1, B12 (letter + number)
+    /^[A-Z]{1,2}\d{1,2}$/,         // A1, B12, AB1 (letter + number)
+    /^[A-Z]{1,2}\d{1,3}$/,         // A123, AB12 (letter + larger number)
     /^[A-Z]$/,                     // Single letter units: A, B, G, S
     /^\d{1,2}$/,                   // Short numeric: 1, 12 (only 1-2 digits)
     /^[A-Z]\d[A-Z]?$/,             // A2, A2B pattern
+    /^[A-Z]{2,3}$/,                // Two-three letter units like PH, PHW, etc.
+    /^\d+[A-Z]\d?$/,               // 6M1, 12A2 patterns
   ];
   
   return allowedPatterns.some(pattern => pattern.test(unit));
+}
+
+/**
+ * Less strict validation for fallback extraction.
+ * Used when primary extraction returns 0 units but records have obvious unit patterns.
+ */
+export function isLikelyUnitLabelRelaxed(unit: string): boolean {
+  if (!unit) return false;
+  
+  // Allow lengths up to 8 for relaxed mode
+  if (unit.length < 1 || unit.length > 8) return false;
+  
+  // Still reject floor-only patterns
+  for (const pattern of FLOOR_ONLY_PATTERNS) {
+    if (pattern.test(unit)) return false;
+  }
+  
+  // Still reject job/permit number patterns
+  for (const pattern of JOB_NUMBER_PATTERNS) {
+    if (pattern.test(unit)) return false;
+  }
+  
+  // Reject if only digits and length >= 4 (relaxed from 3)
+  if (/^\d+$/.test(unit) && unit.length >= 4) return false;
+  
+  // Allow any alphanumeric pattern with at least one letter or short numeric
+  if (/^[A-Z0-9]+$/.test(unit)) {
+    // Must have at least one letter OR be a short number (1-3 digits)
+    if (/[A-Z]/.test(unit) || unit.length <= 3) return true;
+  }
+  
+  return false;
 }
 
 /**
@@ -157,7 +193,7 @@ function containsAddressSubstring(raw: string): boolean {
  * - Removes punctuation except letters/numbers
  * - Returns null for junk values or address-like values
  */
-export function normalizeUnit(raw: string | null | undefined): string | null {
+export function normalizeUnit(raw: string | null | undefined, relaxed: boolean = false): string | null {
   if (raw == null) return null;
   
   // Trim and uppercase
@@ -186,10 +222,19 @@ export function normalizeUnit(raw: string | null | undefined): string | null {
   // Additional validation: must contain at least one letter or digit
   if (!/[A-Z0-9]/.test(value)) return null;
   
-  // Validate against unit label patterns
-  if (!isLikelyUnitLabel(value)) return null;
+  // Validate against unit label patterns - use relaxed mode if specified
+  const validator = relaxed ? isLikelyUnitLabelRelaxed : isLikelyUnitLabel;
+  if (!validator(value)) return null;
   
   return value;
+}
+
+/**
+ * Fallback unit extraction with relaxed validation.
+ * Used when strict extraction returns 0 units.
+ */
+export function normalizeUnitRelaxed(raw: string | null | undefined): string | null {
+  return normalizeUnit(raw, true);
 }
 
 // ============================================================================

@@ -1393,8 +1393,8 @@ export function UnitInsightsCard({
             </AlertDescription>
           </Alert>
 
-          {/* Debug line (dev only or ?debug=1) */}
-          {(process.env.NODE_ENV === 'development' || window.location.search.includes('debug=1')) && (
+          {/* Debug line - ONLY visible in development AND with explicit debug flag */}
+          {process.env.NODE_ENV === 'development' && window.location.search.includes('debug=1') && (
             <div className="text-xs font-mono bg-muted/50 p-2 rounded border">
               Scanned: DOB={debugStats.recordCounts.dobFilingsUnits + debugStats.recordCounts.dobPermits + debugStats.recordCounts.dobViolations} | 
               HPD={debugStats.recordCounts.hpdViolations + debugStats.recordCounts.hpdComplaints} | 
