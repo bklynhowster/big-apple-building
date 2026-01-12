@@ -91,8 +91,8 @@ interface CachedResult {
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
 const CACHE_KEY_PREFIX = 'unit_mentions_cache_';
 
-// Debug mode - set to true to enable console logging
-const DEBUG_MODE = process.env.NODE_ENV === 'development';
+// Debug mode - use import.meta.env for Vite projects
+const DEBUG_MODE = import.meta.env?.DEV ?? (typeof process !== 'undefined' && process.env?.NODE_ENV === 'development');
 
 // Debug stats collector
 interface DebugStats {
@@ -310,23 +310,37 @@ function processHPD(
   
   logDebug(`Processing HPD: ${hpdViolations.length} violations, ${hpdComplaints.length} complaints`);
   
-  // Process violations
-  const hpdViolationStats = getUnitStats(hpdViolations.map(r => r.raw));
-  logDebug(`HPD violations: ${hpdViolationStats.length} unique units found`);
-  
-  for (const stat of hpdViolationStats) {
-    const entry = getOrCreateUnit(unitMap, stat.unit);
-    entry.hpdCount += stat.count;
-    entry.totalCount += stat.count;
-    if (stat.lastActivity && (!entry.lastActivity || stat.lastActivity > entry.lastActivity)) {
-      entry.lastActivity = stat.lastActivity;
+  // Debug: Sample the first few records to see their structure
+  if (DEBUG_MODE && hpdViolations.length > 0) {
+    const sample = hpdViolations[0].raw;
+    const sampleKeys = Object.keys(sample).slice(0, 20);
+    logDebug(`HPD violation sample keys: ${sampleKeys.join(', ')}`);
+    
+    // Check for apartment field specifically
+    const aptValue = sample.apartment || sample.apt || sample.apartmentnumber;
+    if (aptValue) {
+      logDebug(`HPD violation has apartment field: "${aptValue}"`);
     }
   }
   
+  // Process violations - extract directly without getUnitStats wrapper for better tracing
+  let violationUnitsFound = 0;
   for (const record of hpdViolations) {
-    const unit = extractUnitFromRecord(record.raw);
-    if (unit && unitMap.has(unit)) {
-      const entry = unitMap.get(unit)!;
+    const extraction = extractUnitFromRecordWithTrace(record.raw);
+    if (extraction) {
+      violationUnitsFound++;
+      const entry = getOrCreateUnit(unitMap, extraction.normalizedUnit);
+      entry.hpdCount += 1;
+      entry.totalCount += 1;
+      
+      // Try to parse date
+      if (record.issueDate) {
+        const issueDate = new Date(record.issueDate);
+        if (!isNaN(issueDate.getTime()) && (!entry.lastActivity || issueDate > entry.lastActivity)) {
+          entry.lastActivity = issueDate;
+        }
+      }
+      
       if (entry.sourceRefs.filter(r => r.type === 'hpd').length < 3) {
         entry.sourceRefs.push({
           type: 'hpd',
@@ -337,24 +351,25 @@ function processHPD(
     }
     processed++;
   }
+  logDebug(`HPD violations: ${violationUnitsFound} units found from ${hpdViolations.length} records`);
   
-  // Process complaints
-  const hpdComplaintStats = getUnitStats(hpdComplaints.map(r => r.raw));
-  logDebug(`HPD complaints: ${hpdComplaintStats.length} unique units found`);
-  
-  for (const stat of hpdComplaintStats) {
-    const entry = getOrCreateUnit(unitMap, stat.unit);
-    entry.hpdCount += stat.count;
-    entry.totalCount += stat.count;
-    if (stat.lastActivity && (!entry.lastActivity || stat.lastActivity > entry.lastActivity)) {
-      entry.lastActivity = stat.lastActivity;
-    }
-  }
-  
+  // Process complaints - same approach
+  let complaintUnitsFound = 0;
   for (const record of hpdComplaints) {
-    const unit = extractUnitFromRecord(record.raw);
-    if (unit && unitMap.has(unit)) {
-      const entry = unitMap.get(unit)!;
+    const extraction = extractUnitFromRecordWithTrace(record.raw);
+    if (extraction) {
+      complaintUnitsFound++;
+      const entry = getOrCreateUnit(unitMap, extraction.normalizedUnit);
+      entry.hpdCount += 1;
+      entry.totalCount += 1;
+      
+      if (record.issueDate) {
+        const issueDate = new Date(record.issueDate);
+        if (!isNaN(issueDate.getTime()) && (!entry.lastActivity || issueDate > entry.lastActivity)) {
+          entry.lastActivity = issueDate;
+        }
+      }
+      
       if (entry.sourceRefs.filter(r => r.type === 'hpd').length < 3) {
         entry.sourceRefs.push({
           type: 'hpd',
@@ -365,6 +380,7 @@ function processHPD(
     }
     processed++;
   }
+  logDebug(`HPD complaints: ${complaintUnitsFound} units found from ${hpdComplaints.length} records`);
   
   logDebug(`After HPD: ${unitMap.size} unique units total`);
   return processed;
@@ -375,21 +391,32 @@ function process311(
   unitMap: Map<string, CombinedUnitStats>
 ): number {
   let processed = 0;
+  let unitsFound = 0;
   
-  const stats = getUnitStats(serviceRequests.map(r => r.raw));
-  for (const stat of stats) {
-    const entry = getOrCreateUnit(unitMap, stat.unit);
-    entry.threeOneOneCount = stat.count;
-    entry.totalCount += stat.count;
-    if (stat.lastActivity && (!entry.lastActivity || stat.lastActivity > entry.lastActivity)) {
-      entry.lastActivity = stat.lastActivity;
-    }
+  logDebug(`Processing 311: ${serviceRequests.length} requests`);
+  
+  // Debug: Sample the first few records
+  if (DEBUG_MODE && serviceRequests.length > 0) {
+    const sample = serviceRequests[0].raw;
+    const sampleKeys = Object.keys(sample).slice(0, 20);
+    logDebug(`311 sample keys: ${sampleKeys.join(', ')}`);
   }
   
   for (const record of serviceRequests) {
-    const unit = extractUnitFromRecord(record.raw);
-    if (unit && unitMap.has(unit)) {
-      const entry = unitMap.get(unit)!;
+    const extraction = extractUnitFromRecordWithTrace(record.raw);
+    if (extraction) {
+      unitsFound++;
+      const entry = getOrCreateUnit(unitMap, extraction.normalizedUnit);
+      entry.threeOneOneCount += 1;
+      entry.totalCount += 1;
+      
+      if (record.issueDate) {
+        const issueDate = new Date(record.issueDate);
+        if (!isNaN(issueDate.getTime()) && (!entry.lastActivity || issueDate > entry.lastActivity)) {
+          entry.lastActivity = issueDate;
+        }
+      }
+      
       if (entry.sourceRefs.filter(r => r.type === '311').length < 3) {
         entry.sourceRefs.push({
           type: '311',
@@ -401,6 +428,7 @@ function process311(
     processed++;
   }
   
+  logDebug(`311: ${unitsFound} units found from ${serviceRequests.length} records`);
   return processed;
 }
 

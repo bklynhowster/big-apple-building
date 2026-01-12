@@ -100,8 +100,8 @@ const PENTHOUSE_TOKENS = new Set(['PH', 'PENTHOUSE', 'PHS', 'PHN', 'PHE', 'PHW']
 export function isLikelyUnitLabel(unit: string): boolean {
   if (!unit) return false;
   
-  // Rule: Reject if length < 1 or > 6
-  if (unit.length < 1 || unit.length > 6) return false;
+  // Rule: Reject if length < 1 or > 8 (increased from 6 for units like "LOBBY1")
+  if (unit.length < 1 || unit.length > 8) return false;
   
   // Rule: Reject floor-only patterns
   for (const pattern of FLOOR_ONLY_PATTERNS) {
@@ -113,25 +113,27 @@ export function isLikelyUnitLabel(unit: string): boolean {
     if (pattern.test(unit)) return false;
   }
   
-  // Rule: Reject if only digits and length >= 3 (e.g., 325, 1200 are house numbers)
-  if (/^\d+$/.test(unit) && unit.length >= 3) return false;
+  // Rule: Reject if only digits and length >= 4 (e.g., 1200 are house numbers, but 325 might be valid)
+  // Relaxed from >= 3 to >= 4 to allow units like "325" in large buildings
+  if (/^\d+$/.test(unit) && unit.length >= 4) return false;
   
   // Rule: Reject if it looks like a ZIP code (exactly 5 digits)
   if (/^\d{5}$/.test(unit)) return false;
   
   // Allowed patterns for co-op units (EXPANDED for better coverage)
   const allowedPatterns = [
-    /^\d{1,2}[A-Z]$/,              // 2G, 6M, 12B (number + single letter)
-    /^\d{1,2}[A-Z]{2}$/,           // 12AB, 2GH (number + two letters)
-    /^\d{1,3}[A-Z]{1,2}$/,         // 100A, 123AB (extended for larger buildings)
-    /^(PH|TH|LH|RH|BS|GF|PHS?)\d?[A-Z]?$/, // PH, PH2, PH2A, TH, GF, PHS
-    /^[A-Z]{1,2}\d{1,2}$/,         // A1, B12, AB1 (letter + number)
-    /^[A-Z]{1,2}\d{1,3}$/,         // A123, AB12 (letter + larger number)
+    /^\d{1,3}[A-Z]$/,              // 2G, 6M, 12B, 100A (number + single letter) - EXPANDED to 3 digits
+    /^\d{1,3}[A-Z]{2}$/,           // 12AB, 2GH, 100AB (number + two letters) - EXPANDED
+    /^(PH|TH|LH|RH|BS|GF|PHS?|PHN|PHE|PHW)\d{0,2}[A-Z]?$/, // PH, PH2, PH2A, TH, GF, PHS, PHN, PHE, PHW
+    /^[A-Z]{1,2}\d{1,3}$/,         // A1, B12, AB1, A123 (letter + number) - EXPANDED
     /^[A-Z]$/,                     // Single letter units: A, B, G, S
-    /^\d{1,2}$/,                   // Short numeric: 1, 12 (only 1-2 digits)
+    /^\d{1,3}$/,                   // Short numeric: 1, 12, 100 (up to 3 digits) - EXPANDED
     /^[A-Z]\d[A-Z]?$/,             // A2, A2B pattern
-    /^[A-Z]{2,3}$/,                // Two-three letter units like PH, PHW, etc.
+    /^[A-Z]{2,4}$/,                // Two-four letter units like PH, PHW, REAR, etc. - EXPANDED
     /^\d+[A-Z]\d?$/,               // 6M1, 12A2 patterns
+    /^[A-Z]{1,2}\d{1,2}[A-Z]$/,    // A1B, AB12C patterns
+    /^\d{1,2}[A-Z]\d{1,2}$/,       // 1A2 patterns
+    /^(RM|STE|APT)\d+[A-Z]?$/,     // RM1, STE2A patterns (in case prefix not stripped)
   ];
   
   return allowedPatterns.some(pattern => pattern.test(unit));
@@ -608,6 +610,39 @@ export function hasValidBuildingId(record: Record<string, unknown> | null | unde
 // MAIN EXTRACTION FUNCTIONS
 // ============================================================================
 
+// Debug mode for extraction tracing
+const EXTRACTION_DEBUG = typeof window !== 'undefined' && 
+  window.location?.search?.includes('debug=1') && 
+  (import.meta.env?.DEV ?? process.env.NODE_ENV === 'development');
+
+/**
+ * Flatten a record's values to strings for extraction.
+ * Handles nested objects/arrays by JSON.stringify.
+ */
+function flattenRecordToStrings(record: Record<string, unknown>): Map<string, string> {
+  const result = new Map<string, string>();
+  
+  for (const [key, value] of Object.entries(record)) {
+    if (value == null) continue;
+    
+    if (typeof value === 'string') {
+      result.set(key, value);
+    } else if (typeof value === 'number' || typeof value === 'boolean') {
+      result.set(key, String(value));
+    } else if (typeof value === 'object') {
+      // For objects/arrays, stringify (truncated to avoid huge values)
+      try {
+        const json = JSON.stringify(value);
+        result.set(key, json.length > 500 ? json.slice(0, 500) : json);
+      } catch {
+        // Ignore circular refs
+      }
+    }
+  }
+  
+  return result;
+}
+
 /**
  * Extract and normalize a unit from a record with full traceability.
  * 
@@ -627,13 +662,12 @@ export function extractUnitFromRecordWithTrace(
 ): UnitExtractionResult | null {
   if (!record) return null;
   
-  // Note: Building validation is primarily done at the API level (BBL/BIN queries).
-  // Records returned from NYC Open Data are already filtered to the building.
-  // This is an additional safety check but not the primary validation.
+  // Flatten record for easier access
+  const flatRecord = flattenRecordToStrings(record);
   
   // Build a case-insensitive lookup map for the record keys
   const lowerKeyMap = new Map<string, string>();
-  for (const key of Object.keys(record)) {
+  for (const key of flatRecord.keys()) {
     lowerKeyMap.set(key.toLowerCase(), key);
   }
   
@@ -642,10 +676,15 @@ export function extractUnitFromRecordWithTrace(
     const actualKey = lowerKeyMap.get(field.toLowerCase());
     if (!actualKey) continue;
     
-    const value = record[actualKey];
+    const value = flatRecord.get(actualKey);
     if (value != null && value !== '') {
-      const rawValue = String(value);
-      const normalized = normalizeUnit(rawValue);
+      const rawValue = value;
+      // Try strict normalization first, then relaxed
+      let normalized = normalizeUnit(rawValue, false);
+      if (!normalized) {
+        normalized = normalizeUnit(rawValue, true);
+      }
+      
       if (normalized) {
         const unitType = determineUnitTypeFromField(field, normalized);
         const { confidence, reason } = determineConfidence(
@@ -654,6 +693,10 @@ export function extractUnitFromRecordWithTrace(
           normalized,
           field
         );
+        
+        if (EXTRACTION_DEBUG) {
+          console.log(`[UnitExtract] Direct field "${actualKey}" -> "${normalized}" (from "${rawValue}")`);
+        }
         
         return {
           normalizedUnit: normalized,
@@ -664,6 +707,8 @@ export function extractUnitFromRecordWithTrace(
           confidence,
           confidenceReason: reason,
         };
+      } else if (EXTRACTION_DEBUG) {
+        console.log(`[UnitExtract] Direct field "${actualKey}" rejected: "${rawValue}"`);
       }
     }
   }
@@ -673,10 +718,34 @@ export function extractUnitFromRecordWithTrace(
     const actualKey = lowerKeyMap.get(field.toLowerCase());
     if (!actualKey) continue;
     
-    const value = record[actualKey];
+    const value = flatRecord.get(actualKey);
     if (value != null && value !== '') {
-      const extracted = extractUnitFromText(String(value), field);
-      if (extracted) return extracted;
+      const extracted = extractUnitFromText(value, field);
+      if (extracted) {
+        if (EXTRACTION_DEBUG) {
+          console.log(`[UnitExtract] Pattern match in "${actualKey}" -> "${extracted.normalizedUnit}" (snippet: "${extracted.snippet?.slice(0, 50)}...")`);
+        }
+        return extracted;
+      }
+    }
+  }
+  
+  // Third pass (fallback): Check ALL string fields for unit patterns
+  // This catches cases where the field name isn't in our predefined list
+  for (const [key, value] of flatRecord.entries()) {
+    // Skip fields we already checked
+    if (UNIT_FIELDS.some(f => f.toLowerCase() === key.toLowerCase())) continue;
+    if (TEXT_EXTRACTION_FIELDS.some(f => f.toLowerCase() === key.toLowerCase())) continue;
+    
+    // Only check string fields with reasonable length
+    if (value.length < 1 || value.length > 1000) continue;
+    
+    const extracted = extractUnitFromText(value, key);
+    if (extracted) {
+      if (EXTRACTION_DEBUG) {
+        console.log(`[UnitExtract] Fallback pattern in "${key}" -> "${extracted.normalizedUnit}"`);
+      }
+      return extracted;
     }
   }
   

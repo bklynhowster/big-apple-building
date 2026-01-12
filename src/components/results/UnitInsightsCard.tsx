@@ -1393,8 +1393,8 @@ export function UnitInsightsCard({
             </AlertDescription>
           </Alert>
 
-          {/* Debug line - ONLY visible in development AND with explicit debug flag */}
-          {process.env.NODE_ENV === 'development' && window.location.search.includes('debug=1') && (
+          {/* Debug line - ONLY visible in development with explicit debug flag */}
+          {import.meta.env.DEV && typeof window !== 'undefined' && window.location.search.includes('debug=1') && (
             <div className="text-xs font-mono bg-muted/50 p-2 rounded border">
               Scanned: DOB={debugStats.recordCounts.dobFilingsUnits + debugStats.recordCounts.dobPermits + debugStats.recordCounts.dobViolations} | 
               HPD={debugStats.recordCounts.hpdViolations + debugStats.recordCounts.hpdComplaints} | 
@@ -1431,8 +1431,8 @@ export function UnitInsightsCard({
                   Check DOB NOW directly <ExternalLink className="h-3 w-3" />
                 </a>
               )}
-              {/* Debug Panel - Development only */}
-              {process.env.NODE_ENV === 'development' && (
+              {/* Debug Panel - Development only with explicit flag */}
+              {import.meta.env.DEV && typeof window !== 'undefined' && window.location.search.includes('debug=1') && (
                 <Collapsible className="mt-4 w-full max-w-lg text-left">
                   <CollapsibleTrigger className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1">
                     <ChevronDown className="h-3 w-3" />
