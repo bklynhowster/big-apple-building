@@ -21,5 +21,5 @@ verify_jwt = false
 [functions.hpd-complaints]
 verify_jwt = false
 
-[functions.311-requests]
+[functions.service-requests-311]
 verify_jwt = false
