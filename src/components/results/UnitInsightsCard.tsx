@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Eye, Info, Users, AlertTriangle, Phone, ShoppingBag, FileText, ExternalLink, ChevronDown, ChevronUp } from 'lucide-react';
+import { Eye, Info, Users, AlertTriangle, Phone, FileText, ExternalLink, ChevronDown, ChevronUp } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -43,6 +43,12 @@ interface CombinedUnitStats {
   totalCount: number;
   lastActivity: Date | null;
   filingRefs: FilingReference[];
+  // Provenance: source identifiers for traceability
+  sourceRefs: {
+    type: 'dob' | 'hpd' | '311' | 'sales';
+    id: string;
+    label: string;
+  }[];
 }
 
 // Evidence record types for the drawer
@@ -60,9 +66,32 @@ function combineUnitStats(
   hpdComplaintStats: UnitStats[],
   threeOneOneStats: UnitStats[],
   salesUnits: UnitRosterEntry[],
-  dobFilingsUnits: UnitFromFilings[]
+  dobFilingsUnits: UnitFromFilings[],
+  hpdViolations: HPDViolationRecord[],
+  hpdComplaints: HPDComplaintRecord[],
+  serviceRequests: ServiceRequestRecord[]
 ): CombinedUnitStats[] {
   const unitMap = new Map<string, CombinedUnitStats>();
+
+  // Helper to get or create unit entry
+  const getOrCreate = (unit: string): CombinedUnitStats => {
+    let entry = unitMap.get(unit);
+    if (!entry) {
+      entry = {
+        unit,
+        hpdCount: 0,
+        threeOneOneCount: 0,
+        salesCount: 0,
+        filingsCount: 0,
+        totalCount: 0,
+        lastActivity: null,
+        filingRefs: [],
+        sourceRefs: [],
+      };
+      unitMap.set(unit, entry);
+    }
+    return entry;
+  };
 
   // Combine HPD violations and complaints
   const hpdStats = new Map<string, { count: number; lastActivity: Date | null }>();
@@ -85,100 +114,109 @@ function combineUnitStats(
     hpdStats.set(stat.unit, existing);
   }
 
-  // Process HPD stats
+  // Process HPD stats with source references
   for (const [unit, data] of hpdStats.entries()) {
-    unitMap.set(unit, {
-      unit,
-      hpdCount: data.count,
-      threeOneOneCount: 0,
-      salesCount: 0,
-      filingsCount: 0,
-      totalCount: data.count,
-      lastActivity: data.lastActivity,
-      filingRefs: [],
-    });
+    const entry = getOrCreate(unit);
+    entry.hpdCount = data.count;
+    entry.totalCount += data.count;
+    if (data.lastActivity && (!entry.lastActivity || data.lastActivity > entry.lastActivity)) {
+      entry.lastActivity = data.lastActivity;
+    }
   }
 
-  // Add 311 stats
+  // Add HPD source references
+  for (const record of hpdViolations) {
+    const unit = extractUnitFromRecord(record.raw);
+    if (unit && unitMap.has(unit)) {
+      const entry = unitMap.get(unit)!;
+      // Add first few references only to avoid clutter
+      if (entry.sourceRefs.filter(r => r.type === 'hpd').length < 3) {
+        entry.sourceRefs.push({
+          type: 'hpd',
+          id: record.recordId,
+          label: `HPD Violation #${record.recordId}`,
+        });
+      }
+    }
+  }
+  for (const record of hpdComplaints) {
+    const unit = extractUnitFromRecord(record.raw);
+    if (unit && unitMap.has(unit)) {
+      const entry = unitMap.get(unit)!;
+      if (entry.sourceRefs.filter(r => r.type === 'hpd').length < 3) {
+        entry.sourceRefs.push({
+          type: 'hpd',
+          id: record.recordId,
+          label: `HPD Complaint #${record.recordId}`,
+        });
+      }
+    }
+  }
+
+  // Add 311 stats with source references
   for (const stat of threeOneOneStats) {
-    const existing = unitMap.get(stat.unit);
-    if (existing) {
-      existing.threeOneOneCount = stat.count;
-      existing.totalCount += stat.count;
-      if (stat.lastActivity && (!existing.lastActivity || stat.lastActivity > existing.lastActivity)) {
-        existing.lastActivity = stat.lastActivity;
-      }
-    } else {
-      unitMap.set(stat.unit, {
-        unit: stat.unit,
-        hpdCount: 0,
-        threeOneOneCount: stat.count,
-        salesCount: 0,
-        filingsCount: 0,
-        totalCount: stat.count,
-        lastActivity: stat.lastActivity,
-        filingRefs: [],
-      });
+    const entry = getOrCreate(stat.unit);
+    entry.threeOneOneCount = stat.count;
+    entry.totalCount += stat.count;
+    if (stat.lastActivity && (!entry.lastActivity || stat.lastActivity > entry.lastActivity)) {
+      entry.lastActivity = stat.lastActivity;
     }
   }
 
-  // Add Rolling Sales stats
+  // Add 311 source references
+  for (const record of serviceRequests) {
+    const unit = extractUnitFromRecord(record.raw);
+    if (unit && unitMap.has(unit)) {
+      const entry = unitMap.get(unit)!;
+      if (entry.sourceRefs.filter(r => r.type === '311').length < 3) {
+        entry.sourceRefs.push({
+          type: '311',
+          id: record.recordId,
+          label: `SR #${record.recordId}`,
+        });
+      }
+    }
+  }
+
+  // Add Rolling Sales stats (only count, no source refs since they don't have traceable IDs)
   for (const salesEntry of salesUnits) {
-    const existing = unitMap.get(salesEntry.unit);
+    const entry = getOrCreate(salesEntry.unit);
+    entry.salesCount = salesEntry.count;
+    entry.totalCount += salesEntry.count;
     const lastSeenDate = salesEntry.lastSeen ? new Date(salesEntry.lastSeen) : null;
-    
-    if (existing) {
-      existing.salesCount = salesEntry.count;
-      existing.totalCount += salesEntry.count;
-      if (lastSeenDate && !isNaN(lastSeenDate.getTime()) && 
-          (!existing.lastActivity || lastSeenDate > existing.lastActivity)) {
-        existing.lastActivity = lastSeenDate;
-      }
-    } else {
-      unitMap.set(salesEntry.unit, {
-        unit: salesEntry.unit,
-        hpdCount: 0,
-        threeOneOneCount: 0,
-        salesCount: salesEntry.count,
-        filingsCount: 0,
-        totalCount: salesEntry.count,
-        lastActivity: lastSeenDate && !isNaN(lastSeenDate.getTime()) ? lastSeenDate : null,
-        filingRefs: [],
-      });
+    if (lastSeenDate && !isNaN(lastSeenDate.getTime()) && 
+        (!entry.lastActivity || lastSeenDate > entry.lastActivity)) {
+      entry.lastActivity = lastSeenDate;
     }
   }
 
-  // Add DOB Filings stats
+  // Add DOB Filings stats with source references
   for (const filingsEntry of dobFilingsUnits) {
-    const existing = unitMap.get(filingsEntry.unit);
+    const entry = getOrCreate(filingsEntry.unit);
+    entry.filingsCount = filingsEntry.count;
+    entry.totalCount += filingsEntry.count;
+    entry.filingRefs = filingsEntry.filings;
     const lastSeenDate = filingsEntry.lastSeen ? new Date(filingsEntry.lastSeen) : null;
-    
-    if (existing) {
-      existing.filingsCount = filingsEntry.count;
-      existing.totalCount += filingsEntry.count;
-      existing.filingRefs = filingsEntry.filings;
-      if (lastSeenDate && !isNaN(lastSeenDate.getTime()) && 
-          (!existing.lastActivity || lastSeenDate > existing.lastActivity)) {
-        existing.lastActivity = lastSeenDate;
-      }
-    } else {
-      unitMap.set(filingsEntry.unit, {
-        unit: filingsEntry.unit,
-        hpdCount: 0,
-        threeOneOneCount: 0,
-        salesCount: 0,
-        filingsCount: filingsEntry.count,
-        totalCount: filingsEntry.count,
-        lastActivity: lastSeenDate && !isNaN(lastSeenDate.getTime()) ? lastSeenDate : null,
-        filingRefs: filingsEntry.filings,
+    if (lastSeenDate && !isNaN(lastSeenDate.getTime()) && 
+        (!entry.lastActivity || lastSeenDate > entry.lastActivity)) {
+      entry.lastActivity = lastSeenDate;
+    }
+    // Add DOB source references
+    for (const filing of filingsEntry.filings.slice(0, 3)) {
+      entry.sourceRefs.push({
+        type: 'dob',
+        id: filing.jobNumber,
+        label: `Job #${filing.jobNumber}`,
       });
     }
   }
 
-  // Apply building consistency filter:
-  // Only include units that appear in at least 2 records total OR appear in HPD/DOB/Sales at least once
+  // CRITICAL: Only include units that have at least one traceable source record
+  // Sales data alone is NOT sufficient (it doesn't indicate complaints or filings)
   const filteredStats = Array.from(unitMap.values()).filter(stat => {
-    return stat.hpdCount >= 1 || stat.salesCount >= 1 || stat.filingsCount >= 1 || stat.totalCount >= 2;
+    // Must have at least one source reference (DOB, HPD, or 311)
+    const hasTraceableSource = stat.filingsCount > 0 || stat.hpdCount > 0 || stat.threeOneOneCount > 0;
+    return hasTraceableSource;
   });
 
   // Sort by lastActivity descending (most recent first), then by total count
@@ -253,16 +291,17 @@ function EvidenceDrawer({
             <span className="text-muted-foreground font-normal text-sm">(Inferred)</span>
           </DialogTitle>
           <DialogDescription>
-            Evidence from building-level records that explicitly mention this unit.
+            Evidence from building-level records that explicitly mention this unit. 
+            Filtering highlights matching records but does not hide building-level data.
           </DialogDescription>
         </DialogHeader>
 
-        {/* Warning banner */}
+        {/* Warning banner - reinforced messaging */}
         <Alert className="border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30">
           <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400" />
           <AlertDescription className="text-sm text-amber-800 dark:text-amber-200">
-            These are building-level records with unit context inferred from text. 
-            Confirm in DOB NOW where needed.
+            <strong>Building-level records.</strong> Unit context is inferred from text mentions only. 
+            This does not indicate unit-specific enforcement or legal responsibility. Confirm in DOB NOW where needed.
           </AlertDescription>
         </Alert>
 
@@ -453,7 +492,16 @@ export function UnitInsightsCard({
     const hpdComplaintStats = getUnitStats(hpdComplaints.map(r => r.raw));
     const threeOneOneStats = getUnitStats(serviceRequests.map(r => r.raw));
     
-    return combineUnitStats(hpdViolationStats, hpdComplaintStats, threeOneOneStats, salesUnits, dobFilingsUnits);
+    return combineUnitStats(
+      hpdViolationStats, 
+      hpdComplaintStats, 
+      threeOneOneStats, 
+      salesUnits, 
+      dobFilingsUnits,
+      hpdViolations,
+      hpdComplaints,
+      serviceRequests
+    );
   }, [hpdViolations, hpdComplaints, serviceRequests, salesUnits, dobFilingsUnits]);
 
   const hasData = combinedStats.length > 0;
@@ -500,9 +548,13 @@ export function UnitInsightsCard({
               </Badge>
             )}
           </div>
-          <CardDescription className="text-sm text-muted-foreground">
-            Co-op records are issued at the building level. Unit context is inferred when city records explicitly mention an apartment/unit.
-          </CardDescription>
+          {/* CRITICAL DISCLAIMER - Prominent placement */}
+          <div className="mt-2 p-3 bg-muted/50 border border-border rounded-md">
+            <p className="text-sm text-muted-foreground leading-relaxed">
+              <strong className="text-foreground">Important:</strong> Unit references indicate where an apartment is mentioned in city records. 
+              They do not imply unit-specific enforcement or legal responsibility. NYC co-op records are issued at the building level.
+            </p>
+          </div>
         </CardHeader>
 
         <CardContent className="space-y-4">
@@ -576,12 +628,7 @@ export function UnitInsightsCard({
                         311
                       </span>
                     </TableHead>
-                    <TableHead className="text-center">
-                      <span className="flex items-center justify-center gap-1">
-                        <ShoppingBag className="h-3.5 w-3.5" />
-                        Sales
-                      </span>
-                    </TableHead>
+                    <TableHead className="min-w-[140px]">Referenced In</TableHead>
                     <TableHead>Last Activity</TableHead>
                     <TableHead className="text-right">Action</TableHead>
                   </TableRow>
@@ -631,13 +678,19 @@ export function UnitInsightsCard({
                           <span className="text-muted-foreground">-</span>
                         )}
                       </TableCell>
-                      <TableCell className="text-center">
-                        {stat.salesCount > 0 ? (
-                          <Badge variant="outline" className="font-mono">
-                            {stat.salesCount}
-                          </Badge>
-                        ) : (
-                          <span className="text-muted-foreground">-</span>
+                      <TableCell className="text-xs">
+                        {/* Show up to 2 source refs as provenance */}
+                        {stat.sourceRefs.slice(0, 2).map((ref, idx) => (
+                          <span 
+                            key={`${ref.type}-${ref.id}-${idx}`} 
+                            className="inline-block mr-1 mb-1 px-1.5 py-0.5 bg-muted rounded text-muted-foreground font-mono"
+                            title={ref.label}
+                          >
+                            {ref.label.length > 18 ? ref.label.slice(0, 18) + '…' : ref.label}
+                          </span>
+                        ))}
+                        {stat.sourceRefs.length > 2 && (
+                          <span className="text-muted-foreground">+{stat.sourceRefs.length - 2} more</span>
                         )}
                       </TableCell>
                       <TableCell className="text-sm text-muted-foreground">
