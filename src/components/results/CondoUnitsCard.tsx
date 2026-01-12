@@ -147,9 +147,16 @@ export function CondoUnitsCard({ bbl }: CondoUnitsCardProps) {
             <Building2 className="h-4 w-4" />
             Condo Units
           </CardTitle>
-          <Badge variant="secondary" className="text-xs">
-            {data.isCondo ? 'Condominium' : 'Possible condo'}
-          </Badge>
+          <div className="flex items-center gap-2">
+            <Badge variant="secondary" className="text-xs">
+              {data.isCondo ? 'Condominium' : 'Possible condo'}
+            </Badge>
+            {data.strategyUsed === 'blockLotFallback' && (
+              <Badge variant="outline" className="text-xs">
+                Units found via block-based condo fallback
+              </Badge>
+            )}
+          </div>
         </div>
       </CardHeader>
 

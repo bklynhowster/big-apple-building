@@ -18,6 +18,7 @@ export interface CondoUnitsResponse {
   billingBbl: string | null;
   inputIsUnitLot: boolean;
   isCondo: boolean;
+  strategyUsed: 'condoDataset' | 'blockLotFallback';
   units: CondoUnit[];
   totalApprox: number;
   requestId: string;
@@ -80,6 +81,7 @@ export function useCondoUnits(): UseCondoUnitsReturn {
         billingBbl: result.billingBbl,
         inputIsUnitLot: result.inputIsUnitLot,
         isCondo: result.isCondo,
+        strategyUsed: result.strategyUsed,
         totalApprox: result.totalApprox,
         requestId: result.requestId,
         units: Array.from(existing.values()).sort((a, b) => a.unitBbl.localeCompare(b.unitBbl)),
