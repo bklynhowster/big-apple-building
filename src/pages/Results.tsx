@@ -88,8 +88,8 @@ export default function Results() {
   const ecbHook = useECB(isCoop && isValidBBL ? bbl : null);
   const permitsHook = usePermits(isCoop && isValidBBL ? bbl : null);
   
-  // Landmark status (stub for now)
-  const landmarkStatus = useLandmarkStatus({ bbl, bin, lat: latitude, lon: longitude });
+  // Landmark status lookup
+  const landmarkStatus = useLandmarkStatus({ bbl, bin });
   
   // Track if we've fetched data for insights
   const insightsFetchedRef = useRef(false);
@@ -304,16 +304,25 @@ export default function Results() {
                 onScopeChange={setScope}
               />
 
-              {/* Landmark Badge - only show when confirmed landmarked or explicitly not landmarked */}
-              {landmarkStatus?.isLandmarked === true && (
-                <span className="ml-2 inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium">
-                  Landmarked
-                </span>
-              )}
-              {landmarkStatus?.isLandmarked === false && !landmarkStatus?.error && (
-                <span className="ml-2 inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium opacity-80">
-                  Not landmarked
-                </span>
+              {/* Landmark Badge */}
+              {!landmarkStatus.isLoading && (
+                <>
+                  {landmarkStatus.isLandmarked === true && (
+                    <span className="inline-flex items-center rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
+                      Landmarked
+                    </span>
+                  )}
+                  {landmarkStatus.isLandmarked === false && !landmarkStatus.error && (
+                    <span className="inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium text-muted-foreground">
+                      Not landmarked
+                    </span>
+                  )}
+                  {landmarkStatus.isLandmarked === null && !landmarkStatus.error && (
+                    <span className="inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium text-muted-foreground">
+                      Landmark: Unknown
+                    </span>
+                  )}
+                </>
               )}
 
               {/* Property Profile */}
