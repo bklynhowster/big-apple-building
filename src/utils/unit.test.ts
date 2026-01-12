@@ -70,6 +70,11 @@ const INVALID_UNIT_PATTERNS = [
   { input: 'FLOOR 3', reason: 'floor only' },
   { input: '3RD FLOOR', reason: 'floor only' },
   { input: 'FL2', reason: 'floor only' },
+  { input: '6TH', reason: 'ordinal (not a unit)' },
+  { input: '12TH', reason: 'ordinal (not a unit)' },
+  { input: '1ST', reason: 'ordinal (not a unit)' },
+  { input: '2ND', reason: 'ordinal (not a unit)' },
+  { input: '3RD', reason: 'ordinal (not a unit)' },
 
   // Junk values
   { input: 'N/A', reason: 'junk' },
