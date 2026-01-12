@@ -166,6 +166,16 @@ const TEXT_EXTRACTION_FIELDS = [
   'problem_description',
   'minorcat',
   'spacetype',
+  // DOB Permit/Filing text fields
+  'job_description',
+  'jobdescription',
+  'work_on_floors',
+  'workonfloors',
+  'comments',
+  'scope_of_work',
+  'scopeofwork',
+  'filing_reason',
+  'filingreason',
 ];
 
 /**
