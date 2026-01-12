@@ -76,6 +76,7 @@ const HPD_COLUMNS = [
 
 export function HPDTab({ bbl }: HPDTabProps) {
   const [activeSubTab, setActiveSubTab] = useState<'violations' | 'complaints'>('violations');
+  const [fetchedTabs, setFetchedTabs] = useState<Set<string>>(new Set());
   
   const violations = useHPDViolations(bbl);
   const complaints = useHPDComplaints(bbl);
@@ -83,12 +84,18 @@ export function HPDTab({ bbl }: HPDTabProps) {
   const [localViolationFilters, setLocalViolationFilters] = useState<HPDFilters>({ status: 'all', keyword: '' });
   const [localComplaintFilters, setLocalComplaintFilters] = useState<HPDFilters>({ status: 'all', keyword: '' });
 
+  // Lazy-load: only fetch when subtab is first viewed
   useEffect(() => {
-    if (bbl && bbl.length === 10) {
+    if (!bbl || bbl.length !== 10) return;
+    
+    if (activeSubTab === 'violations' && !fetchedTabs.has('violations')) {
       violations.fetch(bbl);
+      setFetchedTabs(prev => new Set(prev).add('violations'));
+    } else if (activeSubTab === 'complaints' && !fetchedTabs.has('complaints')) {
       complaints.fetch(bbl);
+      setFetchedTabs(prev => new Set(prev).add('complaints'));
     }
-  }, [bbl]);
+  }, [bbl, activeSubTab, fetchedTabs]);
 
   const renderViolationsContent = () => {
     if (violations.loading && !violations.data) return <LoadingSkeleton />;
