@@ -10,11 +10,13 @@ import { ECBTab } from '@/components/results/ECBTab';
 import { SafetyTab } from '@/components/results/SafetyTab';
 import { PermitsTab } from '@/components/results/PermitsTab';
 import { AllRecordsTab } from '@/components/results/AllRecordsTab';
+import { HPDTab } from '@/components/results/HPDTab';
+import { ThreeOneOneTab } from '@/components/results/ThreeOneOneTab';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 
-const VALID_TABS = ['summary', 'violations', 'ecb', 'safety', 'permits', 'all'] as const;
+const VALID_TABS = ['summary', 'violations', 'ecb', 'safety', 'permits', 'hpd', '311', 'all'] as const;
 type ValidTab = typeof VALID_TABS[number];
 
 function normalizeBBL(bbl: string | null): string {
@@ -161,6 +163,18 @@ export default function Results() {
                     Permits
                   </TabsTrigger>
                   <TabsTrigger 
+                    value="hpd" 
+                    className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent py-3 px-6"
+                  >
+                    HPD
+                  </TabsTrigger>
+                  <TabsTrigger 
+                    value="311" 
+                    className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent py-3 px-6"
+                  >
+                    311 Nearby
+                  </TabsTrigger>
+                  <TabsTrigger 
                     value="all" 
                     className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent py-3 px-6"
                   >
@@ -208,6 +222,22 @@ export default function Results() {
                     <Card>
                       <CardContent className="p-6">
                         <PermitsTab bbl={bbl} />
+                      </CardContent>
+                    </Card>
+                  </TabsContent>
+                  
+                  <TabsContent value="hpd" className="mt-0">
+                    <Card>
+                      <CardContent className="p-6">
+                        <HPDTab bbl={bbl} />
+                      </CardContent>
+                    </Card>
+                  </TabsContent>
+                  
+                  <TabsContent value="311" className="mt-0">
+                    <Card>
+                      <CardContent className="p-6">
+                        <ThreeOneOneTab lat={latitude} lon={longitude} />
                       </CardContent>
                     </Card>
                   </TabsContent>

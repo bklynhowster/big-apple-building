@@ -14,3 +14,12 @@ verify_jwt = false
 
 [functions.dob-safety]
 verify_jwt = false
+
+[functions.hpd-violations]
+verify_jwt = false
+
+[functions.hpd-complaints]
+verify_jwt = false
+
+[functions.311-requests]
+verify_jwt = false
