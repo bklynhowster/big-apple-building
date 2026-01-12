@@ -51,6 +51,10 @@ const INVALID_UNIT_PATTERNS = [
   { input: 'AH', reason: 'stopword' },
   { input: 'S', reason: 'single-letter weak token' },
 
+  // Co-op rule: numeric-only units must not validate without strong evidence
+  { input: '12', reason: 'numeric-only without evidence' },
+  { input: '100', reason: 'numeric-only without evidence' },
+
   // Address-like values
   { input: '40 TEHAMA STREET', reason: 'address' },
   { input: 'BROOKLYN', reason: 'borough' },
@@ -178,9 +182,27 @@ export function runUnitExtractionTests(): TestResults {
       console.error(error);
     }
   }
+
+  // Strong-evidence-only numeric units (co-op rule)
+  console.log('\n=== Numeric-only Units (strong evidence required) ===');
+  const numericEvidenceTests = [
+    { input: '12', expected: '12', hasStrong: true, desc: 'bare numeric with evidence' },
+    { input: 'APT 12', expected: '12', hasStrong: true, desc: 'prefixed numeric with evidence' },
+    { input: '100', expected: '100', hasStrong: true, desc: 'triple-digit numeric with evidence' },
+  ];
+  for (const t of numericEvidenceTests) {
+    const result = normalizeUnit(t.input, false, t.hasStrong);
+    if (result === t.expected) {
+      passed++;
+      console.log(`✓ normalizeUnit("${t.input}", false, true) → "${result}" (${t.desc})`);
+    } else {
+      failed++;
+      const error = `✗ normalizeUnit("${t.input}", false, true): expected "${t.expected}", got "${result}" (${t.desc})`;
+      errors.push(error);
+      console.error(error);
+    }
+  }
   
-  // Test invalid patterns
-  console.log('\n=== Invalid Unit Patterns (should return null) ===');
   for (const { input, reason } of INVALID_UNIT_PATTERNS) {
     const result = normalizeUnit(input);
     if (result === null) {
