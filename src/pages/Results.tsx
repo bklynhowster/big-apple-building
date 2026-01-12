@@ -304,10 +304,15 @@ export default function Results() {
                 onScopeChange={setScope}
               />
 
-              {/* Landmark Badge - only show when confirmed landmarked */}
+              {/* Landmark Badge - only show when confirmed landmarked or explicitly not landmarked */}
               {landmarkStatus?.isLandmarked === true && (
-                <span className="inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium">
+                <span className="ml-2 inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium">
                   Landmarked
+                </span>
+              )}
+              {landmarkStatus?.isLandmarked === false && !landmarkStatus?.error && (
+                <span className="ml-2 inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium opacity-80">
+                  Not landmarked
                 </span>
               )}
 
