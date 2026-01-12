@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Eye, Info, Users, AlertTriangle, Phone, FileText, ExternalLink, ChevronDown, ChevronUp } from 'lucide-react';
+import { Eye, Info, Users, AlertTriangle, Phone, FileText, ExternalLink, ChevronDown, ChevronUp, X } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -9,6 +9,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { getUnitStats, UnitStats, extractUnitFromRecord } from '@/utils/unit';
 import type { HPDComplaintRecord, HPDViolationRecord } from '@/hooks/useHPD';
 import type { ServiceRequestRecord } from '@/hooks/use311';
@@ -26,6 +27,7 @@ interface UnitInsightsCardProps {
   dobFilings: JobFilingRecord[];
   selectedUnit: string | null;
   onUnitSelect: (unit: string) => void;
+  onClearUnitFilter?: () => void;
   loading?: boolean;
   rosterError?: string | null;
   salesWarning?: string | null;
@@ -360,12 +362,12 @@ function EvidenceDrawer({
       <DialogContent className="max-w-2xl max-h-[80vh] overflow-hidden flex flex-col">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <Badge className="bg-amber-600 text-white">Unit {unit}</Badge>
-            <span className="text-muted-foreground font-normal text-sm">(Inferred)</span>
+            <Badge className="bg-amber-600 text-white">Mentioned Unit: {unit}</Badge>
+            <span className="text-muted-foreground font-normal text-sm">(Inferred from city records)</span>
           </DialogTitle>
           <DialogDescription>
-            Evidence from building-level records that explicitly mention this unit. 
-            Filtering highlights matching records but does not hide building-level data.
+            Records where this unit identifier appears in the text or metadata. 
+            A "Mentioned Unit" means the unit appears in city records—it does not imply unit-level enforcement, responsibility, or issuance.
           </DialogDescription>
         </DialogHeader>
 
@@ -373,8 +375,8 @@ function EvidenceDrawer({
         <Alert className="border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30">
           <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400" />
           <AlertDescription className="text-sm text-amber-800 dark:text-amber-200">
-            <strong>Building-level records.</strong> Unit context is inferred from text mentions only. 
-            This does not indicate unit-specific enforcement or legal responsibility. Confirm in DOB NOW where needed.
+            <strong>Building-level records only.</strong> These records are issued at the building level. 
+            Unit mentions are extracted from text fields and do not indicate unit-specific enforcement or legal responsibility.
           </AlertDescription>
         </Alert>
 
@@ -550,6 +552,7 @@ export function UnitInsightsCard({
   dobFilings,
   selectedUnit,
   onUnitSelect,
+  onClearUnitFilter,
   loading = false,
   salesWarning,
   filingsWarning,
@@ -591,7 +594,7 @@ export function UnitInsightsCard({
         <CardHeader className="pb-3">
           <div className="flex items-center gap-2">
             <Users className="h-5 w-5 text-amber-600 dark:text-amber-400" />
-            <CardTitle className="text-lg">Unit Insights (Inferred from filings & complaints)</CardTitle>
+            <CardTitle className="text-lg">Mentioned Units</CardTitle>
           </div>
         </CardHeader>
         <CardContent>
@@ -611,31 +614,64 @@ export function UnitInsightsCard({
       <Card className="border-amber-200 dark:border-amber-800 bg-amber-50/50 dark:bg-amber-950/20">
         <CardHeader className="pb-3">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Users className="h-5 w-5 text-amber-600 dark:text-amber-400" />
-              <CardTitle className="text-lg">Unit Insights (Inferred from filings & complaints)</CardTitle>
-            </div>
+            <TooltipProvider>
+              <div className="flex items-center gap-2">
+                <Users className="h-5 w-5 text-amber-600 dark:text-amber-400" />
+                <CardTitle className="text-lg">Mentioned Units</CardTitle>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Info className="h-4 w-4 text-muted-foreground cursor-help" />
+                  </TooltipTrigger>
+                  <TooltipContent className="max-w-xs">
+                    <p>A "Mentioned Unit" means the unit identifier appears in the text or metadata of a city record. It does not imply unit-level enforcement, responsibility, or issuance.</p>
+                  </TooltipContent>
+                </Tooltip>
+              </div>
+            </TooltipProvider>
             {hasData && (
               <Badge variant="secondary" className="text-xs">
-                {combinedStats.length} unit{combinedStats.length !== 1 ? 's' : ''} referenced
+                {combinedStats.length} unit{combinedStats.length !== 1 ? 's' : ''} mentioned
               </Badge>
             )}
           </div>
           {/* CRITICAL DISCLAIMER - Prominent placement */}
           <div className="mt-2 p-3 bg-muted/50 border border-border rounded-md">
             <p className="text-sm text-muted-foreground leading-relaxed">
-              <strong className="text-foreground">Important:</strong> Unit references indicate where an apartment is mentioned in city records. 
-              They do not imply unit-specific enforcement or legal responsibility. NYC co-op records are issued at the building level.
+              <strong className="text-foreground">Important:</strong> A "Mentioned Unit" means the unit identifier appears in the text or metadata of a city record. 
+              It does not imply unit-level enforcement, responsibility, or issuance. All NYC co-op records are issued at the building level.
             </p>
           </div>
         </CardHeader>
 
         <CardContent className="space-y-4">
+          {/* Active filter banner */}
+          {selectedUnit && (
+            <Alert className="border-primary/30 bg-primary/5">
+              <Info className="h-4 w-4 text-primary" />
+              <AlertDescription className="text-sm flex items-center justify-between">
+                <span>
+                  <strong>Filtering by: {selectedUnit}</strong> — Building totals unchanged. Showing records that mention this unit.
+                </span>
+                {onClearUnitFilter && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={onClearUnitFilter}
+                    className="h-7 px-2 text-xs ml-2"
+                  >
+                    <X className="h-3 w-3 mr-1" />
+                    Clear unit filter
+                  </Button>
+                )}
+              </AlertDescription>
+            </Alert>
+          )}
+
           {/* Info banner */}
           <Alert className="border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30">
             <Info className="h-4 w-4 text-amber-600 dark:text-amber-400" />
             <AlertDescription className="text-sm text-amber-800 dark:text-amber-200">
-              Unit references are inferred only when city records explicitly mention an apartment or unit number.
+              Mentioned units are inferred only when city records explicitly reference an apartment or unit number (e.g., "APT 2G", "Unit PH").
               {fallbackMode && (
                 <span className="block mt-1 text-amber-600 dark:text-amber-400">
                   Note: DOB job filings API unavailable.{' '}
@@ -658,9 +694,9 @@ export function UnitInsightsCard({
           {!hasData && (
             <div className="flex flex-col items-center justify-center py-8 text-center">
               <AlertTriangle className="h-10 w-10 text-muted-foreground mb-3" />
-              <p className="text-foreground font-medium mb-1">No reliable unit references found</p>
+              <p className="text-foreground font-medium mb-1">No mentioned units found</p>
               <p className="text-sm text-muted-foreground max-w-md">
-                No reliable unit references found in DOB filings, HPD, 311, or Sales for this building.
+                No city records (DOB filings, HPD complaints, 311 requests) explicitly mention an apartment or unit number for this building. 
                 All records are building-wide.
               </p>
               {dobNowUrl && (
@@ -687,24 +723,45 @@ export function UnitInsightsCard({
               <Table>
                 <TableHeader>
                   <TableRow className="bg-amber-100/50 dark:bg-amber-900/30">
-                    <TableHead className="font-semibold">Unit</TableHead>
+                    <TableHead className="font-semibold">Mentioned Unit</TableHead>
                     <TableHead className="text-center">
-                      <span className="flex items-center justify-center gap-1">
-                        <FileText className="h-3.5 w-3.5" />
-                        DOB
-                      </span>
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="flex items-center justify-center gap-1 cursor-help">
+                              <FileText className="h-3.5 w-3.5" />
+                              DOB
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent>Jobs mentioning unit</TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
                     </TableHead>
                     <TableHead className="text-center">
-                      <span className="flex items-center justify-center gap-1">
-                        <AlertTriangle className="h-3.5 w-3.5" />
-                        HPD
-                      </span>
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="flex items-center justify-center gap-1 cursor-help">
+                              <AlertTriangle className="h-3.5 w-3.5" />
+                              HPD
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent>Complaints mentioning unit</TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
                     </TableHead>
                     <TableHead className="text-center">
-                      <span className="flex items-center justify-center gap-1">
-                        <Phone className="h-3.5 w-3.5" />
-                        311
-                      </span>
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="flex items-center justify-center gap-1 cursor-help">
+                              <Phone className="h-3.5 w-3.5" />
+                              311
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent>Requests mentioning unit</TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
                     </TableHead>
                     <TableHead className="text-center w-16">
                       <span title="Based on source count: ●●● = 2+ DOB filings, ●●○ = DOB+other, ●○○ = single source">
