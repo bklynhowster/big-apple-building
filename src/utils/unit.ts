@@ -9,6 +9,44 @@
  * validation before any unit extraction occurs.
  */
 
+// ============================================================================
+// TYPES
+// ============================================================================
+
+/**
+ * Unit type classification based on extraction pattern.
+ */
+export type UnitType = 'APT' | 'UNIT' | 'FLOOR' | 'PH' | 'UNKNOWN';
+
+/**
+ * Confidence level for unit extraction.
+ */
+export type UnitConfidence = 'high' | 'medium' | 'low';
+
+/**
+ * Result of unit extraction with traceability info.
+ */
+export interface UnitExtractionResult {
+  /** Normalized unit token for matching */
+  normalizedUnit: string;
+  /** Original value as reported in the record */
+  asReported: string;
+  /** Field name where the unit was found */
+  sourceField: string;
+  /** Text snippet showing context (for free-text extractions) */
+  snippet: string | null;
+  /** Unit type classification */
+  unitType: UnitType;
+  /** Extraction confidence level */
+  confidence: UnitConfidence;
+  /** Reason for confidence assignment */
+  confidenceReason: string;
+}
+
+// ============================================================================
+// CONSTANTS
+// ============================================================================
+
 // Junk values that should return null
 const JUNK_VALUES = new Set([
   '', 'N/A', 'NA', 'NONE', 'UNKNOWN', '0', '-', 'N', 'NULL', 'BUILDING', 'BLDG', 
@@ -45,19 +83,12 @@ const ADDRESS_SUBSTRINGS = [
   'BROOKLYN', 'MANHATTAN', 'BRONX', 'QUEENS', 'STATEN'
 ];
 
-/**
- * Result of unit extraction with traceability info.
- */
-export interface UnitExtractionResult {
-  /** Normalized unit token for matching */
-  normalizedUnit: string;
-  /** Original value as reported in the record */
-  asReported: string;
-  /** Field name where the unit was found */
-  sourceField: string;
-  /** Text snippet showing context (for free-text extractions) */
-  snippet: string | null;
-}
+// Well-known penthouse/special unit tokens
+const PENTHOUSE_TOKENS = new Set(['PH', 'PENTHOUSE', 'PHS', 'PHN', 'PHE', 'PHW']);
+
+// ============================================================================
+// VALIDATION
+// ============================================================================
 
 /**
  * Check if a normalized unit string looks like a valid apartment/unit label.
@@ -114,6 +145,10 @@ function containsAddressSubstring(raw: string): boolean {
   });
 }
 
+// ============================================================================
+// NORMALIZATION
+// ============================================================================
+
 /**
  * Normalize a raw unit string to a canonical form.
  * - Trims and uppercases
@@ -157,6 +192,10 @@ export function normalizeUnit(raw: string | null | undefined): string | null {
   return value;
 }
 
+// ============================================================================
+// FIELD DEFINITIONS BY DATASET
+// ============================================================================
+
 /**
  * Fields to check for unit information in order of priority.
  * RESTRICTED to apartment-specific fields only - no address fields.
@@ -174,6 +213,212 @@ const UNIT_FIELDS = [
   'unit_number',
   'unitnumber',
 ];
+
+/**
+ * Free-text fields to check for pattern-based unit extraction (lower priority).
+ * These are used only if direct apartment fields don't yield a unit.
+ * 
+ * ORGANIZED BY DATASET for maintainability:
+ */
+const TEXT_EXTRACTION_FIELDS = [
+  // ===== HPD / 311 fields =====
+  'descriptor',
+  'resolution_description',
+  'complaint_type',
+  'problem_description',
+  'minorcat',
+  'spacetype',
+  
+  // ===== DOB Permit/Filing text fields =====
+  'job_description',
+  'jobdescription',
+  'work_on_floors',
+  'workonfloors',
+  'work_type',
+  'worktype',
+  'permit_type',
+  'permittype',
+  'job_type',
+  'jobtype',
+  'comments',
+  'scope_of_work',
+  'scopeofwork',
+  'filing_reason',
+  'filingreason',
+  'owner_s_house__',
+  'permittee_s_business_name',
+  'filing_applicant_business_name',
+  'applicant_business_name',
+  'owners_house_apt',
+  'floor_from',
+  'floor_to',
+  'proposed_no_of_stories',
+  'existing_no_of_stories',
+  
+  // ===== DOB Violation text fields =====
+  'description',
+  'violation_description',
+  'violationdescription',
+  'violation_type_description',
+  'violation_category',
+  'violationcategory',
+  'remedy',
+  'isn_description',
+  'isndescription',
+  'device_number',
+  'devicenumber',
+  'violationconditiondescription',
+  'violation_condition_description',
+  'novdescription',
+  'nov_description',
+  
+  // ===== ECB Violation text fields =====
+  'ecb_violation_description',
+  'ecbviolationdescription',
+  'infraction_description',
+  'infractiondescription',
+  'penality_imposed',
+  'standard_description',
+  'violation_details',
+  'violationdetails',
+  'aggravated_level',
+  'issuing_officer_observation',
+  'charge_description',
+  'chargedescription',
+  'conditions',
+];
+
+/**
+ * BBL/BIN fields to check for building validation.
+ * A record is only valid for unit extraction if it has a BBL or BIN.
+ */
+const BUILDING_ID_FIELDS = [
+  'bbl',
+  'bin',
+  'boro_block_lot',
+  'boroBlockLot',
+  'building_id',
+  'buildingid',
+];
+
+// ============================================================================
+// UNIT TYPE DETECTION
+// ============================================================================
+
+/**
+ * Determine the unit type based on the matched keyword and normalized value.
+ */
+function determineUnitType(keyword: string, normalizedUnit: string): UnitType {
+  const upperKeyword = keyword.toUpperCase();
+  const upperUnit = normalizedUnit.toUpperCase();
+  
+  // Check for penthouse patterns
+  if (upperKeyword === 'PENTHOUSE' || upperKeyword === 'PH' || 
+      upperUnit.startsWith('PH') || PENTHOUSE_TOKENS.has(upperUnit)) {
+    return 'PH';
+  }
+  
+  // Check for explicit APT/APARTMENT
+  if (upperKeyword === 'APT' || upperKeyword === 'APARTMENT') {
+    return 'APT';
+  }
+  
+  // Check for explicit UNIT
+  if (upperKeyword === 'UNIT') {
+    return 'UNIT';
+  }
+  
+  // Check for # prefix (typically apt)
+  if (upperKeyword === '#') {
+    return 'APT';
+  }
+  
+  // Default to UNKNOWN for ambiguous cases
+  return 'UNKNOWN';
+}
+
+/**
+ * Determine the unit type when extracted from a direct field.
+ */
+function determineUnitTypeFromField(fieldName: string, normalizedUnit: string): UnitType {
+  const lowerField = fieldName.toLowerCase();
+  const upperUnit = normalizedUnit.toUpperCase();
+  
+  // Check for penthouse patterns in the value
+  if (upperUnit.startsWith('PH') || PENTHOUSE_TOKENS.has(upperUnit)) {
+    return 'PH';
+  }
+  
+  // Check field name
+  if (lowerField.includes('apt') || lowerField.includes('apartment')) {
+    return 'APT';
+  }
+  
+  if (lowerField.includes('unit')) {
+    return 'UNIT';
+  }
+  
+  // Default based on pattern
+  if (/^\d{1,2}[A-Z]{1,2}$/.test(upperUnit) || /^[A-Z]{1,2}\d{1,2}$/.test(upperUnit)) {
+    return 'APT'; // Common apartment patterns
+  }
+  
+  return 'UNKNOWN';
+}
+
+// ============================================================================
+// CONFIDENCE SCORING
+// ============================================================================
+
+/**
+ * Determine confidence level based on extraction method and context.
+ */
+function determineConfidence(
+  extractionMethod: 'direct' | 'pattern',
+  keyword: string,
+  normalizedUnit: string,
+  fieldName: string,
+  hasAdjacentContext: boolean = false
+): { confidence: UnitConfidence; reason: string } {
+  const upperKeyword = keyword.toUpperCase();
+  const upperUnit = normalizedUnit.toUpperCase();
+  
+  // HIGH confidence: explicit prefixes or well-known tokens
+  if (extractionMethod === 'direct') {
+    // Direct field extraction is high confidence
+    return { confidence: 'high', reason: 'Direct apartment field' };
+  }
+  
+  // Pattern-based extraction
+  if (upperKeyword === 'APT' || upperKeyword === 'APARTMENT' || 
+      upperKeyword === 'UNIT' || upperKeyword === '#') {
+    return { confidence: 'high', reason: `Explicit ${upperKeyword} prefix` };
+  }
+  
+  if (upperKeyword === 'PENTHOUSE' || upperKeyword === 'PH' || 
+      upperUnit.startsWith('PH') || PENTHOUSE_TOKENS.has(upperUnit)) {
+    return { confidence: 'high', reason: 'Penthouse designation' };
+  }
+  
+  // MEDIUM confidence: alphanumeric patterns with context
+  if (hasAdjacentContext) {
+    if (/^\d{1,2}[A-Z]$/.test(upperUnit) || /^[A-Z]\d{1,2}$/.test(upperUnit)) {
+      return { confidence: 'medium', reason: 'Unit pattern with adjacent context' };
+    }
+  }
+  
+  // Pattern-like but less certain
+  if (/^\d{1,2}[A-Z]{1,2}$/.test(upperUnit) || /^[A-Z]{1,2}\d{1,2}$/.test(upperUnit)) {
+    return { confidence: 'medium', reason: 'Standard unit pattern' };
+  }
+  
+  // LOW confidence: ambiguous
+  return { confidence: 'low', reason: 'Ambiguous pattern' };
+}
+
+// ============================================================================
+// PATTERN-BASED EXTRACTION
+// ============================================================================
 
 /**
  * Regex patterns to extract unit tokens from free-text fields.
@@ -238,11 +483,26 @@ function extractUnitFromText(
                       textStr.slice(snippetStart, snippetEnd).trim() + 
                       (snippetEnd < textStr.length ? '...' : '');
       
+      // Determine unit type
+      const unitType = determineUnitType(keyword, normalized);
+      
+      // Determine confidence
+      const { confidence, reason } = determineConfidence(
+        'pattern', 
+        keyword, 
+        normalized, 
+        fieldName,
+        false // No adjacent context check for simple pattern match
+      );
+      
       return {
         normalizedUnit: normalized,
         asReported,
         sourceField: fieldName,
         snippet,
+        unitType,
+        confidence,
+        confidenceReason: reason,
       };
     }
   }
@@ -250,70 +510,9 @@ function extractUnitFromText(
   return null;
 }
 
-/**
- * Free-text fields to check for pattern-based unit extraction (lower priority).
- * These are used only if direct apartment fields don't yield a unit.
- */
-const TEXT_EXTRACTION_FIELDS = [
-  'descriptor',
-  'resolution_description',
-  'complaint_type',
-  'problem_description',
-  'minorcat',
-  'spacetype',
-  // DOB Permit/Filing text fields
-  'job_description',
-  'jobdescription',
-  'work_on_floors',
-  'workonfloors',
-  'work_type',
-  'worktype',
-  'permit_type',
-  'permittype',
-  'job_type',
-  'jobtype',
-  'comments',
-  'scope_of_work',
-  'scopeofwork',
-  'filing_reason',
-  'filingreason',
-  'owner_s_house__',
-  'permittee_s_business_name',
-  // DOB Violation text fields
-  'description',
-  'violation_description',
-  'violationdescription',
-  'violation_type_description',
-  'violation_category',
-  'violationcategory',
-  'remedy',
-  'isn_description',
-  'isndescription',
-  'device_number',
-  'devicenumber',
-  // ECB Violation text fields
-  'ecb_violation_description',
-  'ecbviolationdescription',
-  'infraction_description',
-  'infractiondescription',
-  'penality_imposed',
-  'standard_description',
-  'violation_details',
-  'violationdetails',
-];
-
-/**
- * BBL/BIN fields to check for building validation.
- * A record is only valid for unit extraction if it has a BBL or BIN.
- */
-const BUILDING_ID_FIELDS = [
-  'bbl',
-  'bin',
-  'boro_block_lot',
-  'boroBlockLot',
-  'building_id',
-  'buildingid',
-];
+// ============================================================================
+// BUILDING VALIDATION
+// ============================================================================
 
 /**
  * Check if a record has a valid building identifier (BBL or BIN).
@@ -334,6 +533,10 @@ export function hasValidBuildingId(record: Record<string, unknown> | null | unde
   return false;
 }
 
+// ============================================================================
+// MAIN EXTRACTION FUNCTIONS
+// ============================================================================
+
 /**
  * Extract and normalize a unit from a record with full traceability.
  * 
@@ -345,7 +548,8 @@ export function hasValidBuildingId(record: Record<string, unknown> | null | unde
  * EVIDENCE-ONLY: Only extracts units when explicitly stated in the record.
  * Does NOT infer from patterns like "near apt" or contextual mentions.
  * 
- * Returns extraction result with field name and snippet, or null if no unit found.
+ * Returns extraction result with field name, snippet, type, and confidence,
+ * or null if no unit found.
  */
 export function extractUnitFromRecordWithTrace(
   record: Record<string, unknown> | null | undefined
@@ -363,11 +567,22 @@ export function extractUnitFromRecordWithTrace(
       const rawValue = String(value);
       const normalized = normalizeUnit(rawValue);
       if (normalized) {
+        const unitType = determineUnitTypeFromField(field, normalized);
+        const { confidence, reason } = determineConfidence(
+          'direct',
+          field,
+          normalized,
+          field
+        );
+        
         return {
           normalizedUnit: normalized,
           asReported: rawValue.trim().toUpperCase(),
           sourceField: field,
           snippet: null, // Direct field, no snippet needed
+          unitType,
+          confidence,
+          confidenceReason: reason,
         };
       }
     }
@@ -396,6 +611,10 @@ export function extractUnitFromRecord(record: Record<string, unknown> | null | u
   const result = extractUnitFromRecordWithTrace(record);
   return result?.normalizedUnit ?? null;
 }
+
+// ============================================================================
+// AGGREGATION UTILITIES
+// ============================================================================
 
 /**
  * Group records by their extracted unit.
@@ -482,4 +701,21 @@ export function filterRecordsByUnit<T extends Record<string, unknown>>(
     const recordUnit = extractUnitFromRecord(record);
     return recordUnit === normalizedContext;
   });
+}
+
+/**
+ * Check if a record mentions a specific unit (for highlighting purposes).
+ * Returns true if the record's extracted unit matches the given unit context.
+ */
+export function recordMentionsUnit(
+  record: Record<string, unknown> | null | undefined,
+  unitContext: string | null
+): boolean {
+  if (!record || !unitContext) return false;
+  
+  const normalizedContext = normalizeUnit(unitContext);
+  if (!normalizedContext) return false;
+  
+  const recordUnit = extractUnitFromRecord(record);
+  return recordUnit === normalizedContext;
 }

@@ -10,7 +10,14 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { getUnitStats, UnitStats, extractUnitFromRecord, extractUnitFromRecordWithTrace } from '@/utils/unit';
+import { 
+  getUnitStats, 
+  UnitStats, 
+  extractUnitFromRecord, 
+  extractUnitFromRecordWithTrace,
+  type UnitConfidence,
+  type UnitType
+} from '@/utils/unit';
 import type { HPDComplaintRecord, HPDViolationRecord } from '@/hooks/useHPD';
 import type { ServiceRequestRecord } from '@/hooks/use311';
 import type { UnitRosterEntry } from '@/hooks/useCoopUnitRoster';
@@ -53,6 +60,12 @@ interface ViolationMentionRef {
   sourceField: string | null;
   /** Text snippet showing context */
   snippet: string | null;
+  /** Unit type classification */
+  unitType: UnitType | null;
+  /** Extraction confidence */
+  confidence: UnitConfidence | null;
+  /** Confidence reason */
+  confidenceReason: string | null;
 }
 
 interface PermitMentionRef {
@@ -67,6 +80,12 @@ interface PermitMentionRef {
   sourceField: string | null;
   /** Text snippet showing context */
   snippet: string | null;
+  /** Unit type classification */
+  unitType: UnitType | null;
+  /** Extraction confidence */
+  confidence: UnitConfidence | null;
+  /** Confidence reason */
+  confidenceReason: string | null;
 }
 
 interface CombinedUnitStats {
@@ -91,31 +110,26 @@ interface CombinedUnitStats {
   violationRefs: ViolationMentionRef[];
   // Permit-specific references
   permitRefs: PermitMentionRef[];
+  // Aggregated confidence based on extraction results
+  overallConfidence: UnitConfidence;
+  confidenceDetails: string;
 }
 
 /**
- * Calculate confidence level based on source diversity and count.
- * High: 2+ DOB filings
- * Medium: DOB + other source, or 2+ sources
- * Low: single source mention
+ * Get confidence display info from a CombinedUnitStats entry.
+ * Uses the new overallConfidence field calculated from extraction results.
  */
-function getConfidenceLevel(stat: CombinedUnitStats): { level: 'high' | 'medium' | 'low'; dots: string; title: string } {
-  const sourceTypes = [
-    stat.filingsCount > 0,
-    stat.hpdCount > 0,
-    stat.threeOneOneCount > 0,
-  ].filter(Boolean).length;
+function getConfidenceLevel(stat: CombinedUnitStats): { level: UnitConfidence; dots: string; title: string } {
+  const level = stat.overallConfidence;
+  const details = stat.confidenceDetails || '';
   
-  if (stat.filingsCount >= 2) {
-    return { level: 'high', dots: '●●●', title: 'High: Referenced by 2+ DOB filings' };
+  if (level === 'high') {
+    return { level: 'high', dots: '●●●', title: `High confidence: ${details}` };
   }
-  if (stat.filingsCount >= 1 && sourceTypes >= 2) {
-    return { level: 'medium', dots: '●●○', title: 'Medium: DOB filing + other source' };
+  if (level === 'medium') {
+    return { level: 'medium', dots: '●●○', title: `Medium confidence: ${details}` };
   }
-  if (sourceTypes >= 2) {
-    return { level: 'medium', dots: '●●○', title: 'Medium: Multiple source types' };
-  }
-  return { level: 'low', dots: '●○○', title: 'Low: Single source mention' };
+  return { level: 'low', dots: '●○○', title: `Low confidence: ${details}` };
 }
 
 // Evidence record types for the drawer
@@ -162,6 +176,8 @@ function combineUnitStats(
         sourceRefs: [],
         violationRefs: [],
         permitRefs: [],
+        overallConfidence: 'low',
+        confidenceDetails: '',
       };
       unitMap.set(unit, entry);
     }
@@ -322,6 +338,9 @@ function combineUnitStats(
         description: record.description,
         sourceField: extraction.sourceField,
         snippet: extraction.snippet,
+        unitType: extraction.unitType,
+        confidence: extraction.confidence,
+        confidenceReason: extraction.confidenceReason,
       });
     }
   }
@@ -362,6 +381,9 @@ function combineUnitStats(
         description: record.description,
         sourceField: extraction.sourceField,
         snippet: extraction.snippet,
+        unitType: extraction.unitType,
+        confidence: extraction.confidence,
+        confidenceReason: extraction.confidenceReason,
       });
     }
   }
@@ -404,6 +426,9 @@ function combineUnitStats(
         description: record.description,
         sourceField: extraction.sourceField,
         snippet: extraction.snippet,
+        unitType: extraction.unitType,
+        confidence: extraction.confidence,
+        confidenceReason: extraction.confidenceReason,
       });
     }
   }
@@ -415,6 +440,35 @@ function combineUnitStats(
     const hasTraceableSource = stat.filingsCount > 0 || stat.hpdCount > 0 || stat.threeOneOneCount > 0 || stat.dobViolationsCount > 0 || stat.ecbViolationsCount > 0 || stat.permitsCount > 0;
     return hasTraceableSource;
   });
+
+  // Calculate overall confidence for each unit based on extraction results
+  for (const stat of filteredStats) {
+    // Count high-confidence extractions from violations/permits
+    const allRefs = [...stat.violationRefs, ...stat.permitRefs];
+    const highCount = allRefs.filter(r => r.confidence === 'high').length;
+    const mediumCount = allRefs.filter(r => r.confidence === 'medium').length;
+    
+    // Also consider source diversity
+    const sourceTypes = [
+      stat.filingsCount > 0,
+      stat.hpdCount > 0,
+      stat.threeOneOneCount > 0,
+      stat.dobViolationsCount > 0,
+      stat.ecbViolationsCount > 0,
+      stat.permitsCount > 0,
+    ].filter(Boolean).length;
+    
+    if (highCount >= 2 || (highCount >= 1 && sourceTypes >= 2)) {
+      stat.overallConfidence = 'high';
+      stat.confidenceDetails = `${highCount} high-confidence extraction${highCount !== 1 ? 's' : ''}, ${sourceTypes} source type${sourceTypes !== 1 ? 's' : ''}`;
+    } else if (highCount >= 1 || mediumCount >= 2 || sourceTypes >= 2) {
+      stat.overallConfidence = 'medium';
+      stat.confidenceDetails = `${highCount} high, ${mediumCount} medium extractions`;
+    } else {
+      stat.overallConfidence = 'low';
+      stat.confidenceDetails = 'Single source or ambiguous pattern';
+    }
+  }
 
   // Sort by lastActivity descending (most recent first), then by total count
   return filteredStats.sort((a, b) => {
