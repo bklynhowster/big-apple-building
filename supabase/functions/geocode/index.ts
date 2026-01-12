@@ -261,12 +261,30 @@ async function geoclientFetch(
   };
 }
 
+// Suffix fallback list for single-token street names
+const SUFFIX_FALLBACK_LIST = ['St', 'Ave', 'Rd', 'Blvd', 'Pl', 'Dr', 'Ct', 'Ln', 'Pkwy', 'Way'];
+
+// Check if a street name is a single token (no spaces, no known suffix)
+function isSingleTokenStreet(street: string): boolean {
+  const trimmed = street.trim();
+  if (trimmed.includes(' ')) return false;
+  
+  // Check if it ends with a known suffix
+  const lowerStreet = trimmed.toLowerCase();
+  const knownSuffixes = Object.keys(STREET_SUFFIX_MAP);
+  for (const suffix of knownSuffixes) {
+    if (lowerStreet.endsWith(suffix)) return false;
+  }
+  
+  return true;
+}
+
 // Main geocode function with retry logic for street normalization
 async function geocodeAddress(
   houseNumber: string,
   street: string,
   borough: string
-): Promise<{ success: true; data: GeoclientResponse; streetUsed: string } | { success: false; error: string; details: string; normalizedStreetTried?: string; userMessage?: string }> {
+): Promise<{ success: true; data: GeoclientResponse; streetUsed: string } | { success: false; error: string; details: string; normalizedStreetTried?: string; attemptedStreets?: string[]; userMessage?: string }> {
   
   // First attempt with original street (after basic normalization)
   const normalizedStreet = normalizeStreetInput(street);
@@ -336,6 +354,84 @@ async function geocodeAddress(
   };
 }
 
+// Geocode with suffix fallback for single-token streets
+async function geocodeWithFallback(
+  houseNumber: string,
+  streetName: string,
+  streetType: string,
+  borough: string
+): Promise<{ 
+  success: true; 
+  data: GeoclientResponse; 
+  streetUsed: string;
+  usedFallback: boolean;
+} | { 
+  success: false; 
+  error: string; 
+  details: string; 
+  attemptedStreets?: string[]; 
+  userMessage?: string; 
+}> {
+  
+  // If streetType is provided and not "None", use it directly
+  if (streetType && streetType !== 'None') {
+    const constructedStreet = `${streetName} ${streetType}`;
+    const result = await geocodeAddress(houseNumber, constructedStreet, borough);
+    if (result.success) {
+      return { ...result, usedFallback: false };
+    }
+    return result;
+  }
+  
+  // streetType is "None" or empty
+  // First, try streetName as-is (handles "Broadway", "Park Avenue South", etc.)
+  console.log(`Trying street as-is: "${streetName}"`);
+  const directResult = await geocodeAddress(houseNumber, streetName, borough);
+  if (directResult.success) {
+    return { ...directResult, usedFallback: false };
+  }
+  
+  // If direct attempt failed and it's a single-token street, try suffix fallback
+  if (!isSingleTokenStreet(streetName)) {
+    // Multi-token street that failed - return the original error
+    return directResult;
+  }
+  
+  // Single-token street name without suffix - try suffix fallback
+  console.log(`Single-token street "${streetName}" failed, trying suffix fallback`);
+  const attemptedStreets: string[] = [streetName];
+  
+  for (const suffix of SUFFIX_FALLBACK_LIST) {
+    const constructedStreet = `${streetName} ${suffix}`;
+    attemptedStreets.push(constructedStreet);
+    console.log(`Fallback attempt: ${constructedStreet}`);
+    
+    const result = await geoclientFetch('address.json', {
+      houseNumber,
+      street: constructedStreet,
+      borough,
+    });
+    
+    if (!('error' in result) && result.data.address && !isNotRecognizedError(result.data)) {
+      const returnCode = result.data.address.returnCode1a;
+      if (returnCode === '00' || returnCode === '01') {
+        console.log(`Fallback succeeded with: ${constructedStreet}`);
+        return { success: true, data: result.data, streetUsed: constructedStreet, usedFallback: true };
+      }
+    }
+  }
+  
+  // All fallback attempts failed
+  console.log(`All fallback attempts failed for "${streetName}"`);
+  return {
+    success: false,
+    error: 'Address not found',
+    details: `Street "${streetName}" not recognized with any common suffix`,
+    attemptedStreets,
+    userMessage: "Please select a street type (St, Ave, Rd, etc.) from the dropdown.",
+  };
+}
+
 serve(async (req) => {
   // Handle CORS preflight
   if (req.method === 'OPTIONS') {
@@ -363,23 +459,16 @@ serve(async (req) => {
       const streetType = (params.get('streetType') || '').trim();
       const borough = params.get('borough') || '';
 
-      // Construct full street from streetName + streetType
-      // If streetType is "None" or empty, use streetName only
-      const constructedStreet = streetType && streetType !== 'None'
-        ? `${streetName} ${streetType}` 
-        : streetName;
-
       // Debug logging
-      console.log(`Received params - house: "${houseNumber}", streetName: "${streetName}", streetType: "${streetType}", constructedStreet: "${constructedStreet}", borough: "${borough}"`);
+      console.log(`Received params - house: "${houseNumber}", streetName: "${streetName}", streetType: "${streetType}", borough: "${borough}"`);
 
-      if (!houseNumber || !constructedStreet || !borough) {
+      if (!houseNumber || !streetName || !borough) {
         return new Response(
           JSON.stringify({ 
-            error: 'house, streetName, streetType, and borough are required for address search',
+            error: 'house, streetName, and borough are required for address search',
             receivedHouseNumber: houseNumber,
             receivedStreetName: streetName,
             receivedStreetType: streetType,
-            constructedStreet: constructedStreet,
             receivedBorough: borough,
           }),
           { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -389,8 +478,8 @@ serve(async (req) => {
       const titleCaseBorough = toTitleCase(borough);
       const normalizedBorough = BOROUGH_NAMES[borough.toUpperCase()] || titleCaseBorough;
 
-      // Use the geocode function with the constructed street
-      const geocodeResult = await geocodeAddress(houseNumber, constructedStreet, titleCaseBorough);
+      // Use the new geocode function with suffix fallback
+      const geocodeResult = await geocodeWithFallback(houseNumber, streetName, streetType, titleCaseBorough);
 
       if (!geocodeResult.success) {
         console.error('Geocode failed:', geocodeResult.error, geocodeResult.details);
@@ -398,19 +487,18 @@ serve(async (req) => {
           JSON.stringify({ 
             error: geocodeResult.error,
             details: geocodeResult.details,
-            normalizedStreetTried: geocodeResult.normalizedStreetTried,
+            attemptedStreets: geocodeResult.attemptedStreets,
             userMessage: geocodeResult.userMessage,
             receivedHouseNumber: houseNumber,
             receivedStreetName: streetName,
             receivedStreetType: streetType,
-            constructedStreet: constructedStreet,
             receivedBorough: borough,
           }),
           { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
 
-      console.log(`Geoclient succeeded with street: ${geocodeResult.streetUsed}`);
+      console.log(`Geoclient succeeded with street: ${geocodeResult.streetUsed}${geocodeResult.usedFallback ? ' (via fallback)' : ''}`);
 
       const address = geocodeResult.data.address!;
 
