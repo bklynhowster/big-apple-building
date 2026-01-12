@@ -434,6 +434,64 @@ export function extractUnitFromRecord(record: Record<string, unknown> | null | u
 }
 
 // ------------------------------
+// Candidate extraction (for diagnostics UI)
+// ------------------------------
+/**
+ * Extract unit-like candidates from free text for diagnostics ONLY.
+ * IMPORTANT:
+ * - This function MUST NOT decide acceptance. It only returns candidates.
+ * - Validation remains exclusively in normalizeUnit() + isLikelyUnitLabel().
+ */
+const UNIT_CANDIDATE_REGEXES: Array<{ pattern: RegExp; strong: boolean }> = [
+  // Strong evidence: explicit prefixes
+  { pattern: /\b(?:APT|APARTMENT)\.?\s*#?\s*([0-9]{1,3}\s*[A-Z]{0,2}|PHH?|TH|GF|BS)\b/gi, strong: true },
+  { pattern: /\bUNIT\.?\s*#?\s*([0-9]{1,3}\s*[A-Z]{0,2}|PHH?|TH|GF|BS)\b/gi, strong: true },
+  { pattern: /\b(?:RM|ROOM)\.?\s*#?\s*([0-9]{1,3}\s*[A-Z]{0,2}|PHH?|TH|GF|BS)\b/gi, strong: true },
+  { pattern: /\b(?:STE|SUITE)\.?\s*#?\s*([0-9]{1,3}\s*[A-Z]{0,2}|PHH?|TH|GF|BS)\b/gi, strong: true },
+  { pattern: /#\s*([0-9]{1,3}\s*[A-Z]{0,2}|PHH?|TH|GF|BS)\b/gi, strong: true },
+  // PH/PENTHOUSE patterns
+  { pattern: /\bPENTHOUSE\s*([A-Z0-9]{0,3})\b/gi, strong: true },
+  { pattern: /\bPH\s*([A-Z0-9]{0,3})\b/gi, strong: true },
+  // Weak evidence: bare digit+letter (diagnostics only)
+  { pattern: /\b([0-9]{1,3}[A-Z]{1,2})\b/g, strong: false },
+];
+
+/**
+ * Exported because UnitExtractionDiagnostics imports it.
+ * Returns candidates as { token, strong } pairs.
+ */
+export function extractUnitCandidatesFromText(text: string): Array<{ token: string; strong: boolean }> {
+  const out: Array<{ token: string; strong: boolean }> = [];
+  const seen = new Set<string>();
+
+  for (const { pattern, strong } of UNIT_CANDIDATE_REGEXES) {
+    pattern.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = pattern.exec(text)) !== null) {
+      const fullMatch = (m[0] ?? '').toUpperCase();
+      const raw = (m[1] ?? '').toUpperCase().replace(/\s+/g, '');
+
+      if (!raw && !fullMatch.includes('PENTHOUSE') && !/\bPH\b/.test(fullMatch)) continue;
+
+      // Normalize PH forms into PH / PHH / etc.
+      let token = raw;
+      if (fullMatch.includes('PENTHOUSE') || /\bPH\b/.test(fullMatch)) {
+        const suffix = raw ? raw.replace(/^PH/i, '') : '';
+        token = `PH${suffix}`.replace(/^PH$/, 'PH');
+      }
+
+      const key = `${token}|${strong ? 'strong' : 'weak'}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+
+      out.push({ token, strong });
+    }
+  }
+
+  return out;
+}
+
+// ------------------------------
 // DEV globals for sanity / tests
 // ------------------------------
 
