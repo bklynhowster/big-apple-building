@@ -86,18 +86,19 @@ export default function Results() {
   
   // Fetch all data for Unit Insights when co-op is detected
   useEffect(() => {
-    if (isCoop && isValidBBL && !insightsFetchedRef.current) {
-      hpdViolations.fetch(bbl);
-      hpdComplaints.fetch(bbl);
-      coopUnitRoster.fetch(bbl);
-      if (bin) {
-        dobJobFilings.fetch(bin);
-      }
-      if (latitude !== undefined && longitude !== undefined) {
-        threeOneOne.fetch(latitude, longitude);
-      }
-      insightsFetchedRef.current = true;
+    if (!isCoop || !isValidBBL || insightsFetchedRef.current) return;
+    if (!bbl || bbl.length !== 10) return;
+
+    hpdViolations.fetch(bbl);
+    hpdComplaints.fetch(bbl);
+    coopUnitRoster.fetch(bbl);
+    if (bin) {
+      dobJobFilings.fetch(bin);
     }
+    if (latitude !== undefined && longitude !== undefined) {
+      threeOneOne.fetch(latitude, longitude);
+    }
+    insightsFetchedRef.current = true;
   }, [isCoop, isValidBBL, bbl, bin, latitude, longitude]);
 
   // State for passing keyword filter to tabs from "View in tab"
@@ -339,6 +340,7 @@ export default function Results() {
                   selectedUnit={coopUnitContext}
                   onUnitSelect={handleUnitInsightSelect}
                   loading={hpdViolations.loading || hpdComplaints.loading || threeOneOne.loading || coopUnitRoster.loading || dobJobFilings.loading}
+                  rosterError={coopUnitRoster.error}
                   salesWarning={coopUnitRoster.warning}
                   dobNowUrl={dobJobFilings.dobNowUrl}
                   fallbackMode={dobJobFilings.fallbackMode}

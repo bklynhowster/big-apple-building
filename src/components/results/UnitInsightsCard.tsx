@@ -27,6 +27,7 @@ interface UnitInsightsCardProps {
   selectedUnit: string | null;
   onUnitSelect: (unit: string) => void;
   loading?: boolean;
+  rosterError?: string | null;
   salesWarning?: string | null;
   filingsWarning?: string | null;
   dobNowUrl?: string | null;

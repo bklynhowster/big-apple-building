@@ -224,6 +224,30 @@ serve(async (req) => {
   const ctx = createRequestContext('coop-unit-roster');
   const NYC_OPEN_DATA_APP_TOKEN = Deno.env.get('NYC_OPEN_DATA_APP_TOKEN');
 
+  // ===== Request logging (debug) =====
+  try {
+    const url = new URL(req.url);
+    const params = url.searchParams;
+    console.log(
+      JSON.stringify({
+        requestId: ctx.requestId,
+        endpoint: ctx.endpoint,
+        message: 'Incoming request',
+        method: req.method,
+        url: req.url,
+        query: {
+          bbl: params.get('bbl') || params.get('BBL'),
+          bin: params.get('bin') || params.get('BIN'),
+          address: params.get('address'),
+          limit: params.get('limit'),
+          offset: params.get('offset'),
+        },
+      })
+    );
+  } catch {
+    // ignore logging errors
+  }
+
   try {
     const clientIP = getClientIP(req);
     const rateLimit = checkRateLimit(clientIP);
