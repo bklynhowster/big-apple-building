@@ -66,9 +66,16 @@ export function CondoUnitsCard({ bbl }: CondoUnitsCardProps) {
   const { loading, loadingMore, error, data, fetchFirstPage, fetchNextPage, retry } = useCondoUnits();
   const [searchQuery, setSearchQuery] = useState('');
 
+  const lotLooksLikeBilling = useMemo(() => {
+    if (!bbl || bbl.length !== 10) return false;
+    const lot = bbl.slice(6, 10);
+    const n = Number(lot);
+    return Number.isFinite(n) && n >= 7501 && n <= 7599;
+  }, [bbl]);
+
   useEffect(() => {
     if (bbl && bbl.length === 10) {
-      fetchFirstPage(bbl, 200);
+      fetchFirstPage(bbl, 2000);
     }
   }, [bbl, fetchFirstPage]);
 
@@ -88,7 +95,7 @@ export function CondoUnitsCard({ bbl }: CondoUnitsCardProps) {
     });
   }, [data?.units, searchQuery]);
 
-  const currentUnitBbl = data?.inputIsUnitLot ? data.inputBbl : null;
+  const currentUnitBbl = data?.inputRole === 'unit' ? data.inputBbl : null;
 
   const handleOpenUnit = (unitBbl: string) => {
     navigate(`/results?bbl=${unitBbl}&borough=${encodeURIComponent(boroughNameFromBbl(unitBbl))}`);
@@ -127,8 +134,8 @@ export function CondoUnitsCard({ bbl }: CondoUnitsCardProps) {
 
   if (!data) return null;
 
-  // Acceptance requirement: for non-condo buildings, hide this panel.
-  if (!data.isCondo) return null;
+  // Visible when the property is a condo OR the lot looks like a condo billing lot (75xx).
+  if (!data.isCondo && !lotLooksLikeBilling) return null;
 
   const hasMore = data.totalApprox > 0 ? data.units.length < data.totalApprox : false;
 
@@ -141,7 +148,7 @@ export function CondoUnitsCard({ bbl }: CondoUnitsCardProps) {
             Condo Units
           </CardTitle>
           <Badge variant="secondary" className="text-xs">
-            Condominium
+            {data.isCondo ? 'Condominium' : 'Possible condo'}
           </Badge>
         </div>
       </CardHeader>
@@ -149,7 +156,7 @@ export function CondoUnitsCard({ bbl }: CondoUnitsCardProps) {
       <CardContent className="space-y-4">
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-2">
-            <p className="text-xs text-muted-foreground">Total units</p>
+            <p className="text-xs text-muted-foreground">Unit count found</p>
             <Badge variant="outline" className="font-mono">
               {data.totalApprox || data.units.length}
             </Badge>
@@ -164,7 +171,7 @@ export function CondoUnitsCard({ bbl }: CondoUnitsCardProps) {
             </div>
           )}
 
-          {data.inputIsUnitLot && (
+          {data.inputRole === 'unit' && (
             <div className="flex items-center gap-2">
               <p className="text-xs text-muted-foreground">Current unit</p>
               <Badge variant="secondary" className="font-mono">
@@ -173,13 +180,8 @@ export function CondoUnitsCard({ bbl }: CondoUnitsCardProps) {
             </div>
           )}
 
-          {data.inputIsUnitLot && data.billingBbl && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleBackToBuilding}
-              className="gap-1.5"
-            >
+          {data.inputRole === 'unit' && data.billingBbl && (
+            <Button variant="outline" size="sm" onClick={handleBackToBuilding} className="gap-1.5">
               <ArrowLeft className="h-3.5 w-3.5" />
               Back to building
             </Button>
@@ -214,7 +216,7 @@ export function CondoUnitsCard({ bbl }: CondoUnitsCardProps) {
                   <TableRow>
                     <TableCell colSpan={4} className="text-center text-sm text-muted-foreground py-8">
                       {data.units.length === 0
-                        ? 'No units were returned by the DOF condo-unit dataset for this condo context.'
+                        ? 'Condo detected but 0 unit lots returned from unit dataset. Check logs for dataset + filter.'
                         : 'No units match your search.'}
                     </TableCell>
                   </TableRow>
