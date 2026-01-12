@@ -22,11 +22,15 @@ export default function Results() {
   const location = useLocation();
   const [activeTab, setActiveTab] = useState('summary');
 
-  // Read BBL directly from URL - no hooks that do async work
-  const bbl = useMemo(() => {
-    const raw = new URLSearchParams(location.search).get('bbl');
-    return normalizeBBL(raw);
+  // Read all params from URL
+  const params = useMemo(() => {
+    return new URLSearchParams(location.search);
   }, [location.search]);
+
+  const bbl = useMemo(() => normalizeBBL(params.get('bbl')), [params]);
+  const address = params.get('address') || '';
+  const borough = params.get('borough') || '';
+  const bin = params.get('bin') || '';
 
   const isValidBBL = bbl.length === 10;
 
@@ -67,9 +71,16 @@ export default function Results() {
           {/* Results - render tabs only when we have a valid BBL */}
           {isValidBBL && (
             <div className="space-y-6">
-              {/* BBL header */}
-              <div className="text-sm text-muted-foreground font-mono bg-muted/30 px-3 py-2 rounded inline-block">
-                BBL: {bbl}
+              {/* Property Header */}
+              <div className="bg-card border border-border rounded-lg p-4">
+                {address && (
+                  <h1 className="text-xl font-semibold text-foreground">{address}</h1>
+                )}
+                <div className="flex flex-wrap gap-4 mt-2 text-sm text-muted-foreground">
+                  {borough && <span>{borough}</span>}
+                  <span className="font-mono">BBL: {bbl}</span>
+                  {bin && <span className="font-mono">BIN: {bin}</span>}
+                </div>
               </div>
 
               <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">

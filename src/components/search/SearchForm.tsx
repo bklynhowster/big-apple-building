@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, MapPin, Grid3X3 } from 'lucide-react';
+import { Search, MapPin, Grid3X3, Loader2 } from 'lucide-react';
+import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -90,6 +91,8 @@ function extractSuffix(streetName: string): { name: string; type: string } {
 export function SearchForm() {
   const navigate = useNavigate();
   const [searchType, setSearchType] = useState<'address' | 'bbl'>('address');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   
   // Address search state
   const [houseNumber, setHouseNumber] = useState('');
@@ -102,9 +105,12 @@ export function SearchForm() {
   const [block, setBlock] = useState('');
   const [lot, setLot] = useState('');
 
-  const handleAddressSearch = (e: React.FormEvent) => {
+  const handleAddressSearch = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!houseNumber || !streetName || !borough) return;
+    
+    setLoading(true);
+    setError(null);
     
     // Auto-detect suffix if streetType not explicitly set
     let finalStreetName = streetName.trim();
@@ -119,27 +125,131 @@ export function SearchForm() {
       }
     }
     
-    const params = new URLSearchParams({
-      type: 'address',
-      house: houseNumber,
-      streetName: finalStreetName,
-      streetType: finalStreetType,
-      borough: borough,
-    });
-    navigate(`/results?${params.toString()}`);
+    try {
+      const params = new URLSearchParams({
+        type: 'address',
+        house: houseNumber,
+        streetName: finalStreetName,
+        streetType: finalStreetType,
+        borough: borough,
+      });
+      
+      const { data, error: fnError } = await supabase.functions.invoke('geocode', {
+        body: null,
+        headers: {},
+      });
+
+      // Use query params for the edge function call
+      const response = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/geocode?${params.toString()}`,
+        {
+          headers: {
+            'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
+            'Content-Type': 'application/json',
+          },
+        }
+      );
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.userMessage || errorData.error || 'Geocoding failed');
+      }
+
+      const geocodeData = await response.json();
+      const bbl = geocodeData.bbl;
+
+      if (!bbl) {
+        console.error('[search] geocode response missing bbl:', geocodeData);
+        setError('Geocoding succeeded but no BBL was returned. Please try again.');
+        setLoading(false);
+        return;
+      }
+
+      const bbl10 = String(bbl).padStart(10, '0');
+      console.log('[search] geocode success bbl:', bbl10);
+
+      // Navigate with BBL (and optional address for display)
+      const address = geocodeData.address || '';
+      const resultParams = new URLSearchParams({ bbl: bbl10 });
+      if (address) {
+        resultParams.set('address', address);
+      }
+      if (geocodeData.bin) {
+        resultParams.set('bin', geocodeData.bin);
+      }
+      resultParams.set('borough', geocodeData.borough || borough);
+
+      navigate(`/results?${resultParams.toString()}`);
+    } catch (err) {
+      console.error('[search] geocode error:', err);
+      setError(err instanceof Error ? err.message : 'Search failed. Please try again.');
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const handleBblSearch = (e: React.FormEvent) => {
+  const handleBblSearch = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!bblBorough || !block || !lot) return;
     
-    const params = new URLSearchParams({
-      type: 'bbl',
-      borough: bblBorough,
-      block: block,
-      lot: lot,
-    });
-    navigate(`/results?${params.toString()}`);
+    setLoading(true);
+    setError(null);
+    
+    try {
+      const params = new URLSearchParams({
+        type: 'bbl',
+        borough: bblBorough,
+        block: block,
+        lot: lot,
+      });
+      
+      const response = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/geocode?${params.toString()}`,
+        {
+          headers: {
+            'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
+            'Content-Type': 'application/json',
+          },
+        }
+      );
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.userMessage || errorData.error || 'BBL lookup failed');
+      }
+
+      const geocodeData = await response.json();
+      const bbl = geocodeData.bbl;
+
+      if (!bbl) {
+        console.error('[search] BBL geocode response missing bbl:', geocodeData);
+        setError('BBL lookup succeeded but no BBL was returned. Please try again.');
+        setLoading(false);
+        return;
+      }
+
+      const bbl10 = String(bbl).padStart(10, '0');
+      console.log('[search] geocode success bbl:', bbl10);
+
+      // Navigate with BBL
+      const resultParams = new URLSearchParams({ bbl: bbl10 });
+      if (geocodeData.address) {
+        resultParams.set('address', geocodeData.address);
+      }
+      if (geocodeData.bin) {
+        resultParams.set('bin', geocodeData.bin);
+      }
+      if (geocodeData.borough) {
+        resultParams.set('borough', geocodeData.borough);
+      }
+
+      navigate(`/results?${resultParams.toString()}`);
+    } catch (err) {
+      console.error('[search] BBL geocode error:', err);
+      setError(err instanceof Error ? err.message : 'Search failed. Please try again.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -212,9 +322,18 @@ export function SearchForm() {
                   </SelectContent>
                 </Select>
               </div>
-              <Button type="submit" className="w-full" size="lg">
-                <Search className="h-4 w-4 mr-2" />
-                Search Property
+              {error && searchType === 'address' && (
+                <div className="text-sm text-destructive bg-destructive/10 p-3 rounded-md">
+                  {error}
+                </div>
+              )}
+              <Button type="submit" className="w-full" size="lg" disabled={loading}>
+                {loading ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <Search className="h-4 w-4 mr-2" />
+                )}
+                {loading ? 'Searching...' : 'Search Property'}
               </Button>
             </form>
           </TabsContent>
@@ -257,9 +376,18 @@ export function SearchForm() {
                   />
                 </div>
               </div>
-              <Button type="submit" className="w-full" size="lg">
-                <Search className="h-4 w-4 mr-2" />
-                Search by BBL
+              {error && searchType === 'bbl' && (
+                <div className="text-sm text-destructive bg-destructive/10 p-3 rounded-md">
+                  {error}
+                </div>
+              )}
+              <Button type="submit" className="w-full" size="lg" disabled={loading}>
+                {loading ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <Search className="h-4 w-4 mr-2" />
+                )}
+                {loading ? 'Searching...' : 'Search by BBL'}
               </Button>
             </form>
           </TabsContent>
