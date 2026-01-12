@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { parseApiError, type ApiError } from '@/types/api-error';
 
 export type PropertyTypeLabel = 'Condo' | 'Co-op' | '1-2 Family' | '3+ Family' | 'Mixed-Use' | 'Commercial' | 'Other' | 'Unknown';
+export type PropertyTenure = 'CONDO' | 'COOP' | 'RENTAL_OR_OTHER' | 'UNKNOWN';
 
 export interface PropertyProfile {
   bbl: string;
@@ -12,6 +13,7 @@ export interface PropertyProfile {
   landUse: string | null;
   buildingClass: string | null;
   propertyTypeLabel: PropertyTypeLabel;
+  propertyTenure: PropertyTenure;
   residentialUnits: number | null;
   totalUnits: number | null;
   yearBuilt: number | null;
