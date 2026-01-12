@@ -53,12 +53,13 @@ serve(async (req) => {
 
     // Build SoQL query for safety-related violations
     // Filter by violation_category containing safety-related terms
+    // Note: Only use columns that exist in the DOB Violations dataset
     const whereClauses: string[] = [
       `boro = '${boro}'`,
       `block = '${block}'`,
       `lot = '${lot}'`,
-      // Filter for safety-related violations
-      `(violation_category LIKE '%SAFETY%' OR violation_category LIKE '%HAZARD%' OR violation_category LIKE '%UNSAFE%' OR violation_type LIKE '%SAFETY%' OR violation_type LIKE '%HAZARD%' OR ecb_violation_status IS NOT NULL)`,
+      // Filter for safety-related violations using existing columns only
+      `(violation_category LIKE '%SAFETY%' OR violation_category LIKE '%HAZARD%' OR violation_category LIKE '%UNSAFE%' OR violation_type LIKE '%SAFETY%' OR violation_type LIKE '%HAZARD%')`,
     ];
 
     // Date filtering on issue_date
@@ -69,11 +70,12 @@ serve(async (req) => {
       whereClauses.push(`issue_date <= '${toDate}T23:59:59'`);
     }
 
-    // Status filtering based on violation_status or disposition_date
+    // Status filtering based on disposition_date (exists in this dataset)
+    // If disposition_date is set, violation is considered closed
     if (status === 'open') {
-      whereClauses.push(`(violation_status != 'CLOSED' OR violation_status IS NULL) AND disposition_date IS NULL`);
+      whereClauses.push(`disposition_date IS NULL`);
     } else if (status === 'closed') {
-      whereClauses.push(`(violation_status = 'CLOSED' OR disposition_date IS NOT NULL)`);
+      whereClauses.push(`disposition_date IS NOT NULL`);
     }
 
     const whereClause = whereClauses.join(' AND ');
@@ -105,20 +107,20 @@ serve(async (req) => {
 
     // Normalize items
     const items: SafetyViolation[] = rawData.map((row: Record<string, unknown>) => {
-      // Determine status
+      // Determine status based on disposition_date only (violation_status doesn't exist)
+      // If disposition_date exists, violation is closed; otherwise open
       let itemStatus: 'open' | 'closed' | 'unknown' = 'unknown';
-      const violationStatus = (row.violation_status as string || '').toUpperCase();
       const dispositionDate = row.disposition_date as string | null;
       
-      if (violationStatus === 'CLOSED' || dispositionDate) {
+      if (dispositionDate) {
         itemStatus = 'closed';
-      } else if (violationStatus === 'OPEN' || violationStatus === 'ACTIVE' || !dispositionDate) {
+      } else {
         itemStatus = 'open';
       }
 
       return {
         recordType: 'Safety' as const,
-        recordId: (row.violation_number as string) || (row.number as string) || `${row.isn_dob_bis_extract || 'unknown'}`,
+        recordId: (row.violation_number as string) || (row.number as string) || `${row.isn_dob_bis_viol || 'unknown'}`,
         status: itemStatus,
         issueDate: (row.issue_date as string) || null,
         resolvedDate: dispositionDate || null,
