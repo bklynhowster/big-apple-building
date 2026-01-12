@@ -34,6 +34,8 @@ export interface UseECBReturn {
   loading: boolean;
   error: string | null;
   data: ECBApiResponse | null;
+  items: ECBRecord[];
+  blocked: boolean;
   filters: ECBFilters;
   offset: number;
   fetchECB: (bbl: string) => Promise<void>;
@@ -46,7 +48,7 @@ export interface UseECBReturn {
 
 const DEFAULT_LIMIT = 50;
 
-export function useECB(bbl: string | null): UseECBReturn {
+export function useECB(bbl?: string | null): UseECBReturn {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<ECBApiResponse | null>(null);
@@ -61,12 +63,11 @@ export function useECB(bbl: string | null): UseECBReturn {
   const [offset, setOffset] = useState(0);
   const [currentBBL, setCurrentBBL] = useState<string | null>(null);
 
+  const blocked = !bbl || bbl.length !== 10;
+
   const fetchECB = useCallback(async (targetBBL: string, targetOffset = 0, targetFilters?: ECBFilters) => {
-    // Guard: require valid 10-digit BBL
-    if (!targetBBL || targetBBL.length !== 10) {
-      setError('Valid 10-digit BBL is required');
-      return;
-    }
+    // Hard gate: never fetch unless we have a valid 10-digit BBL
+    if (!targetBBL || targetBBL.length !== 10) return;
 
     setLoading(true);
     setError(null);
@@ -153,12 +154,19 @@ export function useECB(bbl: string | null): UseECBReturn {
     setError(null);
   }, []);
 
+  const derivedLoading = blocked ? false : loading;
+  const derivedError = blocked ? null : error;
+  const derivedData = blocked ? null : data;
+  const derivedItems = blocked ? [] : (data?.items || []);
+
   return {
-    loading,
-    error,
-    data,
+    loading: derivedLoading,
+    error: derivedError,
+    data: derivedData,
+    items: derivedItems,
+    blocked,
     filters,
-    offset,
+    offset: blocked ? 0 : offset,
     fetchECB,
     setFilters,
     applyFilters,

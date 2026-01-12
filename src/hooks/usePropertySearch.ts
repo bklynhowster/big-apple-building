@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useSearchParams, useNavigate } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import type { PropertyData, PropertyInfo, ECBViolation, SafetyViolation, Permit, Borough } from '@/types/property';
 
 const BOROUGH_NAMES: Record<string, Borough> = {
@@ -78,7 +78,6 @@ function normalizeBBL(bbl: string | number | null | undefined): string | null {
 
 export function usePropertySearch() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<PropertyData | null>(null);
@@ -162,12 +161,13 @@ export function usePropertySearch() {
           bin: geocodeResult.bin,
         };
 
-        // Update URL with BBL for persistence across refresh
-        const currentParams = new URLSearchParams(searchParams);
-        if (currentParams.get('bbl') !== normalizedBBL) {
-          currentParams.set('bbl', normalizedBBL);
-          // Use replace to not add to history
-          setSearchParams(currentParams, { replace: true });
+        // Update URL with BBL for persistence across refresh.
+        // Make bbl a first-class URL param (temporary: we replace the query string with only bbl)
+        const currentBBLParam = searchParams.get('bbl');
+        if (currentBBLParam !== normalizedBBL || Array.from(searchParams.keys()).length !== 1) {
+          const nextParams = new URLSearchParams();
+          nextParams.set('bbl', normalizedBBL);
+          setSearchParams(nextParams, { replace: true });
         }
 
         // Generate placeholder data for other tabs (will be replaced with real API calls later)

@@ -31,6 +31,7 @@ interface UseSummaryResult {
   loading: boolean;
   error: string | null;
   data: SummaryData | null;
+  blocked: boolean;
 }
 
 // Simple in-memory cache
@@ -79,15 +80,19 @@ function getLatestDate(items: Array<{ issueDate?: string | null; resolvedDate?: 
   return latest ? latest.toISOString() : null;
 }
 
-export function useSummary(bbl: string): UseSummaryResult {
+export function useSummary(bbl?: string | null): UseSummaryResult {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<SummaryData | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
 
+  const blocked = !bbl || bbl.length !== 10;
+
   const fetchData = useCallback(async () => {
-    if (!bbl || bbl.length !== 10) {
-      setError('Valid 10-digit BBL is required');
+    if (blocked) {
+      // Hard gate: do not fetch
+      setError(null);
+      setData(null);
       setLoading(false);
       return;
     }
@@ -173,9 +178,15 @@ export function useSummary(bbl: string): UseSummaryResult {
     } finally {
       setLoading(false);
     }
-  }, [bbl]);
+  }, [bbl, blocked]);
 
   useEffect(() => {
+    // Hard gate: do nothing until we have a valid BBL
+    if (blocked) {
+      setLoading(false);
+      return;
+    }
+
     fetchData();
 
     return () => {
@@ -183,9 +194,13 @@ export function useSummary(bbl: string): UseSummaryResult {
         abortControllerRef.current.abort();
       }
     };
-  }, [fetchData]);
+  }, [fetchData, blocked]);
 
-  return { loading, error, data };
+  const derivedLoading = blocked ? false : loading;
+  const derivedError = blocked ? null : error;
+  const derivedData = blocked ? null : data;
+
+  return { loading: derivedLoading, error: derivedError, data: derivedData, blocked };
 }
 
 // Export cache clear function

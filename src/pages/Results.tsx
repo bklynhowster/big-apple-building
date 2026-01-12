@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { useSearchParams, Link } from 'react-router-dom';
+import { useMemo, useState } from 'react';
+import { useLocation, Link } from 'react-router-dom';
 import { ArrowLeft, Loader2, AlertCircle } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
 import { Footer } from '@/components/layout/Footer';
@@ -14,16 +14,26 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { usePropertySearch } from '@/hooks/usePropertySearch';
 
+function normalizeBBL(bbl: string | null): string {
+  if (!bbl) return '';
+  return String(bbl).padStart(10, '0');
+}
+
 export default function Results() {
-  const [searchParams] = useSearchParams();
-  const { loading, error, data, bbl } = usePropertySearch();
+  const location = useLocation();
+  const { loading, error, data } = usePropertySearch();
   const [activeTab, setActiveTab] = useState('summary');
+
+  const bbl = useMemo(() => {
+    const raw = new URLSearchParams(location.search).get('bbl');
+    const normalized = normalizeBBL(raw);
+    return normalized.length === 10 ? normalized : '';
+  }, [location.search]);
 
   const handleTabChange = (tab: string) => {
     setActiveTab(tab);
   };
 
-  // Missing BBL state - shown when we can't determine the property
   const showMissingBBL = !loading && !error && !bbl;
 
   return (
@@ -68,9 +78,9 @@ export default function Results() {
 
           {/* Missing BBL State */}
           {showMissingBBL && (
-            <Card className="border-warning/50">
+            <Card className="border-destructive/50">
               <CardContent className="flex flex-col items-center justify-center py-16">
-                <AlertCircle className="h-8 w-8 text-warning mb-4" />
+                <AlertCircle className="h-8 w-8 text-destructive mb-4" />
                 <p className="text-foreground font-medium mb-2">Missing property identifier (BBL)</p>
                 <p className="text-sm text-muted-foreground mb-4">Please run the search again.</p>
                 <Link to="/">
@@ -80,11 +90,12 @@ export default function Results() {
             </Card>
           )}
 
-          {/* Results - only render when we have both data and a valid bbl */}
-          {data && bbl && !loading && (
+          {/* Results - render tabs as soon as we have a valid BBL */}
+          {!loading && !error && bbl && (
             <div className="space-y-6">
-              <PropertyHeader info={data.info} />
-              
+              {/* Property header is optional (may be missing after refresh) */}
+              {data?.info && <PropertyHeader info={data.info} />}
+
               <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
                 <TabsList className="w-full justify-start bg-card border-b border-border rounded-none h-auto p-0 flex-wrap">
                   <TabsTrigger 
@@ -124,8 +135,8 @@ export default function Results() {
                     <Card>
                       <CardContent className="p-6">
                         <SummaryTab 
-                          bbl={bbl} 
-                          address={data.info.address}
+                          bbl={bbl}
+                          address={data?.info?.address}
                           onTabChange={handleTabChange}
                         />
                       </CardContent>
