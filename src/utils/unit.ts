@@ -132,6 +132,17 @@ function isAllowedSpecialToken(token: string): boolean {
   return PENTHOUSE_TOKENS.has(token.toUpperCase());
 }
 
+/**
+ * Check if a single-letter token is allowed as a unit designator.
+ * Only allowed with strong evidence (from an explicit apartment/unit field or prefix).
+ * Always rejects "S" as it's too common a word/abbreviation.
+ */
+function isAllowedSingleLetterUnit(token: string, hasStrongEvidence: boolean): boolean {
+  if (!hasStrongEvidence) return false;
+  // Only allow a narrow set; always reject S (too common as a word/abbrev)
+  return /^[A-RT-Z]$/.test(token) && token !== 'S';
+}
+
 // ============================================================================
 // VALIDATION
 // ============================================================================

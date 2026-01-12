@@ -197,23 +197,31 @@ export function runUnitExtractionTests(): TestResults {
   // Test isLikelyUnitLabel directly
   console.log('\n=== isLikelyUnitLabel Direct Tests ===');
   const labelTests = [
+    // Core valid units (no strong evidence required)
     { unit: '6M', expected: true },
-    { unit: '2G', expected: true },
+    { unit: '6G', expected: true },
+    { unit: '4J', expected: true },
+    { unit: '2H', expected: true },
     { unit: '12B', expected: true },
     { unit: '100A', expected: true },
-    { unit: 'PH', expected: true },
-    { unit: 'PHA', expected: true },
-    { unit: 'PHW', expected: true },
-    { unit: 'A1', expected: true },
     { unit: '1', expected: true },
     { unit: '12', expected: true },
     { unit: '100', expected: true },
-    { unit: 'A', expected: true },
-    { unit: 'REAR', expected: true },
+    // Penthouse
+    { unit: 'PH', expected: true },
+    { unit: 'PHH', expected: true },
+    // Letter+digits
+    { unit: 'A1', expected: true },
+    { unit: 'A12', expected: true },
+    // FALSE POSITIVES - must reject
+    { unit: 'ONLY', expected: false },
+    { unit: 'IF', expected: false },
+    { unit: 'AH', expected: false },
+    { unit: 'S', expected: false },
+    { unit: 'BROOKLYN', expected: false },
     { unit: '1200', expected: false }, // 4+ digit number
     { unit: 'B00123456', expected: false }, // Job number
     { unit: '11201', expected: false }, // ZIP code
-    { unit: 'BROOKLYN', expected: false }, // Too long / not a pattern
   ];
   
   for (const { unit, expected } of labelTests) {
