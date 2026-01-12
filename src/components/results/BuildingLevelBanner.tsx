@@ -1,5 +1,6 @@
 import { Info, Building2 } from 'lucide-react';
-import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Badge } from '@/components/ui/badge';
 
 interface BuildingLevelBannerProps {
   coopUnitContext?: string | null;
@@ -13,15 +14,18 @@ interface BuildingLevelBannerProps {
 export function BuildingLevelBanner({ coopUnitContext, compact = false }: BuildingLevelBannerProps) {
   if (compact) {
     return (
-      <div className="flex items-center gap-2 text-xs text-muted-foreground bg-muted/30 border border-border/50 rounded-md px-3 py-2 mb-4">
-        <Building2 className="h-3.5 w-3.5 shrink-0" />
-        <span>
-          Records shown are issued at the building level and may relate to common areas or shared systems.
-          {coopUnitContext && (
-            <span className="ml-1">
-              (Viewing in context of <strong>{coopUnitContext}</strong>)
-            </span>
-          )}
+      <div className="flex items-center gap-2 flex-wrap text-xs bg-muted/30 border border-border/50 rounded-md px-3 py-2 mb-4">
+        <Badge variant="secondary" className="text-[10px] gap-1 py-0.5">
+          <Building2 className="h-3 w-3" />
+          Building-level (Co-op)
+        </Badge>
+        {coopUnitContext && (
+          <Badge variant="outline" className="text-[10px] py-0.5">
+            Apt context: {coopUnitContext} (context-only)
+          </Badge>
+        )}
+        <span className="text-muted-foreground ml-auto">
+          Records apply to the building and may relate to common areas or shared systems.
         </span>
       </div>
     );
@@ -30,13 +34,16 @@ export function BuildingLevelBanner({ coopUnitContext, compact = false }: Buildi
   return (
     <Alert className="bg-blue-50 dark:bg-blue-950/20 border-blue-200 dark:border-blue-800 mb-4">
       <Info className="h-4 w-4 text-blue-600 dark:text-blue-400" />
-      <AlertDescription className="text-sm text-blue-800 dark:text-blue-200">
-        Records shown are issued at the building level and may relate to common areas or shared systems.
+      <AlertTitle className="text-sm font-medium text-blue-800 dark:text-blue-200 flex items-center gap-2">
+        Building-level Records (Co-op)
         {coopUnitContext && (
-          <span className="block mt-1 font-medium">
-            Shown in context of {coopUnitContext}
-          </span>
+          <Badge variant="outline" className="text-[10px] font-normal border-blue-300 dark:border-blue-700 text-blue-700 dark:text-blue-300">
+            Apt context: {coopUnitContext} (context-only)
+          </Badge>
         )}
+      </AlertTitle>
+      <AlertDescription className="text-sm text-blue-800/80 dark:text-blue-200/80 mt-1">
+        NYC co-op apartments do not have individual BBLs. Records shown apply to the building and may relate to common areas or shared systems.
       </AlertDescription>
     </Alert>
   );
@@ -47,14 +54,14 @@ export function BuildingLevelBanner({ coopUnitContext, compact = false }: Buildi
  */
 export function BuildingLevelLabel({ coopUnitContext }: { coopUnitContext?: string | null }) {
   return (
-    <div className="text-xs text-muted-foreground mt-2 pt-2 border-t border-border/50">
-      <span className="flex items-center gap-1">
+    <div className="flex items-center gap-2 flex-wrap text-xs text-muted-foreground mt-2 pt-2 border-t border-border/50">
+      <Badge variant="secondary" className="text-[10px] gap-1 py-0.5 font-normal">
         <Building2 className="h-3 w-3" />
         Building-level
-      </span>
+      </Badge>
       {coopUnitContext && (
-        <span className="text-[10px] block mt-0.5">
-          Shown in context of {coopUnitContext}
+        <span className="text-[10px]">
+          Shown in context of <strong>{coopUnitContext}</strong>
         </span>
       )}
     </div>

@@ -162,6 +162,7 @@ export function ContextBanner({
                   <CoopUnitContext
                     selectedUnit={coopUnitContext || null}
                     onUnitChange={onCoopUnitContextChange}
+                    buildingBbl={unitBbl}
                   />
                 </div>
               )}
