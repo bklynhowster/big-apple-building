@@ -28,6 +28,7 @@ interface CondoUnitsCardProps {
   bbl: string;
   onUnitLabelResolved?: (unitLabel: string | null) => void;
   onBillingBblResolved?: (billingBbl: string) => void;
+  hidden?: boolean;
 }
 
 function LoadingSkeleton() {
@@ -68,7 +69,7 @@ function formatLot(lot: string): string {
   return lot;
 }
 
-export function CondoUnitsCard({ bbl, onUnitLabelResolved, onBillingBblResolved }: CondoUnitsCardProps) {
+export function CondoUnitsCard({ bbl, onUnitLabelResolved, onBillingBblResolved, hidden }: CondoUnitsCardProps) {
   const navigate = useNavigate();
   const { loading, loadingMore, error, data, fetchFirstPage, fetchNextPage, retry } = useCondoUnits();
   const [searchQuery, setSearchQuery] = useState('');
@@ -134,7 +135,7 @@ export function CondoUnitsCard({ bbl, onUnitLabelResolved, onBillingBblResolved 
     navigate(`/results?bbl=${data.billingBbl}&borough=${encodeURIComponent(boroughNameFromBbl(data.billingBbl))}`);
   };
 
-  if (loading) return <LoadingSkeleton />;
+  if (loading) return hidden ? null : <LoadingSkeleton />;
 
   if (error) {
     return (
@@ -161,6 +162,9 @@ export function CondoUnitsCard({ bbl, onUnitLabelResolved, onBillingBblResolved 
   }
 
   if (!data) return null;
+
+  // Hidden mode - just trigger the callbacks, don't render UI
+  if (hidden) return null;
 
   // Visible when the property is a condo OR the lot looks like a condo billing lot (75xx).
   if (!data.isCondo && !lotLooksLikeBilling) return null;
