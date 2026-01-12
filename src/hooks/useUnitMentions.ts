@@ -16,6 +16,32 @@ import type { PermitRecord } from '@/hooks/usePermits';
 const UNIT_PATTERN_INDICATORS = /\b(APT|APARTMENT|UNIT|#\d|PH|PENTHOUSE|FL\s*\d|RM|ROOM|STE|SUITE)\b/i;
 
 // ============================================================================
+// RECORD SHAPE ADAPTER (CRITICAL FIX)
+// ============================================================================
+
+/**
+ * Canonicalize record shape BEFORE extraction.
+ * 
+ * Some dataset records have a `.raw` property containing the actual data,
+ * while others are already flat records. This adapter normalizes them all
+ * to ensure extractUnitFromRecordWithTrace receives the correct shape.
+ * 
+ * @param r - The record to normalize (may be wrapped or flat)
+ * @returns The raw record data, or null if invalid
+ */
+function toRawRecord(r: unknown): Record<string, unknown> | null {
+  if (!r || typeof r !== 'object') return null;
+  const obj = r as Record<string, unknown>;
+  const raw = obj.raw;
+  // If the record has a .raw property that's a non-array object, use that
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    return raw as Record<string, unknown>;
+  }
+  // Otherwise, the record itself is the raw data (or fallback to the whole object)
+  return obj;
+}
+
+// ============================================================================
 // TYPES
 // ============================================================================
 
@@ -89,13 +115,50 @@ interface CachedResult {
 
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
 // Cache versioning to prevent "stuck at zero" after deployments
-const UNIT_MENTIONS_CACHE_VERSION = 3;
+// BUMPED to v5 to invalidate all old caches after toRawRecord fix
+const UNIT_MENTIONS_CACHE_VERSION = 5;
 const CACHE_KEY_PREFIX = `unit_mentions_cache_v${UNIT_MENTIONS_CACHE_VERSION}_`;
 
 // DEV-only debug mode (Vite-safe). Enabled only with ?debug=1.
 const DEBUG_MODE = import.meta.env.DEV && typeof window !== 'undefined' && window.location.search.includes('debug=1');
 
-// Debug stats collector
+// ============================================================================
+// SOURCE DIAGNOSTICS (DEV-only)
+// ============================================================================
+
+export interface SourceDiagnostics {
+  source: string;
+  recordsFetched: number;
+  recordsConvertedToRaw: number;
+  recordsWithAnyText: number;
+  recordsWithCandidateTokens: number;
+  recordsWithValidatedUnits: number;
+  topExtractedUnits: Array<{ unit: string; count: number }>;
+  topRejectedTokens: Array<{ token: string; reason: string; count: number }>;
+  sampleRawKeys: string[]; // Top 5 keys from a sample converted record
+}
+
+export interface DiagnosticsReport {
+  bbl: string;
+  sources: SourceDiagnostics[];
+  totalRecordsFetched: number;
+  totalRecordsConvertedToRaw: number;
+  totalValidatedUnits: number;
+  cacheKey: string;
+  cacheStatus: 'hit' | 'miss' | 'skipped-empty' | 'written';
+}
+
+let currentDiagnostics: DiagnosticsReport | null = null;
+
+export function getDiagnosticsReport(): DiagnosticsReport | null {
+  return currentDiagnostics;
+}
+
+export function clearDiagnosticsReport(): void {
+  currentDiagnostics = null;
+}
+
+// Debug stats collector (legacy)
 interface DebugStats {
   bbl: string;
   recordCounts: Record<string, number>;
@@ -118,11 +181,18 @@ function logDebug(message: string, ...args: unknown[]): void {
 }
 
 // ============================================================================
-// CACHE HELPERS
+// CACHE HELPERS (with poisoning prevention)
 // ============================================================================
 
 function getCacheKey(bbl: string): string {
   return `${CACHE_KEY_PREFIX}${bbl}`;
+}
+
+interface CachedResult {
+  bbl: string;
+  stats: CombinedUnitStats[];
+  timestamp: number;
+  totalRecordsScanned?: number; // Added to detect empty-cache poisoning
 }
 
 function loadFromCache(bbl: string): CombinedUnitStats[] | null {
@@ -157,10 +227,18 @@ function loadFromCache(bbl: string): CombinedUnitStats[] | null {
   }
 }
 
-function saveToCache(bbl: string, stats: CombinedUnitStats[]): void {
-  // BUGFIX: Don't cache empty results - they might be from incomplete loads
+function saveToCache(bbl: string, stats: CombinedUnitStats[], totalRecordsScanned: number): void {
+  // BUGFIX: Don't cache empty results if we actually scanned records
+  // This prevents "cache poisoning" from incomplete/failed extractions
   if (stats.length === 0) {
-    logDebug(`Not caching empty results for BBL ${bbl}`);
+    if (totalRecordsScanned > 0) {
+      logDebug(`NOT caching empty results for BBL ${bbl} (scanned ${totalRecordsScanned} records - likely extraction issue)`);
+      if (DEBUG_MODE) {
+        console.warn(`[UnitMentions] CACHE POISONING PREVENTED: Would have cached 0 units despite scanning ${totalRecordsScanned} records`);
+      }
+    } else {
+      logDebug(`Not caching empty results for BBL ${bbl} (no records to scan)`);
+    }
     return;
   }
   
@@ -169,9 +247,14 @@ function saveToCache(bbl: string, stats: CombinedUnitStats[]): void {
       bbl,
       stats,
       timestamp: Date.now(),
+      totalRecordsScanned,
     };
     localStorage.setItem(getCacheKey(bbl), JSON.stringify(cached));
-    logDebug(`Cached ${stats.length} units for BBL ${bbl}`);
+    logDebug(`Cached ${stats.length} units for BBL ${bbl} (from ${totalRecordsScanned} records)`);
+    
+    if (currentDiagnostics) {
+      currentDiagnostics.cacheStatus = 'written';
+    }
   } catch {
     // localStorage full or disabled - ignore
   }
@@ -184,13 +267,19 @@ export function clearUnitMentionsCache(bbl?: string): void {
     logDebug(`Cleared cache for BBL ${bbl}`);
   } else {
     // Clear all unit mentions caches
-      for (let i = localStorage.length - 1; i >= 0; i--) {
-        const key = localStorage.key(i);
-        if (key?.startsWith('unit_mentions_cache_') || key?.startsWith(CACHE_KEY_PREFIX)) {
-          localStorage.removeItem(key);
-        }
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const key = localStorage.key(i);
+      if (key?.startsWith('unit_mentions_cache_') || key?.startsWith(CACHE_KEY_PREFIX)) {
+        localStorage.removeItem(key);
       }
-      logDebug('Cleared all unit mentions caches');
+    }
+    logDebug('Cleared all unit mentions caches');
+  }
+  
+  // Also expose on window for easy debugging
+  if (typeof window !== 'undefined') {
+    (window as unknown as Record<string, unknown>).clearUnitMentionsCache = clearUnitMentionsCache;
+    (window as unknown as Record<string, unknown>).getUnitMentionsDiagnostics = getDiagnosticsReport;
   }
 }
 
@@ -256,12 +345,29 @@ function processSalesUnits(
 
 function processPermits(
   dobPermits: PermitRecord[],
-  unitMap: Map<string, CombinedUnitStats>
-): number {
+  unitMap: Map<string, CombinedUnitStats>,
+  diagnostics?: SourceDiagnostics
+): { processed: number; validated: number; converted: number } {
   let processed = 0;
+  let validated = 0;
+  let converted = 0;
+  const unitCounts = new Map<string, number>();
+  
   for (const record of dobPermits) {
-    const extraction = extractUnitFromRecordWithTrace(record.raw);
+    const rawRecord = toRawRecord(record);
+    if (!rawRecord) continue;
+    converted++;
+    
+    // Sample keys for diagnostics
+    if (diagnostics && diagnostics.sampleRawKeys.length === 0) {
+      diagnostics.sampleRawKeys = Object.keys(rawRecord).slice(0, 5);
+    }
+    
+    const extraction = extractUnitFromRecordWithTrace(rawRecord);
     if (extraction) {
+      validated++;
+      unitCounts.set(extraction.normalizedUnit, (unitCounts.get(extraction.normalizedUnit) || 0) + 1);
+      
       const entry = getOrCreateUnit(unitMap, extraction.normalizedUnit);
       entry.permitsCount += 1;
       entry.totalCount += 1;
@@ -299,42 +405,60 @@ function processPermits(
     }
     processed++;
   }
-  return processed;
+  
+  // Update diagnostics
+  if (diagnostics) {
+    diagnostics.recordsConvertedToRaw = converted;
+    diagnostics.recordsWithValidatedUnits = validated;
+    diagnostics.topExtractedUnits = Array.from(unitCounts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 10)
+      .map(([unit, count]) => ({ unit, count }));
+  }
+  
+  return { processed, validated, converted };
 }
 
 function processHPD(
   hpdViolations: HPDViolationRecord[],
   hpdComplaints: HPDComplaintRecord[],
-  unitMap: Map<string, CombinedUnitStats>
-): number {
+  unitMap: Map<string, CombinedUnitStats>,
+  diagnostics?: SourceDiagnostics
+): { processed: number; validated: number; converted: number } {
   let processed = 0;
+  let validated = 0;
+  let converted = 0;
+  const unitCounts = new Map<string, number>();
   
   logDebug(`Processing HPD: ${hpdViolations.length} violations, ${hpdComplaints.length} complaints`);
   
-  // Debug: Sample the first few records to see their structure
-  if (DEBUG_MODE && hpdViolations.length > 0) {
-    const sample = hpdViolations[0].raw;
-    const sampleKeys = Object.keys(sample).slice(0, 20);
-    logDebug(`HPD violation sample keys: ${sampleKeys.join(', ')}`);
-    
-    // Check for apartment field specifically
-    const aptValue = sample.apartment || sample.apt || sample.apartmentnumber;
-    if (aptValue) {
-      logDebug(`HPD violation has apartment field: "${aptValue}"`);
-    }
-  }
-  
-  // Process violations - extract directly without getUnitStats wrapper for better tracing
-  let violationUnitsFound = 0;
+  // Process violations
   for (const record of hpdViolations) {
-    const extraction = extractUnitFromRecordWithTrace(record.raw);
+    const rawRecord = toRawRecord(record);
+    if (!rawRecord) continue;
+    converted++;
+    
+    // Sample keys for diagnostics
+    if (diagnostics && diagnostics.sampleRawKeys.length === 0) {
+      diagnostics.sampleRawKeys = Object.keys(rawRecord).slice(0, 5);
+      if (DEBUG_MODE) {
+        logDebug(`HPD violation sample keys: ${diagnostics.sampleRawKeys.join(', ')}`);
+        const aptValue = rawRecord.apartment || rawRecord.apt || rawRecord.apartmentnumber;
+        if (aptValue) {
+          logDebug(`HPD violation has apartment field: "${aptValue}"`);
+        }
+      }
+    }
+    
+    const extraction = extractUnitFromRecordWithTrace(rawRecord);
     if (extraction) {
-      violationUnitsFound++;
+      validated++;
+      unitCounts.set(extraction.normalizedUnit, (unitCounts.get(extraction.normalizedUnit) || 0) + 1);
+      
       const entry = getOrCreateUnit(unitMap, extraction.normalizedUnit);
       entry.hpdCount += 1;
       entry.totalCount += 1;
       
-      // Try to parse date
       if (record.issueDate) {
         const issueDate = new Date(record.issueDate);
         if (!isNaN(issueDate.getTime()) && (!entry.lastActivity || issueDate > entry.lastActivity)) {
@@ -352,14 +476,20 @@ function processHPD(
     }
     processed++;
   }
-  logDebug(`HPD violations: ${violationUnitsFound} units found from ${hpdViolations.length} records`);
+  logDebug(`HPD violations: ${validated} units found from ${hpdViolations.length} records (${converted} converted)`);
   
-  // Process complaints - same approach
-  let complaintUnitsFound = 0;
+  // Process complaints
+  const violationsValidated = validated;
   for (const record of hpdComplaints) {
-    const extraction = extractUnitFromRecordWithTrace(record.raw);
+    const rawRecord = toRawRecord(record);
+    if (!rawRecord) continue;
+    converted++;
+    
+    const extraction = extractUnitFromRecordWithTrace(rawRecord);
     if (extraction) {
-      complaintUnitsFound++;
+      validated++;
+      unitCounts.set(extraction.normalizedUnit, (unitCounts.get(extraction.normalizedUnit) || 0) + 1);
+      
       const entry = getOrCreateUnit(unitMap, extraction.normalizedUnit);
       entry.hpdCount += 1;
       entry.totalCount += 1;
@@ -381,32 +511,52 @@ function processHPD(
     }
     processed++;
   }
-  logDebug(`HPD complaints: ${complaintUnitsFound} units found from ${hpdComplaints.length} records`);
-  
+  logDebug(`HPD complaints: ${validated - violationsValidated} units found from ${hpdComplaints.length} records`);
   logDebug(`After HPD: ${unitMap.size} unique units total`);
-  return processed;
+  
+  // Update diagnostics
+  if (diagnostics) {
+    diagnostics.recordsConvertedToRaw = converted;
+    diagnostics.recordsWithValidatedUnits = validated;
+    diagnostics.topExtractedUnits = Array.from(unitCounts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 10)
+      .map(([unit, count]) => ({ unit, count }));
+  }
+  
+  return { processed, validated, converted };
 }
 
 function process311(
   serviceRequests: ServiceRequestRecord[],
-  unitMap: Map<string, CombinedUnitStats>
-): number {
+  unitMap: Map<string, CombinedUnitStats>,
+  diagnostics?: SourceDiagnostics
+): { processed: number; validated: number; converted: number } {
   let processed = 0;
-  let unitsFound = 0;
+  let validated = 0;
+  let converted = 0;
+  const unitCounts = new Map<string, number>();
   
   logDebug(`Processing 311: ${serviceRequests.length} requests`);
   
-  // Debug: Sample the first few records
-  if (DEBUG_MODE && serviceRequests.length > 0) {
-    const sample = serviceRequests[0].raw;
-    const sampleKeys = Object.keys(sample).slice(0, 20);
-    logDebug(`311 sample keys: ${sampleKeys.join(', ')}`);
-  }
-  
   for (const record of serviceRequests) {
-    const extraction = extractUnitFromRecordWithTrace(record.raw);
+    const rawRecord = toRawRecord(record);
+    if (!rawRecord) continue;
+    converted++;
+    
+    // Sample keys for diagnostics
+    if (diagnostics && diagnostics.sampleRawKeys.length === 0) {
+      diagnostics.sampleRawKeys = Object.keys(rawRecord).slice(0, 5);
+      if (DEBUG_MODE) {
+        logDebug(`311 sample keys: ${diagnostics.sampleRawKeys.join(', ')}`);
+      }
+    }
+    
+    const extraction = extractUnitFromRecordWithTrace(rawRecord);
     if (extraction) {
-      unitsFound++;
+      validated++;
+      unitCounts.set(extraction.normalizedUnit, (unitCounts.get(extraction.normalizedUnit) || 0) + 1);
+      
       const entry = getOrCreateUnit(unitMap, extraction.normalizedUnit);
       entry.threeOneOneCount += 1;
       entry.totalCount += 1;
@@ -429,19 +579,46 @@ function process311(
     processed++;
   }
   
-  logDebug(`311: ${unitsFound} units found from ${serviceRequests.length} records`);
-  return processed;
+  logDebug(`311: ${validated} units found from ${serviceRequests.length} records (${converted} converted)`);
+  
+  // Update diagnostics
+  if (diagnostics) {
+    diagnostics.recordsConvertedToRaw = converted;
+    diagnostics.recordsWithValidatedUnits = validated;
+    diagnostics.topExtractedUnits = Array.from(unitCounts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 10)
+      .map(([unit, count]) => ({ unit, count }));
+  }
+  
+  return { processed, validated, converted };
 }
 
 function processViolations(
   dobViolations: ViolationRecord[],
-  unitMap: Map<string, CombinedUnitStats>
-): number {
+  unitMap: Map<string, CombinedUnitStats>,
+  diagnostics?: SourceDiagnostics
+): { processed: number; validated: number; converted: number } {
   let processed = 0;
+  let validated = 0;
+  let converted = 0;
+  const unitCounts = new Map<string, number>();
   
   for (const record of dobViolations) {
-    const extraction = extractUnitFromRecordWithTrace(record.raw);
+    const rawRecord = toRawRecord(record);
+    if (!rawRecord) continue;
+    converted++;
+    
+    // Sample keys for diagnostics
+    if (diagnostics && diagnostics.sampleRawKeys.length === 0) {
+      diagnostics.sampleRawKeys = Object.keys(rawRecord).slice(0, 5);
+    }
+    
+    const extraction = extractUnitFromRecordWithTrace(rawRecord);
     if (extraction) {
+      validated++;
+      unitCounts.set(extraction.normalizedUnit, (unitCounts.get(extraction.normalizedUnit) || 0) + 1);
+      
       const entry = getOrCreateUnit(unitMap, extraction.normalizedUnit);
       entry.dobViolationsCount += 1;
       entry.totalCount += 1;
@@ -478,18 +655,44 @@ function processViolations(
     processed++;
   }
   
-  return processed;
+  // Update diagnostics
+  if (diagnostics) {
+    diagnostics.recordsConvertedToRaw = converted;
+    diagnostics.recordsWithValidatedUnits = validated;
+    diagnostics.topExtractedUnits = Array.from(unitCounts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 10)
+      .map(([unit, count]) => ({ unit, count }));
+  }
+  
+  return { processed, validated, converted };
 }
 
 function processECB(
   ecbViolations: ECBRecord[],
-  unitMap: Map<string, CombinedUnitStats>
-): number {
+  unitMap: Map<string, CombinedUnitStats>,
+  diagnostics?: SourceDiagnostics
+): { processed: number; validated: number; converted: number } {
   let processed = 0;
+  let validated = 0;
+  let converted = 0;
+  const unitCounts = new Map<string, number>();
   
   for (const record of ecbViolations) {
-    const extraction = extractUnitFromRecordWithTrace(record.raw);
+    const rawRecord = toRawRecord(record);
+    if (!rawRecord) continue;
+    converted++;
+    
+    // Sample keys for diagnostics
+    if (diagnostics && diagnostics.sampleRawKeys.length === 0) {
+      diagnostics.sampleRawKeys = Object.keys(rawRecord).slice(0, 5);
+    }
+    
+    const extraction = extractUnitFromRecordWithTrace(rawRecord);
     if (extraction) {
+      validated++;
+      unitCounts.set(extraction.normalizedUnit, (unitCounts.get(extraction.normalizedUnit) || 0) + 1);
+      
       const entry = getOrCreateUnit(unitMap, extraction.normalizedUnit);
       entry.ecbViolationsCount += 1;
       entry.totalCount += 1;
@@ -526,7 +729,17 @@ function processECB(
     processed++;
   }
   
-  return processed;
+  // Update diagnostics
+  if (diagnostics) {
+    diagnostics.recordsConvertedToRaw = converted;
+    diagnostics.recordsWithValidatedUnits = validated;
+    diagnostics.topExtractedUnits = Array.from(unitCounts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 10)
+      .map(([unit, count]) => ({ unit, count }));
+  }
+  
+  return { processed, validated, converted };
 }
 
 function getOrCreateUnit(unitMap: Map<string, CombinedUnitStats>, unit: string): CombinedUnitStats {
@@ -747,8 +960,8 @@ export function useUnitMentions(
     }
     
     if (dataSources.dobPermits.length > 0) {
-      const processed = processPermits(dataSources.dobPermits, unitMapRef.current);
-      setProgress(p => ({ ...p, scanned: p.scanned + processed }));
+      const result = processPermits(dataSources.dobPermits, unitMapRef.current);
+      setProgress(p => ({ ...p, scanned: p.scanned + result.processed }));
       
       const sorted = filterAndSortStats(unitMapRef.current);
       setStats(sorted);
@@ -769,8 +982,8 @@ export function useUnitMentions(
     }
     
     if (dataSources.hpdViolations.length > 0 || dataSources.hpdComplaints.length > 0) {
-      const processed = processHPD(dataSources.hpdViolations, dataSources.hpdComplaints, unitMapRef.current);
-      setProgress(p => ({ ...p, scanned: p.scanned + processed }));
+      const result = processHPD(dataSources.hpdViolations, dataSources.hpdComplaints, unitMapRef.current);
+      setProgress(p => ({ ...p, scanned: p.scanned + result.processed }));
       
       const sorted = filterAndSortStats(unitMapRef.current);
       setStats(sorted);
@@ -791,8 +1004,8 @@ export function useUnitMentions(
     }
     
     if (dataSources.serviceRequests.length > 0) {
-      const processed = process311(dataSources.serviceRequests, unitMapRef.current);
-      setProgress(p => ({ ...p, scanned: p.scanned + processed }));
+      const result = process311(dataSources.serviceRequests, unitMapRef.current);
+      setProgress(p => ({ ...p, scanned: p.scanned + result.processed }));
       
       const sorted = filterAndSortStats(unitMapRef.current);
       setStats(sorted);
@@ -813,8 +1026,8 @@ export function useUnitMentions(
     }
     
     if (dataSources.dobViolations.length > 0) {
-      const processed = processViolations(dataSources.dobViolations, unitMapRef.current);
-      setProgress(p => ({ ...p, scanned: p.scanned + processed }));
+      const result = processViolations(dataSources.dobViolations, unitMapRef.current);
+      setProgress(p => ({ ...p, scanned: p.scanned + result.processed }));
       
       const sorted = filterAndSortStats(unitMapRef.current);
       setStats(sorted);
@@ -835,8 +1048,8 @@ export function useUnitMentions(
     }
     
     if (dataSources.ecbViolations.length > 0) {
-      const processed = processECB(dataSources.ecbViolations, unitMapRef.current);
-      setProgress(p => ({ ...p, scanned: p.scanned + processed }));
+      const result = processECB(dataSources.ecbViolations, unitMapRef.current);
+      setProgress(p => ({ ...p, scanned: p.scanned + result.processed }));
     }
     
     // Final results
@@ -865,19 +1078,21 @@ export function useUnitMentions(
         
         if (totalRecords > 0) {
           // Check a sample of records for unit-like patterns
-          const sampleRecords: Record<string, unknown>[] = [];
+          const sampleRecords: (Record<string, unknown> | null)[] = [];
           
-          // Add raw data from various sources
-          dataSources.hpdViolations.slice(0, 10).forEach(r => sampleRecords.push(r.raw));
-          dataSources.hpdComplaints.slice(0, 10).forEach(r => sampleRecords.push(r.raw));
-          dataSources.serviceRequests.slice(0, 10).forEach(r => sampleRecords.push(r.raw));
-          dataSources.dobViolations.slice(0, 10).forEach(r => sampleRecords.push(r.raw));
+          // Add raw data from various sources using toRawRecord adapter
+          dataSources.hpdViolations.slice(0, 10).forEach(r => sampleRecords.push(toRawRecord(r)));
+          dataSources.hpdComplaints.slice(0, 10).forEach(r => sampleRecords.push(toRawRecord(r)));
+          dataSources.serviceRequests.slice(0, 10).forEach(r => sampleRecords.push(toRawRecord(r)));
+          dataSources.dobViolations.slice(0, 10).forEach(r => sampleRecords.push(toRawRecord(r)));
+          
+          const validRecords = sampleRecords.filter(Boolean) as Record<string, unknown>[];
           
           // Check for unit-like patterns in record text
           let foundPatterns = 0;
           const patternExamples: string[] = [];
           
-          for (const record of sampleRecords) {
+          for (const record of validRecords) {
             const textFields = Object.values(record).filter(v => typeof v === 'string') as string[];
             for (const text of textFields) {
               if (UNIT_PATTERN_INDICATORS.test(text)) {
@@ -896,7 +1111,7 @@ export function useUnitMentions(
           if (foundPatterns > 0) {
             console.warn(
               `[UnitMentions] FALLBACK WARNING: Extracted 0 units from ${totalRecords} records, ` +
-              `but found ${foundPatterns} records with unit-like patterns in sample of ${sampleRecords.length}.\n` +
+              `but found ${foundPatterns} records with unit-like patterns in sample of ${validRecords.length}.\n` +
               `This may indicate overly strict validation. Sample patterns found:\n` +
               patternExamples.join('\n')
             );
@@ -904,10 +1119,12 @@ export function useUnitMentions(
         }
       }
       
-      // Cache results
-      if (sorted.length > 0) {
-        saveToCache(bbl, sorted);
-      }
+      // Cache results (with totalRecords to prevent poisoning)
+      const totalRecords = dataSources.dobFilingsUnits.length + dataSources.dobPermits.length +
+        dataSources.hpdViolations.length + dataSources.hpdComplaints.length +
+        dataSources.serviceRequests.length + dataSources.dobViolations.length +
+        dataSources.ecbViolations.length;
+      saveToCache(bbl, sorted, totalRecords);
     }
   }, [loadingStates.ecbLoading, dataSources.ecbViolations, bbl, isCached, isPaused, loadingStates, dataSources]);
   

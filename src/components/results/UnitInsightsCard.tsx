@@ -1416,11 +1416,23 @@ export function UnitInsightsCard({
                   <>No source records scanned for this building. Data may still be loading or unavailable.</>
                 ) : (
                   <>
-                    {totalSourceRecords} record{totalSourceRecords !== 1 ? 's' : ''} scanned, but no unit tokens were extracted. 
+                    Scanned {totalSourceRecords} record{totalSourceRecords !== 1 ? 's' : ''} across sources; extracted 0 unit mentions.
                     All records are building-wide with no explicit apartment mentions.
                   </>
                 )}
               </p>
+              {/* DEV-only diagnostic info */}
+              {import.meta.env.DEV && emptyStateReason === 'no_units_extracted' && (
+                <div className="mt-4 p-3 bg-muted rounded-md text-left text-xs font-mono max-w-md">
+                  <p className="font-semibold mb-2">DEV Diagnostics:</p>
+                  <pre className="whitespace-pre-wrap text-muted-foreground">
+                    {JSON.stringify(debugStats, null, 2)}
+                  </pre>
+                  <p className="mt-2 text-muted-foreground">
+                    Add <code>?debug=1</code> to URL for more details in console.
+                  </p>
+                </div>
+              )}
               {dobNowUrl && (
                 <a 
                   href={dobNowUrl} 
