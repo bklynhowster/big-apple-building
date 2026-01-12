@@ -11,10 +11,10 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { 
-  getUnitStats, 
-  UnitStats, 
   extractUnitFromRecord, 
   extractUnitFromRecordWithTrace,
+  getUnitStats,
+  type UnitStats,
   type UnitConfidence,
   type UnitType
 } from '@/utils/unit';
@@ -23,6 +23,7 @@ import {
   type CombinedUnitStats,
   type ScanProgress,
 } from '@/hooks/useUnitMentions';
+import { UnitExtractionDiagnostics } from './UnitExtractionDiagnostics';
 import type { HPDComplaintRecord, HPDViolationRecord } from '@/hooks/useHPD';
 import type { ServiceRequestRecord } from '@/hooks/use311';
 import type { UnitRosterEntry } from '@/hooks/useCoopUnitRoster';
@@ -1393,18 +1394,17 @@ export function UnitInsightsCard({
             </AlertDescription>
           </Alert>
 
-          {/* Debug line - ONLY visible in development with explicit debug flag */}
-          {import.meta.env.DEV && typeof window !== 'undefined' && window.location.search.includes('debug=1') && (
-            <div className="text-xs font-mono bg-muted/50 p-2 rounded border">
-              Scanned: DOB={debugStats.recordCounts.dobFilingsUnits + debugStats.recordCounts.dobPermits + debugStats.recordCounts.dobViolations} | 
-              HPD={debugStats.recordCounts.hpdViolations + debugStats.recordCounts.hpdComplaints} | 
-              311={debugStats.recordCounts.serviceRequests} | 
-              Total={debugStats.totalRecords} | 
-              Extracted units={debugStats.extractedUnits} | 
-              Loading={allLoadingComplete ? 'complete' : 'in progress'} | 
-              Stage={debugStats.stage}
-            </div>
-          )}
+          {/* DEV-only diagnostics panel */}
+          <UnitExtractionDiagnostics
+            hpdViolations={hpdViolations}
+            hpdComplaints={hpdComplaints}
+            serviceRequests={serviceRequests}
+            dobPermits={dobPermits}
+            dobViolations={dobViolations}
+            ecbViolations={ecbViolations}
+            dobFilingsUnits={dobFilingsUnits}
+            salesUnits={salesUnits}
+          />
 
           {/* Empty State - now more robust */}
           {!hasData && emptyStateReason && (
@@ -1430,27 +1430,6 @@ export function UnitInsightsCard({
                 >
                   Check DOB NOW directly <ExternalLink className="h-3 w-3" />
                 </a>
-              )}
-              {/* Debug Panel - Development only with explicit flag */}
-              {import.meta.env.DEV && typeof window !== 'undefined' && window.location.search.includes('debug=1') && (
-                <Collapsible className="mt-4 w-full max-w-lg text-left">
-                  <CollapsibleTrigger className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1">
-                    <ChevronDown className="h-3 w-3" />
-                    Debug info
-                  </CollapsibleTrigger>
-                  <CollapsibleContent className="mt-2 p-3 bg-muted/50 rounded text-xs font-mono space-y-1">
-                    <p>BBL: {buildingBbl}</p>
-                    <p>HPD Violations: {hpdViolations.length}</p>
-                    <p>HPD Complaints: {hpdComplaints.length}</p>
-                    <p>311 Requests: {serviceRequests.length}</p>
-                    <p>DOB Filings Units: {dobFilingsUnits.length}</p>
-                    <p>DOB Violations: {dobViolations.length}</p>
-                    <p>ECB Violations: {ecbViolations.length}</p>
-                    <p>DOB Permits: {dobPermits.length}</p>
-                    <p>Sales Units: {salesUnits.length}</p>
-                    <p className="mt-2 text-amber-600">Check console for [UnitMentions] logs</p>
-                  </CollapsibleContent>
-                </Collapsible>
               )}
             </div>
           )}
