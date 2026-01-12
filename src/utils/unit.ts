@@ -16,13 +16,60 @@ const STRIP_PREFIXES = [
   'FLOOR', 'FL\\.?', '#', 'NO\\.?', 'NUMBER'
 ];
 
+// Address-like substrings to reject (before normalization)
+const ADDRESS_SUBSTRINGS = [
+  'STREET', 'ST', 'AVENUE', 'AVE', 'ROAD', 'RD', 'BOULEVARD', 'BLVD',
+  'PLACE', 'PL', 'DRIVE', 'DR', 'LANE', 'LN', 'WEST', 'EAST', 'NORTH', 'SOUTH'
+];
+
+/**
+ * Check if a normalized unit string looks like a valid apartment/unit label.
+ * Rejects address-like values and validates against known unit patterns.
+ */
+export function isLikelyUnitLabel(unit: string): boolean {
+  if (!unit) return false;
+  
+  // Rule: Reject if length < 1 or > 6
+  if (unit.length < 1 || unit.length > 6) return false;
+  
+  // Rule: Reject if only digits and length >= 3 (e.g., 325, 1200 are house numbers)
+  if (/^\d+$/.test(unit) && unit.length >= 3) return false;
+  
+  // Rule: Reject if it looks like a ZIP code (exactly 5 digits)
+  if (/^\d{5}$/.test(unit)) return false;
+  
+  // Allowed patterns (check these first for valid units)
+  const allowedPatterns = [
+    /^\d{1,2}[A-Z]?$/,           // 1, 12, 12B
+    /^\d{1,2}[A-Z]{1,2}$/,       // 12AB
+    /^(PH|TH|LH|RH|BS|GF)\d?[A-Z]?$/, // PH, PH2, PH2A, TH, GF
+    /^[A-Z]{1,2}\d{1,2}$/,       // A1, B12
+    /^\d?[A-Z]{1,2}$/,           // A, 2A, AA
+  ];
+  
+  return allowedPatterns.some(pattern => pattern.test(unit));
+}
+
+/**
+ * Check if the raw (pre-normalization) value contains address-like substrings.
+ */
+function containsAddressSubstring(raw: string): boolean {
+  const upper = raw.toUpperCase();
+  return ADDRESS_SUBSTRINGS.some(substr => {
+    // Use word boundary-like matching to avoid false positives
+    // e.g., "EAST" should match but not part of another word
+    const regex = new RegExp(`\\b${substr}\\b`, 'i');
+    return regex.test(upper);
+  });
+}
+
 /**
  * Normalize a raw unit string to a canonical form.
  * - Trims and uppercases
  * - Removes common prefixes (APT, APARTMENT, UNIT, #, etc.)
  * - Converts separators (12-B → 12B, 12 B → 12B)
  * - Removes punctuation except letters/numbers
- * - Returns null for junk values
+ * - Returns null for junk values or address-like values
  */
 export function normalizeUnit(raw: string | null | undefined): string | null {
   if (raw == null) return null;
@@ -32,6 +79,9 @@ export function normalizeUnit(raw: string | null | undefined): string | null {
   
   // Check junk values early
   if (JUNK_VALUES.has(value)) return null;
+  
+  // Reject if contains address-like substrings (before stripping prefixes)
+  if (containsAddressSubstring(value)) return null;
   
   // Strip common prefixes (with optional spaces/punctuation after)
   const prefixPattern = new RegExp(`^(${STRIP_PREFIXES.join('|')})\\s*[:\\-\\.\\s]*`, 'i');
@@ -50,12 +100,15 @@ export function normalizeUnit(raw: string | null | undefined): string | null {
   // Additional validation: must contain at least one letter or digit
   if (!/[A-Z0-9]/.test(value)) return null;
   
+  // Validate against unit label patterns
+  if (!isLikelyUnitLabel(value)) return null;
+  
   return value;
 }
 
 /**
  * Fields to check for unit information in order of priority.
- * These cover common field names across HPD, 311, and other NYC datasets.
+ * RESTRICTED to apartment-specific fields only - no address fields.
  */
 const UNIT_FIELDS = [
   'apartment',
@@ -66,23 +119,11 @@ const UNIT_FIELDS = [
   'unit',
   'unit_number',
   'unitnumber',
-  'housenumber_unit',
-  'address_unit',
-  'apartment_unit',
-  'bbl_unit',
-  'apt_number',
-  'suite',
-  'room',
-  'floor_unit',
-  // HPD-specific
-  'lowhousenumber',  // Sometimes contains unit info
-  // 311-specific
-  'incident_address', // May contain unit in address string
 ];
 
 /**
- * Extract and normalize a unit from a record by checking common field names.
- * Returns null if no unit can be found or it's a junk value.
+ * Extract and normalize a unit from a record by checking apartment-specific fields only.
+ * Returns null if no unit can be found or it's invalid.
  */
 export function extractUnitFromRecord(record: Record<string, unknown> | null | undefined): string | null {
   if (!record) return null;
@@ -92,42 +133,6 @@ export function extractUnitFromRecord(record: Record<string, unknown> | null | u
     const value = record[field];
     if (value != null && value !== '') {
       const normalized = normalizeUnit(String(value));
-      if (normalized) return normalized;
-    }
-  }
-  
-  // Special case: try to extract unit from address string if present
-  const addressFields = ['incident_address', 'address', 'full_address', 'location'];
-  for (const field of addressFields) {
-    const address = record[field];
-    if (typeof address === 'string') {
-      const unit = extractUnitFromAddress(address);
-      if (unit) return unit;
-    }
-  }
-  
-  return null;
-}
-
-/**
- * Try to extract a unit from an address string.
- * Looks for patterns like "123 Main St Apt 4B" or "123 Main St #4B"
- */
-function extractUnitFromAddress(address: string): string | null {
-  if (!address) return null;
-  
-  const upperAddress = address.toUpperCase();
-  
-  // Pattern: "APT 4B", "UNIT 4B", "#4B", "SUITE 100"
-  const patterns = [
-    /(?:APT\.?|APARTMENT|UNIT|#|SUITE|STE\.?)\s*([A-Z0-9]+(?:[A-Z0-9\-]*[A-Z0-9])?)/i,
-    /,\s*#?([A-Z0-9]+(?:[A-Z0-9\-]*[A-Z0-9])?)$/i,  // Trailing unit after comma
-  ];
-  
-  for (const pattern of patterns) {
-    const match = upperAddress.match(pattern);
-    if (match && match[1]) {
-      const normalized = normalizeUnit(match[1]);
       if (normalized) return normalized;
     }
   }
