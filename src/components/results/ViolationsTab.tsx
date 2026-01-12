@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Search, X, ChevronLeft, ChevronRight, Loader2, FileX, Download } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -26,6 +26,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import { useViolations, ViolationsFilters, ViolationRecord } from '@/hooks/useViolations';
+import { useRecordUnitMentions } from '@/hooks/useRecordUnitMentions';
 import { exportToCSV, VIOLATIONS_COLUMNS } from '@/lib/csv-export';
 import { toast } from '@/hooks/use-toast';
 import { ErrorBanner } from '@/components/ui/error-banner';
@@ -34,6 +35,9 @@ import { ColumnSelector, useColumnVisibility, ColumnConfig } from './ColumnSelec
 import { QueriedIdentifier, DatasetCapability } from './QueriedIdentifier';
 import { QueryScope } from './ScopeSelector';
 import { BuildingLevelBanner } from './BuildingLevelBanner';
+import { UnitMentionBadges } from './UnitMentionBadges';
+import { UnitMentionFilter } from './UnitMentionFilter';
+import { normalizeUnit } from '@/utils/unit';
 
 interface ViolationsTabProps {
   bbl: string;
@@ -46,6 +50,7 @@ interface ViolationsTabProps {
 const COLUMN_CONFIGS: ColumnConfig[] = [
   { key: 'issueDate', label: 'Issue Date', defaultVisible: true },
   { key: 'status', label: 'Status', defaultVisible: true },
+  { key: 'mentions', label: 'Mentions', defaultVisible: true },
   { key: 'category', label: 'Category', defaultVisible: true },
   { key: 'description', label: 'Description', defaultVisible: true },
   { key: 'recordId', label: 'Record ID', defaultVisible: true },
@@ -117,12 +122,48 @@ export function ViolationsTab({ bbl, bin, scope = 'building', isCoop = false, co
     keyword: '',
   });
   
+  // Unit mention filter state
+  const [showMentionsOnly, setShowMentionsOnly] = useState(false);
+  const [selectedMentionUnit, setSelectedMentionUnit] = useState<string | null>(null);
+  const [showContextOnly, setShowContextOnly] = useState(false);
+  
   // Drawer state
   const [selectedRecord, setSelectedRecord] = useState<ViolationRecord | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   
   // Column visibility
   const { visibleColumns, toggle, reset, isVisible } = useColumnVisibility(COLUMN_CONFIGS);
+
+  const items = data?.items || [];
+  
+  // Extract unit mentions from records
+  const {
+    recordsWithMentions,
+    allMentionedUnits,
+    recordsWithMentionsCount,
+    filterByUnit,
+    filterToMentionsOnly,
+  } = useRecordUnitMentions(items, coopUnitContext);
+
+  // Apply unit mention filters
+  const filteredRecordsWithMentions = useMemo(() => {
+    let result = recordsWithMentions;
+    
+    if (showMentionsOnly) {
+      result = filterToMentionsOnly();
+    } else if (selectedMentionUnit) {
+      result = filterByUnit(selectedMentionUnit);
+    }
+    
+    if (showContextOnly && coopUnitContext) {
+      const normalizedContext = normalizeUnit(coopUnitContext);
+      result = result.filter(rwm => 
+        rwm.mentions.some(m => m.unit === normalizedContext)
+      );
+    }
+    
+    return result;
+  }, [recordsWithMentions, showMentionsOnly, selectedMentionUnit, showContextOnly, coopUnitContext, filterByUnit, filterToMentionsOnly]);
 
   useEffect(() => {
     if (bbl && bbl.length === 10) {
@@ -145,6 +186,10 @@ export function ViolationsTab({ bbl, bin, scope = 'building', isCoop = false, co
     };
     setLocalFilters(clearedFilters);
     setFilters(clearedFilters);
+    // Also clear unit filters
+    setShowMentionsOnly(false);
+    setSelectedMentionUnit(null);
+    setShowContextOnly(false);
   };
 
   const handleApply = () => {
@@ -160,7 +205,10 @@ export function ViolationsTab({ bbl, bin, scope = 'building', isCoop = false, co
     localFilters.status !== 'all' ||
     localFilters.keyword ||
     localFilters.fromDate ||
-    localFilters.toDate;
+    localFilters.toDate ||
+    showMentionsOnly ||
+    selectedMentionUnit ||
+    showContextOnly;
 
   // Dataset capability for DOB Violations - it's BBL-based but building-level
   const datasetCapability: DatasetCapability = 'building-bbl';
@@ -181,7 +229,6 @@ export function ViolationsTab({ bbl, bin, scope = 'building', isCoop = false, co
     );
   }
 
-  const items = data?.items || [];
   const totalApprox = data?.totalApprox || 0;
   const hasNextPage = data?.nextOffset !== null;
   const hasPrevPage = offset > 0;
@@ -199,6 +246,9 @@ export function ViolationsTab({ bbl, bin, scope = 'building', isCoop = false, co
     });
   };
 
+  // Use filtered items for display
+  const displayItems = filteredRecordsWithMentions;
+
   return (
     <div className="space-y-4">
       {/* Co-op building-level info banner */}
@@ -212,6 +262,23 @@ export function ViolationsTab({ bbl, bin, scope = 'building', isCoop = false, co
         datasetCapability={datasetCapability}
         datasetName="DOB Violations (3h2n-5cm9)"
       />
+      
+      {/* Unit Mention Filter (for co-ops or when mentions exist) */}
+      {(isCoop || recordsWithMentionsCount > 0) && items.length > 0 && (
+        <UnitMentionFilter
+          allMentionedUnits={allMentionedUnits}
+          mentionCount={recordsWithMentionsCount}
+          totalCount={items.length}
+          selectedUnit={selectedMentionUnit}
+          showMentionsOnly={showMentionsOnly}
+          coopUnitContext={coopUnitContext}
+          showContextOnly={showContextOnly}
+          onUnitChange={setSelectedMentionUnit}
+          onMentionsOnlyChange={setShowMentionsOnly}
+          onContextOnlyChange={setShowContextOnly}
+        />
+      )}
+      
       <div className="flex flex-col md:flex-row gap-4 p-4 bg-muted/50 rounded-lg">
         <div className="flex-1">
           <div className="relative">
@@ -272,7 +339,7 @@ export function ViolationsTab({ bbl, bin, scope = 'building', isCoop = false, co
       {/* Summary Line with Export & Column Selector */}
       <div className="flex items-center justify-between text-sm text-muted-foreground">
         <div>
-          Showing {items.length} of ~{totalApprox} DOB violations
+          Showing {displayItems.length} of ~{totalApprox} DOB violations
           {hasActiveFilters && <span className="ml-2 text-primary">(filtered)</span>}
         </div>
         <div className="flex items-center gap-2">
@@ -297,12 +364,14 @@ export function ViolationsTab({ bbl, bin, scope = 'building', isCoop = false, co
       </div>
 
       {/* Empty State */}
-      {items.length === 0 && !loading && (
+      {displayItems.length === 0 && !loading && (
         <div className="flex flex-col items-center justify-center py-12 text-center border rounded-lg bg-muted/20">
           <FileX className="h-12 w-12 text-muted-foreground mb-4" />
           <p className="text-foreground font-medium mb-2">No DOB violations found</p>
           <p className="text-sm text-muted-foreground">
-            No DOB violations found for this BBL with the current filters.
+            {showMentionsOnly || selectedMentionUnit || showContextOnly
+              ? 'No violations match the current unit filter.'
+              : 'No DOB violations found for this BBL with the current filters.'}
           </p>
           {hasActiveFilters && (
             <Button variant="link" onClick={handleClearFilters} className="mt-2">
@@ -313,13 +382,27 @@ export function ViolationsTab({ bbl, bin, scope = 'building', isCoop = false, co
       )}
 
       {/* Data Table */}
-      {items.length > 0 && (
+      {displayItems.length > 0 && (
         <div className="rounded-md border overflow-hidden">
           <Table>
             <TableHeader>
               <TableRow className="bg-muted/50">
                 {isVisible('issueDate') && <TableHead className="font-semibold">Issue Date</TableHead>}
                 {isVisible('status') && <TableHead className="font-semibold">Status</TableHead>}
+                {isVisible('mentions') && (
+                  <TableHead className="font-semibold">
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger className="flex items-center gap-1 cursor-help">
+                          Mentions
+                        </TooltipTrigger>
+                        <TooltipContent className="max-w-xs">
+                          <p>Units explicitly mentioned in this record's text. Does not imply unit-level enforcement.</p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  </TableHead>
+                )}
                 {isVisible('category') && <TableHead className="font-semibold">Category</TableHead>}
                 {isVisible('description') && <TableHead className="font-semibold">Description</TableHead>}
                 {isVisible('recordId') && <TableHead className="font-semibold">Record ID</TableHead>}
@@ -328,10 +411,13 @@ export function ViolationsTab({ bbl, bin, scope = 'building', isCoop = false, co
               </TableRow>
             </TableHeader>
             <TableBody>
-              {items.map((item, index) => (
+              {displayItems.map(({ record: item, mentions, matchesContext }, index) => (
                 <TableRow 
                   key={`${item.recordId}-${index}`}
-                  className="cursor-pointer hover:bg-muted/50"
+                  className={`
+                    cursor-pointer hover:bg-muted/50
+                    ${matchesContext ? 'bg-primary/5 border-l-2 border-l-primary' : ''}
+                  `}
                   onClick={() => handleRowClick(item)}
                 >
                   {isVisible('issueDate') && (
@@ -344,6 +430,15 @@ export function ViolationsTab({ bbl, bin, scope = 'building', isCoop = false, co
                   {isVisible('status') && (
                     <TableCell>
                       <StatusBadge status={item.status} />
+                    </TableCell>
+                  )}
+                  {isVisible('mentions') && (
+                    <TableCell>
+                      <UnitMentionBadges 
+                        mentions={mentions} 
+                        matchesContext={matchesContext}
+                        compact
+                      />
                     </TableCell>
                   )}
                   {isVisible('category') && (
@@ -396,7 +491,7 @@ export function ViolationsTab({ bbl, bin, scope = 'building', isCoop = false, co
       )}
 
       {/* Pagination */}
-      {items.length > 0 && (
+      {displayItems.length > 0 && (
         <div className="flex items-center justify-between">
           <div className="text-sm text-muted-foreground">
             Page {currentPage}
