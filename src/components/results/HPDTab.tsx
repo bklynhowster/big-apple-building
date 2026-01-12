@@ -16,11 +16,14 @@ import { RecordDetailDrawer, RecordType } from './RecordDetailDrawer';
 import { ColumnSelector, useColumnVisibility, ColumnConfig } from './ColumnSelector';
 import { QueriedIdentifier, DatasetCapability } from './QueriedIdentifier';
 import { QueryScope } from './ScopeSelector';
+import { BuildingLevelBanner } from './BuildingLevelBanner';
 
 interface HPDTabProps {
   bbl: string;
   bin?: string;
   scope?: QueryScope;
+  isCoop?: boolean;
+  coopUnitContext?: string | null;
 }
 
 const VIOLATION_COLUMN_CONFIGS: ColumnConfig[] = [
@@ -96,7 +99,7 @@ const HPD_COLUMNS = [
   { key: 'recordId', header: 'ID' },
 ];
 
-export function HPDTab({ bbl, bin, scope = 'building' }: HPDTabProps) {
+export function HPDTab({ bbl, bin, scope = 'building', isCoop, coopUnitContext }: HPDTabProps) {
   const [activeSubTab, setActiveSubTab] = useState<'violations' | 'complaints'>('violations');
   const [fetchedTabs, setFetchedTabs] = useState<Set<string>>(new Set());
   
@@ -308,6 +311,9 @@ export function HPDTab({ bbl, bin, scope = 'building' }: HPDTabProps) {
 
   return (
     <div className="space-y-4">
+      {/* Co-op building-level banner */}
+      {isCoop && <BuildingLevelBanner coopUnitContext={coopUnitContext} compact />}
+      
       {/* Queried Identifier */}
       <QueriedIdentifier
         bbl={bbl}

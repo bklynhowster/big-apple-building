@@ -33,11 +33,14 @@ import { RecordDetailDrawer } from './RecordDetailDrawer';
 import { ColumnSelector, useColumnVisibility, ColumnConfig } from './ColumnSelector';
 import { QueriedIdentifier, DatasetCapability } from './QueriedIdentifier';
 import { QueryScope } from './ScopeSelector';
+import { BuildingLevelBanner } from './BuildingLevelBanner';
 
 interface ECBTabProps {
   bbl: string;
   bin?: string;
   scope?: QueryScope;
+  isCoop?: boolean;
+  coopUnitContext?: string | null;
 }
 
 const COLUMN_CONFIGS: ColumnConfig[] = [
@@ -111,7 +114,7 @@ function formatCurrency(amount: number | null): string {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(amount);
 }
 
-export function ECBTab({ bbl, bin, scope = 'building' }: ECBTabProps) {
+export function ECBTab({ bbl, bin, scope = 'building', isCoop, coopUnitContext }: ECBTabProps) {
   const { loading, error, data, filters, offset, fetchECB, setFilters, applyFilters, goToNextPage, goToPrevPage, retry } = useECB(bbl);
   const [localFilters, setLocalFilters] = useState<ECBFilters>({ status: 'all', keyword: '' });
   
@@ -168,6 +171,9 @@ export function ECBTab({ bbl, bin, scope = 'building' }: ECBTabProps) {
 
   return (
     <div className="space-y-4">
+      {/* Co-op building-level banner */}
+      {isCoop && <BuildingLevelBanner coopUnitContext={coopUnitContext} compact />}
+      
       {/* Queried Identifier */}
       <QueriedIdentifier
         bbl={bbl}
