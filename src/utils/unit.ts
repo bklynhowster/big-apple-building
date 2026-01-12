@@ -58,9 +58,16 @@ const JUNK_VALUES = new Set([
  * STOPLIST: Common English words and abbreviations that appear in 311/HPD complaint
  * narratives but are NOT valid unit identifiers. Case-insensitive.
  */
+/**
+ * STOPLIST: Common English words and abbreviations that appear in complaint
+ * narratives but are NOT valid unit identifiers. Case-insensitive.
+ * 
+ * IMPORTANT: This stoplist is ONLY applied to tokens with NO digits.
+ * Digit-containing tokens (6M, 12B, etc.) bypass stoplist checks entirely.
+ */
 const UNIT_STOPLIST = new Set([
-  // Common English words
-  'ONLY', 'IF', 'AND', 'OR', 'BUT', 'NOT', 'YES', 'NO', 'THE', 'A', 'AN',
+  // Common English words (2+ letters)
+  'ONLY', 'IF', 'AND', 'OR', 'BUT', 'NOT', 'YES', 'NO', 'THE', 'AN',
   'IN', 'ON', 'AT', 'BY', 'TO', 'FOR', 'OF', 'FROM', 'WITH', 'WITHOUT',
   'INTO', 'OUT', 'UP', 'DOWN', 'LEFT', 'RIGHT', 'FRONT', 'REAR', 'SIDE',
   'AS', 'IS', 'IT', 'BE', 'SO', 'WE', 'ME', 'HE', 'OK', 'AM', 'PM',
@@ -74,15 +81,15 @@ const UNIT_STOPLIST = new Set([
   // Street suffixes
   'ST', 'AVE', 'RD', 'BLVD', 'PL', 'DR', 'CT', 'LN', 'WAY', 'TER', 'CIR',
   // Unknown/placeholder values
-  'UNK', 'TBD', 'NA', 'N/A', 'NEED', 'NEW', 'OLD', 'SEE', 'PER', 'USE',
-  // Common complaint terms that get extracted
+  'UNK', 'TBD', 'NA', 'NEED', 'NEW', 'OLD', 'SEE', 'PER', 'USE',
+  // Common complaint terms that get misextracted
   'AH', 'OH', 'UH', 'RE', 'CC', 'CO', 'VS', 'IE', 'EG',
   // Status words
   'OPEN', 'CLOSED', 'PENDING', 'DONE', 'FAIL', 'PASS', 'GOOD', 'BAD',
-  // Single letter commonly misextracted
-  'S', 'X', 'Y', 'Z', 'I', 'O', 'U', 'E', 'Q', 'W', 'V', 'T', 'P', 'K', 'M', 'L',
   // Ordinals that are NOT units
-  'ND', 'RD', 'TH',
+  'ND', 'RD',
+  // NOTE: Single letters are handled separately by isAllowedSingleLetterUnit(),
+  // NOT by the stoplist. This prevents blocking valid unit suffixes like M, G, J.
 ]);
 
 // Prefixes to strip from unit values
