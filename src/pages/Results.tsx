@@ -1,4 +1,4 @@
-import { useMemo, useState, useCallback, useEffect } from 'react';
+import { useMemo, useState, useCallback, useEffect, useRef } from 'react';
 import { useLocation, Link, useNavigate } from 'react-router-dom';
 import { ArrowLeft, AlertCircle, Building2, Home } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
@@ -8,6 +8,7 @@ import { PropertyOverview } from '@/components/results/PropertyOverview';
 import { PropertyProfileCard } from '@/components/results/PropertyProfileCard';
 import { CondoUnitsCard } from '@/components/results/CondoUnitsCard';
 import { ResidentialUnitsCard } from '@/components/results/ResidentialUnitsCard';
+import { UnitInsightsCard } from '@/components/results/UnitInsightsCard';
 import { SummaryTab } from '@/components/results/SummaryTab';
 import { ViolationsTab } from '@/components/results/ViolationsTab';
 import { ECBTab } from '@/components/results/ECBTab';
@@ -23,6 +24,8 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { useQueryDebug } from '@/contexts/QueryDebugContext';
 import { usePropertyProfile } from '@/hooks/usePropertyProfile';
+import { useHPDViolations, useHPDComplaints } from '@/hooks/useHPD';
+import { use311 } from '@/hooks/use311';
 
 const VALID_TABS = ['summary', 'violations', 'ecb', 'safety', 'permits', 'hpd', '311', 'all'] as const;
 type ValidTab = typeof VALID_TABS[number];
@@ -69,6 +72,26 @@ export default function Results() {
   const { profile } = usePropertyProfile(isValidBBL ? bbl : null);
   const isCoop = profile?.propertyTenure === 'COOP';
 
+  // Pre-fetch HPD and 311 for Unit Insights (co-ops only)
+  const hpdViolations = useHPDViolations(isCoop && isValidBBL ? bbl : null);
+  const hpdComplaints = useHPDComplaints(isCoop && isValidBBL ? bbl : null);
+  const threeOneOne = use311(isCoop ? latitude : undefined, isCoop ? longitude : undefined);
+  
+  // Track if we've fetched HPD data for insights
+  const hpdFetchedRef = useRef(false);
+  
+  // Fetch HPD data for Unit Insights when co-op is detected
+  useEffect(() => {
+    if (isCoop && isValidBBL && !hpdFetchedRef.current) {
+      hpdViolations.fetch(bbl);
+      hpdComplaints.fetch(bbl);
+      if (latitude !== undefined && longitude !== undefined) {
+        threeOneOne.fetch(latitude, longitude);
+      }
+      hpdFetchedRef.current = true;
+    }
+  }, [isCoop, isValidBBL, bbl, latitude, longitude]);
+
   // State for passing keyword filter to tabs from "View in tab"
   const [tabKeywordFilter, setTabKeywordFilter] = useState<string | undefined>();
   
@@ -79,6 +102,9 @@ export default function Results() {
   
   // Co-op unit context (UI-only, no API calls) - initialized from URL
   const [coopUnitContext, setCoopUnitContext] = useState<string | null>(unitContextParam);
+  
+  // Ref to tabs section for scrolling
+  const tabsRef = useRef<HTMLDivElement>(null);
   
   // Determine if current BBL is a unit lot (1001-6999) or billing lot (75xx)
   const lotNumber = useMemo(() => {
@@ -140,6 +166,20 @@ export default function Results() {
     const newUrl = `${location.pathname}?${newParams.toString()}`;
     window.history.replaceState(null, '', newUrl);
   }, [location.search, location.pathname]);
+
+  // Handle unit selection from Unit Insights and scroll to tabs
+  const handleUnitInsightSelect = useCallback((unit: string) => {
+    handleCoopUnitContextChange(unit);
+    // Scroll to tabs after a short delay for state update
+    setTimeout(() => {
+      tabsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 100);
+  }, [handleCoopUnitContextChange]);
+
+  // Clear unit context
+  const handleClearUnitContext = useCallback(() => {
+    handleCoopUnitContextChange(null);
+  }, [handleCoopUnitContextChange]);
   
   // Update debug context whenever context changes
   useEffect(() => {
@@ -277,7 +317,20 @@ export default function Results() {
                 />
               )}
 
-              <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
+              {/* Unit Insights Card - Co-ops only (derived from HPD + 311) */}
+              {isCoop && (
+                <UnitInsightsCard
+                  buildingBbl={bbl}
+                  hpdViolations={hpdViolations.items}
+                  hpdComplaints={hpdComplaints.items}
+                  serviceRequests={threeOneOne.items}
+                  selectedUnit={coopUnitContext}
+                  onUnitSelect={handleUnitInsightSelect}
+                  loading={hpdViolations.loading || hpdComplaints.loading || threeOneOne.loading}
+                />
+              )}
+
+              <Tabs ref={tabsRef} value={activeTab} onValueChange={handleTabChange} className="w-full">
                 <div className="flex items-center justify-between bg-card border-b border-border">
                   <TabsList className="justify-start bg-transparent rounded-none h-auto p-0 flex-wrap">
                     <TabsTrigger 
@@ -390,7 +443,14 @@ export default function Results() {
                   <TabsContent value="hpd" className="mt-0">
                     <Card>
                       <CardContent className="p-6">
-                        <HPDTab bbl={queryBbl} bin={bin} scope={scope} isCoop={isCoop} coopUnitContext={coopUnitContext} />
+                        <HPDTab 
+                          bbl={queryBbl} 
+                          bin={bin} 
+                          scope={scope} 
+                          isCoop={isCoop} 
+                          coopUnitContext={coopUnitContext}
+                          onClearUnitContext={handleClearUnitContext}
+                        />
                       </CardContent>
                     </Card>
                   </TabsContent>
@@ -398,7 +458,14 @@ export default function Results() {
                   <TabsContent value="311" className="mt-0">
                     <Card>
                       <CardContent className="p-6">
-                        <ThreeOneOneTab lat={latitude} lon={longitude} scope={scope} />
+                        <ThreeOneOneTab 
+                          lat={latitude} 
+                          lon={longitude} 
+                          scope={scope}
+                          isCoop={isCoop}
+                          coopUnitContext={coopUnitContext}
+                          onClearUnitContext={handleClearUnitContext}
+                        />
                       </CardContent>
                     </Card>
                   </TabsContent>
