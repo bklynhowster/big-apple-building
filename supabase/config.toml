@@ -32,3 +32,6 @@ verify_jwt = false
 
 [functions.coop-unit-roster]
 verify_jwt = false
+
+[functions.dob-job-filings]
+verify_jwt = false
