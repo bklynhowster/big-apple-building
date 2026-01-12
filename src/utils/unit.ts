@@ -55,15 +55,15 @@ const JUNK_VALUES = new Set([
 ]);
 
 /**
- * STOPLIST: Common English words and abbreviations that appear in 311/HPD complaint
- * narratives but are NOT valid unit identifiers. Case-insensitive.
- */
-/**
  * STOPLIST: Common English words and abbreviations that appear in complaint
  * narratives but are NOT valid unit identifiers. Case-insensitive.
  * 
  * IMPORTANT: This stoplist is ONLY applied to tokens with NO digits.
  * Digit-containing tokens (6M, 12B, etc.) bypass stoplist checks entirely.
+ * 
+ * NOTE: Single letters (A-Z) are NOT in this stoplist because they are valid
+ * unit suffixes when paired with digits (e.g., 6M, 12B, 4J). Single-letter
+ * tokens are handled separately by isAllowedSingleLetterUnit().
  */
 const UNIT_STOPLIST = new Set([
   // Common English words (2+ letters)
