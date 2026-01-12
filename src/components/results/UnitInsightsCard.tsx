@@ -17,6 +17,7 @@ import type { UnitRosterEntry } from '@/hooks/useCoopUnitRoster';
 import type { UnitFromFilings, FilingReference, JobFilingRecord } from '@/hooks/useDobJobFilings';
 import type { ViolationRecord } from '@/hooks/useViolations';
 import type { ECBRecord } from '@/hooks/useECB';
+import type { PermitRecord } from '@/hooks/usePermits';
 
 interface UnitInsightsCardProps {
   buildingBbl: string;
@@ -29,6 +30,7 @@ interface UnitInsightsCardProps {
   dobFilings: JobFilingRecord[];
   dobViolations: ViolationRecord[];
   ecbViolations: ECBRecord[];
+  dobPermits: PermitRecord[];
   selectedUnit: string | null;
   onUnitSelect: (unit: string) => void;
   onClearUnitFilter?: () => void;
@@ -49,6 +51,17 @@ interface ViolationMentionRef {
   description: string | null;
 }
 
+interface PermitMentionRef {
+  type: 'permit';
+  id: string;
+  jobNumber: string | null;
+  label: string;
+  status: string;
+  issueDate: string | null;
+  description: string | null;
+  snippet: string | null;
+}
+
 interface CombinedUnitStats {
   unit: string;
   hpdCount: number;
@@ -57,17 +70,20 @@ interface CombinedUnitStats {
   filingsCount: number;
   dobViolationsCount: number;
   ecbViolationsCount: number;
+  permitsCount: number;
   totalCount: number;
   lastActivity: Date | null;
   filingRefs: FilingReference[];
   // Provenance: source identifiers for traceability
   sourceRefs: {
-    type: 'dob' | 'hpd' | '311' | 'sales' | 'dob-violation' | 'ecb';
+    type: 'dob' | 'hpd' | '311' | 'sales' | 'dob-violation' | 'ecb' | 'permit';
     id: string;
     label: string;
   }[];
   // Violation-specific references for the new section
   violationRefs: ViolationMentionRef[];
+  // Permit-specific references
+  permitRefs: PermitMentionRef[];
 }
 
 /**
@@ -115,7 +131,8 @@ function combineUnitStats(
   hpdComplaints: HPDComplaintRecord[],
   serviceRequests: ServiceRequestRecord[],
   dobViolations: ViolationRecord[],
-  ecbViolations: ECBRecord[]
+  ecbViolations: ECBRecord[],
+  dobPermits: PermitRecord[]
 ): CombinedUnitStats[] {
   const unitMap = new Map<string, CombinedUnitStats>();
 
@@ -131,11 +148,13 @@ function combineUnitStats(
         filingsCount: 0,
         dobViolationsCount: 0,
         ecbViolationsCount: 0,
+        permitsCount: 0,
         totalCount: 0,
         lastActivity: null,
         filingRefs: [],
         sourceRefs: [],
         violationRefs: [],
+        permitRefs: [],
       };
       unitMap.set(unit, entry);
     }
@@ -334,11 +353,62 @@ function combineUnitStats(
     }
   }
 
+  // Process DOB Permits that mention units
+  for (const record of dobPermits) {
+    const unit = extractUnitFromRecord(record.raw);
+    if (unit) {
+      const entry = getOrCreate(unit);
+      entry.permitsCount += 1;
+      entry.totalCount += 1;
+      
+      // Update last activity
+      if (record.issueDate) {
+        const issueDate = new Date(record.issueDate);
+        if (!isNaN(issueDate.getTime()) && (!entry.lastActivity || issueDate > entry.lastActivity)) {
+          entry.lastActivity = issueDate;
+        }
+      }
+      
+      // Add source reference (limit to 5)
+      if (entry.sourceRefs.filter(r => r.type === 'permit').length < 5) {
+        const permitId = record.jobNumber || record.recordId;
+        entry.sourceRefs.push({
+          type: 'permit',
+          id: permitId,
+          label: record.jobNumber ? `Job #${record.jobNumber}` : `Permit #${record.recordId}`,
+        });
+      }
+      
+      // Extract snippet showing unit mention
+      let snippet: string | null = null;
+      const descText = record.description || '';
+      if (descText) {
+        const unitPattern = new RegExp(`(.{0,30})(APT\\.?|APARTMENT|UNIT|#)\\s*${unit}(.{0,30})`, 'i');
+        const match = descText.match(unitPattern);
+        if (match) {
+          snippet = `...${match[1]}${match[2]} ${unit}${match[3]}...`.trim();
+        }
+      }
+      
+      // Add to permit refs
+      entry.permitRefs.push({
+        type: 'permit',
+        id: record.recordId,
+        jobNumber: record.jobNumber,
+        label: record.jobNumber ? `Job #${record.jobNumber}` : `Permit #${record.recordId}`,
+        status: record.status,
+        issueDate: record.issueDate,
+        description: record.description,
+        snippet,
+      });
+    }
+  }
+
   // CRITICAL: Only include units that have at least one traceable source record
   // Sales data alone is NOT sufficient (it doesn't indicate complaints or filings)
   const filteredStats = Array.from(unitMap.values()).filter(stat => {
-    // Must have at least one source reference (DOB filings, HPD, 311, DOB Violations, or ECB)
-    const hasTraceableSource = stat.filingsCount > 0 || stat.hpdCount > 0 || stat.threeOneOneCount > 0 || stat.dobViolationsCount > 0 || stat.ecbViolationsCount > 0;
+    // Must have at least one source reference (DOB filings, HPD, 311, DOB Violations, ECB, or Permits)
+    const hasTraceableSource = stat.filingsCount > 0 || stat.hpdCount > 0 || stat.threeOneOneCount > 0 || stat.dobViolationsCount > 0 || stat.ecbViolationsCount > 0 || stat.permitsCount > 0;
     return hasTraceableSource;
   });
 
@@ -368,7 +438,7 @@ function formatDate(date: Date | null): string {
 
 // Expandable source references component
 interface SourceRef {
-  type: 'dob' | 'hpd' | '311' | 'sales' | 'dob-violation' | 'ecb';
+  type: 'dob' | 'hpd' | '311' | 'sales' | 'dob-violation' | 'ecb' | 'permit';
   id: string;
   label: string;
 }
@@ -543,6 +613,148 @@ function ViolationsMentioningUnitsSection({
   );
 }
 
+// Permits Mentioning Units Section Component
+interface PermitsMentioningUnitsSectionProps {
+  combinedStats: CombinedUnitStats[];
+  selectedUnit: string | null;
+  onUnitSelect: (unit: string) => void;
+  dobNowUrl?: string | null;
+}
+
+function PermitsMentioningUnitsSection({
+  combinedStats,
+  selectedUnit,
+  onUnitSelect,
+  dobNowUrl,
+}: PermitsMentioningUnitsSectionProps) {
+  const [isOpen, setIsOpen] = useState(true);
+  
+  // Filter to only units with permit references
+  const unitsWithPermits = combinedStats.filter(s => s.permitRefs.length > 0);
+  
+  if (unitsWithPermits.length === 0) return null;
+  
+  // Total counts
+  const totalPermits = unitsWithPermits.reduce((sum, s) => sum + s.permitsCount, 0);
+  
+  return (
+    <Collapsible open={isOpen} onOpenChange={setIsOpen} className="mt-6">
+      <CollapsibleTrigger asChild>
+        <Button variant="ghost" className="w-full justify-between p-3 h-auto border border-blue-200 dark:border-blue-800 bg-blue-50/50 dark:bg-blue-950/20 rounded-lg">
+          <div className="flex items-center gap-2">
+            <FileText className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+            <span className="font-medium text-foreground">Permits/Job Filings Mentioning Units (Inferred)</span>
+            <Badge variant="secondary" className="text-xs">
+              {totalPermits} permit{totalPermits !== 1 ? 's' : ''}
+            </Badge>
+          </div>
+          {isOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+        </Button>
+      </CollapsibleTrigger>
+      <CollapsibleContent className="mt-2 space-y-3">
+        {/* Critical disclaimer */}
+        <Alert className="border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/30">
+          <Info className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+          <AlertDescription className="text-sm text-blue-800 dark:text-blue-200">
+            <strong>Building-level permits.</strong> DOB permits and job filings are issued at the building level. 
+            Unit references are inferred from filing text and do not imply unit-level issuance or enforcement.
+          </AlertDescription>
+        </Alert>
+        
+        {/* Filter active indicator */}
+        {selectedUnit && (
+          <p className="text-xs text-muted-foreground px-1">
+            Showing building permits/job filings that mention: <strong>{selectedUnit}</strong>
+          </p>
+        )}
+        
+        {/* Unit-by-unit permit breakdown */}
+        <div className="space-y-2">
+          {unitsWithPermits
+            .filter(stat => !selectedUnit || stat.unit === selectedUnit)
+            .map(stat => (
+              <div 
+                key={stat.unit} 
+                className={`border rounded-lg p-3 bg-card ${
+                  selectedUnit === stat.unit ? 'border-primary ring-1 ring-primary/20' : 'border-border'
+                }`}
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    <Badge variant="outline" className="font-mono">
+                      {stat.unit}
+                    </Badge>
+                    <span className="text-xs text-muted-foreground">
+                      {stat.permitRefs.length} permit{stat.permitRefs.length !== 1 ? 's' : ''} mentioning this unit
+                    </span>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant={selectedUnit === stat.unit ? 'secondary' : 'outline'}
+                    onClick={() => onUnitSelect(stat.unit)}
+                    className="h-6 px-2 text-xs"
+                  >
+                    {selectedUnit === stat.unit ? 'Viewing' : 'Filter'}
+                  </Button>
+                </div>
+                
+                {/* Permit pills */}
+                <div className="flex flex-wrap gap-1.5">
+                  {stat.permitRefs.slice(0, 8).map((permit, idx) => (
+                    <TooltipProvider key={`${permit.type}-${permit.id}-${idx}`}>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span 
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-mono cursor-help bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300"
+                          >
+                            {permit.jobNumber ? `Job #${permit.jobNumber.slice(-10)}` : `Permit #${permit.id.slice(-8)}`}
+                            {permit.status === 'open' && (
+                              <span className="w-1.5 h-1.5 rounded-full bg-green-500" title="Open/Active" />
+                            )}
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent side="top" className="max-w-xs">
+                          <div className="text-xs space-y-1">
+                            <p><strong>{permit.label}</strong></p>
+                            <p>Status: {permit.status}</p>
+                            {permit.issueDate && <p>Issued: {permit.issueDate}</p>}
+                            {permit.snippet && (
+                              <p className="bg-yellow-100 dark:bg-yellow-900/30 px-1 py-0.5 rounded italic">
+                                {permit.snippet}
+                              </p>
+                            )}
+                            {permit.description && !permit.snippet && (
+                              <p className="line-clamp-2">{permit.description}</p>
+                            )}
+                            <p className="text-muted-foreground italic">Mentions unit in filing text</p>
+                            {dobNowUrl && (
+                              <a 
+                                href={dobNowUrl} 
+                                target="_blank" 
+                                rel="noopener noreferrer"
+                                className="text-primary hover:underline flex items-center gap-1 mt-1"
+                              >
+                                View in DOB NOW <ExternalLink className="h-3 w-3" />
+                              </a>
+                            )}
+                          </div>
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  ))}
+                  {stat.permitRefs.length > 8 && (
+                    <span className="text-xs text-muted-foreground px-1">
+                      +{stat.permitRefs.length - 8} more
+                    </span>
+                  )}
+                </div>
+              </div>
+            ))}
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
+  );
+}
 
 interface EvidenceDrawerProps {
   open: boolean;
@@ -777,6 +989,7 @@ export function UnitInsightsCard({
   dobFilings,
   dobViolations,
   ecbViolations,
+  dobPermits,
   selectedUnit,
   onUnitSelect,
   onClearUnitFilter,
@@ -805,9 +1018,10 @@ export function UnitInsightsCard({
       hpdComplaints,
       serviceRequests,
       dobViolations,
-      ecbViolations
+      ecbViolations,
+      dobPermits
     );
-  }, [hpdViolations, hpdComplaints, serviceRequests, salesUnits, dobFilingsUnits, dobViolations, ecbViolations]);
+  }, [hpdViolations, hpdComplaints, serviceRequests, salesUnits, dobFilingsUnits, dobViolations, ecbViolations, dobPermits]);
 
   const hasData = combinedStats.length > 0;
   const hasFilingsData = dobFilingsUnits.length > 0;
@@ -1115,6 +1329,16 @@ export function UnitInsightsCard({
               combinedStats={combinedStats}
               selectedUnit={selectedUnit}
               onUnitSelect={onUnitSelect}
+            />
+          )}
+
+          {/* Permits Mentioning Units Section - Only show if there are permits that mention units */}
+          {hasData && combinedStats.some(s => s.permitRefs.length > 0) && (
+            <PermitsMentioningUnitsSection
+              combinedStats={combinedStats}
+              selectedUnit={selectedUnit}
+              onUnitSelect={onUnitSelect}
+              dobNowUrl={dobNowUrl}
             />
           )}
         </CardContent>
