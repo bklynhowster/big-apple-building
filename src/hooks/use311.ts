@@ -101,7 +101,7 @@ export function use311(lat?: number, lon?: number): Use311Return {
       if (filtersToUse.toDate) queryParams.toDate = filtersToUse.toDate;
       if (filtersToUse.keyword) queryParams.q = filtersToUse.keyword;
 
-      const baseUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/311-requests`;
+      const baseUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/service-requests-311`;
       const urlParams = new URLSearchParams(queryParams);
       const fullUrl = `${baseUrl}?${urlParams.toString()}`;
 
