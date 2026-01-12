@@ -1,10 +1,11 @@
 import { useMemo, useState, useCallback, useEffect } from 'react';
 import { useLocation, Link, useNavigate } from 'react-router-dom';
-import { ArrowLeft, AlertCircle } from 'lucide-react';
+import { ArrowLeft, AlertCircle, Building2, Home } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
 import { Footer } from '@/components/layout/Footer';
 import { PropertyOverview } from '@/components/results/PropertyOverview';
 import { PropertyProfileCard } from '@/components/results/PropertyProfileCard';
+import { CondoUnitsCard } from '@/components/results/CondoUnitsCard';
 import { SummaryTab } from '@/components/results/SummaryTab';
 import { ViolationsTab } from '@/components/results/ViolationsTab';
 import { ECBTab } from '@/components/results/ECBTab';
@@ -16,6 +17,7 @@ import { ThreeOneOneTab } from '@/components/results/ThreeOneOneTab';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
 
 const VALID_TABS = ['summary', 'violations', 'ecb', 'safety', 'permits', 'hpd', '311', 'all'] as const;
 type ValidTab = typeof VALID_TABS[number];
@@ -58,6 +60,22 @@ export default function Results() {
 
   // State for passing keyword filter to tabs from "View in tab"
   const [tabKeywordFilter, setTabKeywordFilter] = useState<string | undefined>();
+  
+  // Context switching state for condos
+  const [contextBbl, setContextBbl] = useState<string>(bbl);
+  const [isUnitContext, setIsUnitContext] = useState<boolean>(false);
+  
+  // Update context BBL when main BBL changes
+  useEffect(() => {
+    setContextBbl(bbl);
+    setIsUnitContext(false);
+  }, [bbl]);
+  
+  // Handle context switch from condo units card
+  const handleContextChange = useCallback((newContextBbl: string, isUnit: boolean) => {
+    setContextBbl(newContextBbl);
+    setIsUnitContext(isUnit);
+  }, []);
 
   // Sync tab changes to URL
   const handleTabChange = useCallback((tab: string, keyword?: string) => {
@@ -133,6 +151,36 @@ export default function Results() {
 
               {/* Property Profile */}
               <PropertyProfileCard bbl={bbl} />
+              
+              {/* Condo Units Discovery */}
+              <CondoUnitsCard bbl={bbl} onContextChange={handleContextChange} />
+              
+              {/* Context Indicator - show when viewing unit vs building context */}
+              {contextBbl !== bbl && (
+                <div className="flex items-center gap-3 p-3 bg-primary/10 border border-primary/20 rounded-lg">
+                  <div className="flex items-center gap-2">
+                    {isUnitContext ? (
+                      <Home className="h-4 w-4 text-primary" />
+                    ) : (
+                      <Building2 className="h-4 w-4 text-primary" />
+                    )}
+                    <span className="text-sm font-medium">
+                      {isUnitContext ? 'Unit Context' : 'Building Context'}
+                    </span>
+                    <Badge variant="secondary" className="font-mono text-xs">
+                      {contextBbl}
+                    </Badge>
+                  </div>
+                  <Button 
+                    variant="ghost" 
+                    size="sm" 
+                    onClick={() => handleContextChange(bbl, false)}
+                    className="ml-auto"
+                  >
+                    Reset to original
+                  </Button>
+                </div>
+              )}
 
               <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
                 <TabsList className="w-full justify-start bg-card border-b border-border rounded-none h-auto p-0 flex-wrap">
@@ -191,7 +239,7 @@ export default function Results() {
                     <Card>
                       <CardContent className="p-6">
                         <SummaryTab 
-                          bbl={bbl}
+                          bbl={contextBbl}
                           onTabChange={handleTabChange}
                         />
                       </CardContent>
@@ -201,7 +249,7 @@ export default function Results() {
                   <TabsContent value="violations" className="mt-0">
                     <Card>
                       <CardContent className="p-6">
-                        <ViolationsTab bbl={bbl} />
+                        <ViolationsTab bbl={contextBbl} />
                       </CardContent>
                     </Card>
                   </TabsContent>
@@ -209,7 +257,7 @@ export default function Results() {
                   <TabsContent value="ecb" className="mt-0">
                     <Card>
                       <CardContent className="p-6">
-                        <ECBTab bbl={bbl} />
+                        <ECBTab bbl={contextBbl} />
                       </CardContent>
                     </Card>
                   </TabsContent>
@@ -217,7 +265,7 @@ export default function Results() {
                   <TabsContent value="safety" className="mt-0">
                     <Card>
                       <CardContent className="p-6">
-                        <SafetyTab bbl={bbl} />
+                        <SafetyTab bbl={contextBbl} />
                       </CardContent>
                     </Card>
                   </TabsContent>
@@ -225,7 +273,7 @@ export default function Results() {
                   <TabsContent value="permits" className="mt-0">
                     <Card>
                       <CardContent className="p-6">
-                        <PermitsTab bbl={bbl} />
+                        <PermitsTab bbl={contextBbl} />
                       </CardContent>
                     </Card>
                   </TabsContent>
@@ -233,7 +281,7 @@ export default function Results() {
                   <TabsContent value="hpd" className="mt-0">
                     <Card>
                       <CardContent className="p-6">
-                        <HPDTab bbl={bbl} />
+                        <HPDTab bbl={contextBbl} />
                       </CardContent>
                     </Card>
                   </TabsContent>
@@ -249,7 +297,7 @@ export default function Results() {
                   <TabsContent value="all" className="mt-0">
                     <Card>
                       <CardContent className="p-6">
-                        <AllRecordsTab bbl={bbl} onViewInTab={handleViewInTab} />
+                        <AllRecordsTab bbl={contextBbl} onViewInTab={handleViewInTab} />
                       </CardContent>
                     </Card>
                   </TabsContent>

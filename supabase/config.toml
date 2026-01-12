@@ -23,3 +23,9 @@ verify_jwt = false
 
 [functions.service-requests-311]
 verify_jwt = false
+
+[functions.property-profile]
+verify_jwt = false
+
+[functions.condo-units]
+verify_jwt = false
