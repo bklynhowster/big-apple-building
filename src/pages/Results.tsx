@@ -352,7 +352,14 @@ export default function Results() {
                   selectedUnit={coopUnitContext}
                   onUnitSelect={handleUnitInsightSelect}
                   onClearUnitFilter={() => handleCoopUnitContextChange(null)}
-                  loading={hpdViolations.loading || hpdComplaints.loading || threeOneOne.loading || coopUnitRoster.loading || dobJobFilings.loading || dobViolationsHook.loading || ecbHook.loading || permitsHook.loading}
+                  loadingStates={{
+                    filings: dobJobFilings.loading || coopUnitRoster.loading,
+                    permits: permitsHook.loading,
+                    hpd: hpdViolations.loading || hpdComplaints.loading,
+                    threeOneOne: threeOneOne.loading,
+                    violations: dobViolationsHook.loading,
+                    ecb: ecbHook.loading,
+                  }}
                   rosterError={coopUnitRoster.error}
                   salesWarning={coopUnitRoster.warning}
                   dobNowUrl={dobJobFilings.dobNowUrl}

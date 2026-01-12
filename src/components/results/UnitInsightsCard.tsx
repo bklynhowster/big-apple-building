@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Eye, Info, Users, AlertTriangle, Phone, FileText, ExternalLink, ChevronDown, ChevronUp, X, Shield } from 'lucide-react';
+import { Eye, Info, Users, AlertTriangle, Phone, FileText, ExternalLink, ChevronDown, ChevronUp, X, Shield, Loader2, RefreshCw, Pause } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -18,6 +18,11 @@ import {
   type UnitConfidence,
   type UnitType
 } from '@/utils/unit';
+import { 
+  useUnitMentions,
+  type CombinedUnitStats,
+  type ScanProgress,
+} from '@/hooks/useUnitMentions';
 import type { HPDComplaintRecord, HPDViolationRecord } from '@/hooks/useHPD';
 import type { ServiceRequestRecord } from '@/hooks/use311';
 import type { UnitRosterEntry } from '@/hooks/useCoopUnitRoster';
@@ -41,6 +46,16 @@ interface UnitInsightsCardProps {
   selectedUnit: string | null;
   onUnitSelect: (unit: string) => void;
   onClearUnitFilter?: () => void;
+  // Granular loading states for progressive display
+  loadingStates?: {
+    filings: boolean;
+    permits: boolean;
+    hpd: boolean;
+    threeOneOne: boolean;
+    violations: boolean;
+    ecb: boolean;
+  };
+  /** @deprecated Use loadingStates instead */
   loading?: boolean;
   rosterError?: string | null;
   salesWarning?: string | null;
@@ -49,72 +64,88 @@ interface UnitInsightsCardProps {
   fallbackMode?: boolean;
 }
 
-interface ViolationMentionRef {
-  type: 'dob-violation' | 'ecb';
-  id: string;
-  label: string;
-  status: string;
-  issueDate: string | null;
-  description: string | null;
-  /** Field where unit was found */
-  sourceField: string | null;
-  /** Text snippet showing context */
-  snippet: string | null;
-  /** Unit type classification */
-  unitType: UnitType | null;
-  /** Extraction confidence */
-  confidence: UnitConfidence | null;
-  /** Confidence reason */
-  confidenceReason: string | null;
-}
+// Note: ViolationMentionRef, PermitMentionRef, and CombinedUnitStats are imported from useUnitMentions
 
-interface PermitMentionRef {
-  type: 'permit';
-  id: string;
-  jobNumber: string | null;
-  label: string;
-  status: string;
-  issueDate: string | null;
-  description: string | null;
-  /** Field where unit was found */
-  sourceField: string | null;
-  /** Text snippet showing context */
-  snippet: string | null;
-  /** Unit type classification */
-  unitType: UnitType | null;
-  /** Extraction confidence */
-  confidence: UnitConfidence | null;
-  /** Confidence reason */
-  confidenceReason: string | null;
+/**
+ * Scanning status row - shows progress instead of skeleton
+ */
+function ScanningStatusRow({ 
+  progress, 
+  isPaused,
+  isCached,
+  onStop, 
+  onRefresh 
+}: { 
+  progress: ScanProgress;
+  isPaused: boolean;
+  isCached: boolean;
+  onStop: () => void;
+  onRefresh: () => void;
+}) {
+  const elapsedSec = Math.floor(progress.elapsedMs / 1000);
+  
+  if (isCached) {
+    return (
+      <div className="flex items-center justify-between p-3 bg-muted/30 rounded-lg border border-border/50">
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Info className="h-4 w-4" />
+          <span>Loaded from cache</span>
+        </div>
+        <Button variant="ghost" size="sm" onClick={onRefresh} className="h-7 text-xs gap-1">
+          <RefreshCw className="h-3 w-3" />
+          Refresh
+        </Button>
+      </div>
+    );
+  }
+  
+  if (isPaused) {
+    return (
+      <div className="flex items-center justify-between p-3 bg-amber-50 dark:bg-amber-950/30 rounded-lg border border-amber-200 dark:border-amber-800">
+        <div className="flex items-center gap-2 text-sm">
+          <Pause className="h-4 w-4 text-amber-600" />
+          <span className="text-amber-700 dark:text-amber-300">Scanning paused</span>
+          <span className="text-muted-foreground">— partial results shown</span>
+        </div>
+        <Button variant="outline" size="sm" onClick={onRefresh} className="h-7 text-xs gap-1">
+          <RefreshCw className="h-3 w-3" />
+          Resume
+        </Button>
+      </div>
+    );
+  }
+  
+  if (progress.stage === 'complete') {
+    return null;
+  }
+  
+  return (
+    <div className="flex items-center justify-between p-3 bg-blue-50 dark:bg-blue-950/30 rounded-lg border border-blue-200 dark:border-blue-800">
+      <div className="flex items-center gap-3">
+        <Loader2 className="h-4 w-4 text-blue-600 animate-spin" />
+        <div className="text-sm">
+          <span className="font-medium text-blue-700 dark:text-blue-300">{progress.stageLabel}</span>
+          {progress.total > 0 && (
+            <span className="text-blue-600 dark:text-blue-400 ml-2">
+              {progress.scanned}/{progress.total} records
+            </span>
+          )}
+          {elapsedSec > 5 && (
+            <span className="text-muted-foreground ml-2">({elapsedSec}s)</span>
+          )}
+        </div>
+      </div>
+      <div className="flex items-center gap-2">
+        <span className="text-xs text-muted-foreground hidden sm:inline">
+          Large buildings may take 30–60s
+        </span>
+        <Button variant="ghost" size="sm" onClick={onStop} className="h-7 text-xs">
+          Stop
+        </Button>
+      </div>
+    </div>
+  );
 }
-
-interface CombinedUnitStats {
-  unit: string;
-  hpdCount: number;
-  threeOneOneCount: number;
-  salesCount: number;
-  filingsCount: number;
-  dobViolationsCount: number;
-  ecbViolationsCount: number;
-  permitsCount: number;
-  totalCount: number;
-  lastActivity: Date | null;
-  filingRefs: FilingReference[];
-  // Provenance: source identifiers for traceability
-  sourceRefs: {
-    type: 'dob' | 'hpd' | '311' | 'sales' | 'dob-violation' | 'ecb' | 'permit';
-    id: string;
-    label: string;
-  }[];
-  // Violation-specific references for the new section
-  violationRefs: ViolationMentionRef[];
-  // Permit-specific references
-  permitRefs: PermitMentionRef[];
-  // Aggregated confidence based on extraction results
-  overallConfidence: UnitConfidence;
-  confidenceDetails: string;
-}
-
 /**
  * Get confidence display info from a CombinedUnitStats entry.
  * Uses the new overallConfidence field calculated from extraction results.
@@ -1075,55 +1106,47 @@ export function UnitInsightsCard({
   const [evidenceUnit, setEvidenceUnit] = useState<string | null>(null);
   const [evidenceStats, setEvidenceStats] = useState<CombinedUnitStats | null>(null);
 
-  // Calculate unit stats from records
-  const combinedStats = useMemo(() => {
-    const hpdViolationStats = getUnitStats(hpdViolations.map(r => r.raw));
-    const hpdComplaintStats = getUnitStats(hpdComplaints.map(r => r.raw));
-    const threeOneOneStats = getUnitStats(serviceRequests.map(r => r.raw));
-    
-    return combineUnitStats(
-      hpdViolationStats, 
-      hpdComplaintStats, 
-      threeOneOneStats, 
-      salesUnits, 
+  // Use the new progressive loading hook
+  const defaultLoadingStates = {
+    filings: loading || false,
+    permits: loading || false,
+    hpd: loading || false,
+    threeOneOne: loading || false,
+    violations: loading || false,
+    ecb: loading || false,
+  };
+  
+  const { 
+    stats: combinedStats, 
+    progress, 
+    isScanning, 
+    isPaused, 
+    isCached,
+    stopScanning, 
+    refreshData 
+  } = useUnitMentions(
+    buildingBbl,
+    {
       dobFilingsUnits,
+      salesUnits,
+      dobPermits,
       hpdViolations,
       hpdComplaints,
       serviceRequests,
       dobViolations,
       ecbViolations,
-      dobPermits
-    );
-  }, [hpdViolations, hpdComplaints, serviceRequests, salesUnits, dobFilingsUnits, dobViolations, ecbViolations, dobPermits]);
+    },
+    loadingStates || defaultLoadingStates
+  );
 
   const hasData = combinedStats.length > 0;
   const hasFilingsData = dobFilingsUnits.length > 0;
+  const showScanningStatus = isScanning || isPaused || isCached;
 
   const handleViewEvidence = (stat: CombinedUnitStats) => {
     setEvidenceUnit(stat.unit);
     setEvidenceStats(stat);
   };
-
-  if (loading) {
-    return (
-      <Card className="border-amber-200 dark:border-amber-800 bg-amber-50/50 dark:bg-amber-950/20">
-        <CardHeader className="pb-3">
-          <div className="flex items-center gap-2">
-            <Users className="h-5 w-5 text-amber-600 dark:text-amber-400" />
-            <CardTitle className="text-lg">Mentioned Units</CardTitle>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-2">
-            <Skeleton className="h-4 w-full" />
-            <Skeleton className="h-10 w-full" />
-            <Skeleton className="h-10 w-full" />
-            <Skeleton className="h-10 w-full" />
-          </div>
-        </CardContent>
-      </Card>
-    );
-  }
 
   return (
     <>
@@ -1134,6 +1157,7 @@ export function UnitInsightsCard({
               <div className="flex items-center gap-2">
                 <Users className="h-5 w-5 text-amber-600 dark:text-amber-400" />
                 <CardTitle className="text-lg">Mentioned Units</CardTitle>
+                {isScanning && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <Info className="h-4 w-4 text-muted-foreground cursor-help" />
