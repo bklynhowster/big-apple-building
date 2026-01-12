@@ -7,16 +7,18 @@ export interface CondoUnit {
   block: string;
   lot: string;
   unitLabel: string | null;
+  address: string | null;
   raw: Record<string, unknown>;
 }
 
 export interface CondoUnitsResponse {
-  inputBbl: string;
+  buildingBbl: string;
   isCondo: boolean;
   buildingContextBbl: string | null;
   billingLotBbl: string | null;
   condoId: string | null;
   units: CondoUnit[];
+  totalApprox: number;
   notes: string[];
   requestId: string;
 }
@@ -64,7 +66,7 @@ export function useCondoUnits(): UseCondoUnitsReturn {
 
     try {
       const baseUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/condo-units`;
-      const url = `${baseUrl}?bbl=${encodeURIComponent(bbl)}`;
+      const url = `${baseUrl}?buildingBbl=${encodeURIComponent(bbl)}`;
 
       const response = await fetch(url, {
         method: 'GET',
