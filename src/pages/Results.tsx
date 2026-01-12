@@ -304,6 +304,13 @@ export default function Results() {
                 onScopeChange={setScope}
               />
 
+              {/* Landmark Badge - only show when confirmed landmarked */}
+              {landmarkStatus?.isLandmarked === true && (
+                <span className="inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium">
+                  Landmarked
+                </span>
+              )}
+
               {/* Property Profile */}
               <PropertyProfileCard 
                 bbl={bbl} 
