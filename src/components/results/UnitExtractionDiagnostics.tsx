@@ -7,7 +7,7 @@ import { useMemo } from 'react';
 import { ChevronDown, Bug, CheckCircle, XCircle } from 'lucide-react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Badge } from '@/components/ui/badge';
-import { extractUnitFromRecordWithTrace, normalizeUnit } from '@/utils/unit';
+import { extractUnitFromRecordWithTrace, normalizeUnit, isStopword } from '@/utils/unit';
 import type { HPDComplaintRecord, HPDViolationRecord } from '@/hooks/useHPD';
 import type { ServiceRequestRecord } from '@/hooks/use311';
 import type { UnitRosterEntry } from '@/hooks/useCoopUnitRoster';
@@ -103,16 +103,18 @@ function analyzeRecords<T extends { raw: Record<string, unknown> }>(
     } else if (candidates && candidates.length > 0) {
       // We had candidates but none validated - track rejections
       for (const candidate of candidates.slice(0, 3)) {
-        const cleaned = candidate.replace(/^(APT\.?|APARTMENT|UNIT|#)\s*/i, '').trim().toUpperCase();
+        const cleaned = candidate.replace(/^(APT\.?|APARTMENT|UNIT|#|RM\.?|ROOM|STE\.?|SUITE|PH|PENTHOUSE)\s*/i, '').trim().toUpperCase();
         const normalized = normalizeUnit(cleaned);
         if (!normalized) {
-          rejectedTokens.push({
-            token: cleaned.slice(0, 20),
-            reason: cleaned.length > 8 ? 'too long' : 
-                   /^\d{4,}$/.test(cleaned) ? 'numeric (4+ digits)' :
-                   /STREET|AVE|ROAD|BLVD/i.test(cleaned) ? 'address-like' :
-                   'failed validation'
-          });
+          let reason = 'failed validation';
+          if (cleaned.length > 8) reason = 'too long (>8)';
+          else if (cleaned.length < 2) reason = 'too short (<2)';
+          else if (/^\d{4,}$/.test(cleaned)) reason = 'numeric (4+ digits)';
+          else if (isStopword(cleaned)) reason = 'stopword';
+          else if (/^[A-Z]+$/.test(cleaned)) reason = 'alpha-only (not PH)';
+          else if (/STREET|AVE|ROAD|BLVD|PLACE|DRIVE|LANE/i.test(cleaned)) reason = 'address-like';
+          
+          rejectedTokens.push({ token: cleaned.slice(0, 20), reason });
         }
       }
     }
