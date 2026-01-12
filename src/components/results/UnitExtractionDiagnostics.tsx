@@ -7,7 +7,7 @@ import { useMemo } from 'react';
 import { ChevronDown, Bug, CheckCircle, XCircle } from 'lucide-react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Badge } from '@/components/ui/badge';
-import { extractUnitFromRecordWithTrace, normalizeUnit, isStopword } from '@/utils/unit';
+import { extractUnitFromRecordWithTrace, normalizeUnit, isStopword, extractUnitCandidatesFromText } from '@/utils/unit';
 import type { HPDComplaintRecord, HPDViolationRecord } from '@/hooks/useHPD';
 import type { ServiceRequestRecord } from '@/hooks/use311';
 import type { UnitRosterEntry } from '@/hooks/useCoopUnitRoster';
@@ -64,9 +64,6 @@ function extractAllStrings(record: Record<string, unknown>, maxStrings = 50, max
   return strings;
 }
 
-// Regex to detect unit-like patterns in text (candidates before validation)
-const UNIT_CANDIDATE_PATTERN = /\b(APT\.?\s*[A-Z0-9]{1,8}|APARTMENT\s*[A-Z0-9]{1,8}|UNIT\s*[A-Z0-9]{1,8}|#\s*[A-Z0-9]{1,8}|PH[A-Z0-9]{0,3}|PENTHOUSE\s*[A-Z0-9]{0,3})\b/gi;
-
 function analyzeRecords<T extends { raw: Record<string, unknown> }>(
   records: T[],
   sourceName: string
@@ -87,10 +84,10 @@ function analyzeRecords<T extends { raw: Record<string, unknown> }>(
       recordsWithAnyText++;
     }
     
-    // Check for candidate tokens (before validation)
+    // Use regex-based candidate extraction (NOT token splitting)
     const combinedText = allStrings.join(' ');
-    const candidates = combinedText.match(UNIT_CANDIDATE_PATTERN);
-    if (candidates && candidates.length > 0) {
+    const candidates = extractUnitCandidatesFromText(combinedText);
+    if (candidates.length > 0) {
       recordsWithCandidateTokens++;
     }
     
@@ -100,21 +97,20 @@ function analyzeRecords<T extends { raw: Record<string, unknown> }>(
       recordsWithValidatedUnits++;
       const unit = extraction.normalizedUnit;
       extractedUnits.set(unit, (extractedUnits.get(unit) || 0) + 1);
-    } else if (candidates && candidates.length > 0) {
+    } else if (candidates.length > 0) {
       // We had candidates but none validated - track rejections
-      for (const candidate of candidates.slice(0, 3)) {
-        const cleaned = candidate.replace(/^(APT\.?|APARTMENT|UNIT|#|RM\.?|ROOM|STE\.?|SUITE|PH|PENTHOUSE)\s*/i, '').trim().toUpperCase();
-        const normalized = normalizeUnit(cleaned);
+      for (const { token, strong } of candidates.slice(0, 3)) {
+        const normalized = normalizeUnit(token, false, strong);
         if (!normalized) {
           let reason = 'failed validation';
-          if (cleaned.length > 8) reason = 'too long (>8)';
-          else if (cleaned.length < 2) reason = 'too short (<2)';
-          else if (/^\d{4,}$/.test(cleaned)) reason = 'numeric (4+ digits)';
-          else if (isStopword(cleaned)) reason = 'stopword';
-          else if (/^[A-Z]+$/.test(cleaned)) reason = 'alpha-only (not PH)';
-          else if (/STREET|AVE|ROAD|BLVD|PLACE|DRIVE|LANE/i.test(cleaned)) reason = 'address-like';
+          if (token.length > 8) reason = 'too long (>8)';
+          else if (token.length < 1) reason = 'empty';
+          else if (/^\d{4,}$/.test(token)) reason = 'numeric (4+ digits)';
+          else if (isStopword(token)) reason = 'stopword';
+          else if (/^[A-Z]+$/.test(token) && !['PH', 'PHH', 'TH', 'GF'].includes(token)) reason = 'alpha-only';
+          else if (/^\d{5}$/.test(token)) reason = 'ZIP code';
           
-          rejectedTokens.push({ token: cleaned.slice(0, 20), reason });
+          rejectedTokens.push({ token: token.slice(0, 20), reason });
         }
       }
     }
