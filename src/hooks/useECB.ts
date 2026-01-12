@@ -62,7 +62,11 @@ export function useECB(bbl: string | null): UseECBReturn {
   const [currentBBL, setCurrentBBL] = useState<string | null>(null);
 
   const fetchECB = useCallback(async (targetBBL: string, targetOffset = 0, targetFilters?: ECBFilters) => {
-    if (!targetBBL) return;
+    // Guard: require valid 10-digit BBL
+    if (!targetBBL || targetBBL.length !== 10) {
+      setError('Valid 10-digit BBL is required');
+      return;
+    }
 
     setLoading(true);
     setError(null);

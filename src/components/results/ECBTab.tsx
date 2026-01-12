@@ -28,7 +28,7 @@ import {
 import { useECB, ECBFilters, ECBRecord } from '@/hooks/useECB';
 
 interface ECBTabProps {
-  bbl: string | null;
+  bbl: string;
 }
 
 function StatusBadge({ status }: { status: ECBRecord['status'] }) {
@@ -131,10 +131,10 @@ export function ECBTab({ bbl }: ECBTabProps) {
 
   // Fetch on mount when bbl is available
   useEffect(() => {
-    if (bbl) {
+    if (bbl && bbl.length === 10) {
       fetchECB(bbl);
     }
-  }, [bbl]);
+  }, [bbl, fetchECB]);
 
   const handleFilterChange = (updates: Partial<ECBFilters>) => {
     const newFilters = { ...localFilters, ...updates };

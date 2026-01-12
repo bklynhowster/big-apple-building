@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import type { PropertyData, PropertyInfo, ECBViolation, SafetyViolation, Permit, Borough } from '@/types/property';
 
 const BOROUGH_NAMES: Record<string, Borough> = {
@@ -69,11 +69,22 @@ function generatePlaceholderData(info: PropertyInfo): Omit<PropertyData, 'info' 
   };
 }
 
+// Normalize BBL to 10 digits
+function normalizeBBL(bbl: string | number | null | undefined): string | null {
+  if (!bbl) return null;
+  const normalized = String(bbl).padStart(10, '0');
+  return normalized.length === 10 ? normalized : null;
+}
+
 export function usePropertySearch() {
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<PropertyData | null>(null);
+
+  // Check if BBL is already in URL (for page refresh)
+  const urlBBL = normalizeBBL(searchParams.get('bbl'));
 
   useEffect(() => {
     const fetchData = async () => {
@@ -82,6 +93,10 @@ export function usePropertySearch() {
 
       try {
         const type = searchParams.get('type');
+        
+        // If we already have BBL in URL and it's valid, we might have cached data
+        // But still need to fetch property info from geocode
+        
         let propertyInfo: PropertyInfo;
 
         // Build query params for the geocode function
@@ -132,7 +147,11 @@ export function usePropertySearch() {
         console.log('Geocode result:', geocodeResult);
 
         // Normalize BBL to ensure 10 digits
-        const normalizedBBL = (geocodeResult.bbl || '').toString().padStart(10, '0');
+        const normalizedBBL = normalizeBBL(geocodeResult.bbl);
+        
+        if (!normalizedBBL) {
+          throw new Error('Invalid BBL returned from geocoding');
+        }
         
         propertyInfo = {
           address: geocodeResult.address,
@@ -142,6 +161,14 @@ export function usePropertySearch() {
           bbl: normalizedBBL,
           bin: geocodeResult.bin,
         };
+
+        // Update URL with BBL for persistence across refresh
+        const currentParams = new URLSearchParams(searchParams);
+        if (currentParams.get('bbl') !== normalizedBBL) {
+          currentParams.set('bbl', normalizedBBL);
+          // Use replace to not add to history
+          setSearchParams(currentParams, { replace: true });
+        }
 
         // Generate placeholder data for other tabs (will be replaced with real API calls later)
         const placeholderData = generatePlaceholderData(propertyInfo);
@@ -161,8 +188,11 @@ export function usePropertySearch() {
 
     if (searchParams.get('type')) {
       fetchData();
+    } else {
+      setLoading(false);
     }
-  }, [searchParams]);
+  }, [searchParams, setSearchParams]);
 
-  return { loading, error, data };
+  // Return the BBL from URL as fallback for immediate access
+  return { loading, error, data, bbl: data?.info?.bbl || urlBBL };
 }

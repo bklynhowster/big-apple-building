@@ -59,7 +59,11 @@ export function useViolations(bbl: string | null): UseViolationsReturn {
   const [currentBBL, setCurrentBBL] = useState<string | null>(null);
 
   const fetchViolations = useCallback(async (targetBBL: string, targetOffset = 0, targetFilters?: ViolationsFilters) => {
-    if (!targetBBL) return;
+    // Guard: require valid 10-digit BBL
+    if (!targetBBL || targetBBL.length !== 10) {
+      setError('Valid 10-digit BBL is required');
+      return;
+    }
 
     setLoading(true);
     setError(null);
