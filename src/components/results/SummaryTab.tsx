@@ -1,9 +1,12 @@
 import { useSummary } from '@/hooks/useSummary';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { AlertCircle, FileText, Shield, Hammer, AlertTriangle } from 'lucide-react';
+import { AlertCircle, FileText, Shield, Hammer, AlertTriangle, Download, Printer } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { exportToCSV, SUMMARY_COLUMNS } from '@/lib/csv-export';
+import { toast } from '@/hooks/use-toast';
 
 interface SummaryTabProps {
   bbl: string;
@@ -113,6 +116,52 @@ function LoadingSkeleton() {
 export function SummaryTab({ bbl, address, onTabChange }: SummaryTabProps) {
   const { loading, error, data } = useSummary(bbl);
 
+  const handleExportSummaryCSV = () => {
+    if (!data) return;
+    
+    const summaryData = [
+      {
+        recordType: 'Violations',
+        totalCount: data.violations.totalCount,
+        openCount: data.violations.openCount,
+        lastActivityDate: data.violations.lastActivityDate || '',
+      },
+      {
+        recordType: 'ECB',
+        totalCount: data.ecb.totalCount,
+        openCount: data.ecb.openCount,
+        lastActivityDate: data.ecb.lastActivityDate || '',
+      },
+      {
+        recordType: 'Permits',
+        totalCount: data.permits.totalCount,
+        openCount: data.permits.openCount,
+        lastActivityDate: data.permits.lastActivityDate || '',
+      },
+      {
+        recordType: 'Safety',
+        totalCount: data.safety.totalCount,
+        openCount: data.safety.openCount,
+        lastActivityDate: data.safety.lastActivityDate || '',
+      },
+    ];
+
+    exportToCSV(summaryData, {
+      filename: `summary_${bbl}_${new Date().toISOString().split('T')[0]}.csv`,
+      columns: SUMMARY_COLUMNS,
+      includeRawColumn: false,
+    });
+    
+    toast({
+      title: 'Export complete',
+      description: 'Summary exported to CSV',
+    });
+  };
+
+  const handlePrint = () => {
+    window.print();
+  };
+
   if (loading) {
     return <LoadingSkeleton />;
   }
@@ -139,17 +188,40 @@ export function SummaryTab({ bbl, address, onTabChange }: SummaryTabProps) {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="space-y-1">
-        <p className="text-sm text-muted-foreground">BBL: {bbl}</p>
-        {address && <p className="font-medium">{address}</p>}
-        {data.overall.totalOpenCount > 0 ? (
-          <p className="text-sm text-destructive font-medium">
-            {data.overall.totalOpenCount} open issue{data.overall.totalOpenCount !== 1 ? 's' : ''} across all categories
-          </p>
-        ) : (
-          <p className="text-sm text-green-600 font-medium">No open issues</p>
-        )}
+      {/* Header with Export Actions */}
+      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+        <div className="space-y-1">
+          <p className="text-sm text-muted-foreground">BBL: {bbl}</p>
+          {address && <p className="font-medium">{address}</p>}
+          {data.overall.totalOpenCount > 0 ? (
+            <p className="text-sm text-destructive font-medium">
+              {data.overall.totalOpenCount} open issue{data.overall.totalOpenCount !== 1 ? 's' : ''} across all categories
+            </p>
+          ) : (
+            <p className="text-sm text-green-600 font-medium">No open issues</p>
+          )}
+        </div>
+        
+        <div className="flex gap-2 print:hidden">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleExportSummaryCSV}
+            className="gap-1.5"
+          >
+            <Download className="h-3.5 w-3.5" />
+            Export Summary
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handlePrint}
+            className="gap-1.5"
+          >
+            <Printer className="h-3.5 w-3.5" />
+            Print Report
+          </Button>
+        </div>
       </div>
 
       {/* Summary Cards */}
@@ -193,11 +265,22 @@ export function SummaryTab({ bbl, address, onTabChange }: SummaryTabProps) {
       </div>
 
       {/* Overall Summary */}
-      {data.overall.overallLastActivityDate && (
-        <p className="text-sm text-muted-foreground">
-          Last activity across all records: {formatDate(data.overall.overallLastActivityDate)}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-sm text-muted-foreground">
+        {data.overall.overallLastActivityDate && (
+          <p>
+            Last activity across all records: {formatDate(data.overall.overallLastActivityDate)}
+          </p>
+        )}
+        <p className="print:block hidden">
+          Report generated on {new Date().toLocaleDateString('en-US', { 
+            year: 'numeric', 
+            month: 'long', 
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+          })}
         </p>
-      )}
+      </div>
     </div>
   );
 }

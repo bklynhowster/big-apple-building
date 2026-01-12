@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Search, X, ChevronLeft, ChevronRight, Loader2, AlertCircle, FileX, Calendar } from 'lucide-react';
+import { Search, X, ChevronLeft, ChevronRight, Loader2, AlertCircle, FileX, Calendar, Download } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -26,6 +26,8 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import { usePermits, PermitsFilters, PermitRecord } from '@/hooks/usePermits';
+import { exportToCSV, PERMITS_COLUMNS } from '@/lib/csv-export';
+import { toast } from '@/hooks/use-toast';
 
 interface PermitsTabProps {
   bbl: string;
@@ -164,6 +166,18 @@ export function PermitsTab({ bbl }: PermitsTabProps) {
   const hasPrevPage = offset > 0;
   const currentPage = Math.floor(offset / 50) + 1;
 
+  const handleExportCSV = () => {
+    if (items.length === 0) return;
+    exportToCSV(items as unknown as Record<string, unknown>[], {
+      filename: `permits_${bbl}_${new Date().toISOString().split('T')[0]}.csv`,
+      columns: PERMITS_COLUMNS,
+    });
+    toast({
+      title: 'Export complete',
+      description: `Exported ${items.length} permits to CSV`,
+    });
+  };
+
   return (
     <div className="space-y-4">
       {/* Filter Bar */}
@@ -224,20 +238,25 @@ export function PermitsTab({ bbl }: PermitsTabProps) {
         </div>
       </div>
 
-      {/* BBL Display */}
-      {bbl && (
-        <div className="text-xs text-muted-foreground font-mono bg-muted/30 px-2 py-1 rounded inline-block">
-          BBL: {bbl}
-        </div>
-      )}
-
-      {/* Summary Line */}
+      {/* Summary Line with Export */}
       <div className="flex items-center justify-between text-sm text-muted-foreground">
         <div>
           Showing {items.length} of ~{totalApprox} permits
           {hasActiveFilters && <span className="ml-2 text-primary">(filtered)</span>}
         </div>
-        {loading && <Loader2 className="h-4 w-4 animate-spin" />}
+        <div className="flex items-center gap-2">
+          {loading && <Loader2 className="h-4 w-4 animate-spin" />}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleExportCSV}
+            disabled={items.length === 0 || loading}
+            className="gap-1.5"
+          >
+            <Download className="h-3.5 w-3.5" />
+            Export CSV
+          </Button>
+        </div>
       </div>
 
       {/* Empty State */}

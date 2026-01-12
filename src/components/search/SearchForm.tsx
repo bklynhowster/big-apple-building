@@ -171,6 +171,12 @@ export function SearchForm() {
       if (geocodeData.bin) {
         resultParams.set('bin', geocodeData.bin);
       }
+      if (geocodeData.latitude) {
+        resultParams.set('lat', String(geocodeData.latitude));
+      }
+      if (geocodeData.longitude) {
+        resultParams.set('lon', String(geocodeData.longitude));
+      }
       resultParams.set('borough', geocodeData.borough || borough);
 
       navigate(`/results?${resultParams.toString()}`);
@@ -232,6 +238,12 @@ export function SearchForm() {
       }
       if (geocodeData.bin) {
         resultParams.set('bin', geocodeData.bin);
+      }
+      if (geocodeData.latitude) {
+        resultParams.set('lat', String(geocodeData.latitude));
+      }
+      if (geocodeData.longitude) {
+        resultParams.set('lon', String(geocodeData.longitude));
       }
       if (geocodeData.borough) {
         resultParams.set('borough', geocodeData.borough);
