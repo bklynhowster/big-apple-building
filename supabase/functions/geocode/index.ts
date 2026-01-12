@@ -497,7 +497,7 @@ serve(async (req) => {
       receivedHouseNumber: params.get('house') || '',
       receivedStreetName: streetName,
       receivedStreetType: streetType,
-      constructedStreet: streetName && streetType ? `${streetName} ${streetType}` : streetName,
+      constructedStreet: streetType && streetType !== 'None' ? `${streetName} ${streetType}` : streetName,
       receivedBorough: params.get('borough') || '',
     };
 
