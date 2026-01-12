@@ -60,6 +60,7 @@ export default function Results() {
   const bin = params.get('bin') || '';
   const latitude = params.get('lat') ? parseFloat(params.get('lat')!) : undefined;
   const longitude = params.get('lon') ? parseFloat(params.get('lon')!) : undefined;
+  const unitContextParam = params.get('unitContext') || null;
 
   const isValidBBL = bbl.length === 10;
 
@@ -75,8 +76,8 @@ export default function Results() {
   const [currentUnitLabel, setCurrentUnitLabel] = useState<string | null>(null);
   const [hasCondoUnits, setHasCondoUnits] = useState(false);
   
-  // Co-op unit context (UI-only, no API calls)
-  const [coopUnitContext, setCoopUnitContext] = useState<string | null>(null);
+  // Co-op unit context (UI-only, no API calls) - initialized from URL
+  const [coopUnitContext, setCoopUnitContext] = useState<string | null>(unitContextParam);
   
   // Determine if current BBL is a unit lot (1001-6999) or billing lot (75xx)
   const lotNumber = useMemo(() => {
@@ -111,8 +112,33 @@ export default function Results() {
       setScope(isUnitLot ? 'unit' : 'building');
     }
     setCurrentUnitLabel(null);
-    setCoopUnitContext(null);
+    // Only reset co-op unit context if BBL changes (not on initial mount if URL has unitContext)
+    if (!unitContextParam) {
+      setCoopUnitContext(null);
+    }
   }, [bbl, isUnitLot, isCoop]);
+  
+  // Sync co-op unit context from URL on external navigation (back/forward)
+  useEffect(() => {
+    if (isCoop && unitContextParam !== coopUnitContext) {
+      setCoopUnitContext(unitContextParam);
+    }
+  }, [unitContextParam, isCoop]);
+
+  // Update URL when co-op unit context changes
+  const handleCoopUnitContextChange = useCallback((unit: string | null) => {
+    setCoopUnitContext(unit);
+    
+    // Update URL with unitContext param
+    const newParams = new URLSearchParams(location.search);
+    if (unit) {
+      newParams.set('unitContext', unit);
+    } else {
+      newParams.delete('unitContext');
+    }
+    const newUrl = `${location.pathname}?${newParams.toString()}`;
+    window.history.replaceState(null, '', newUrl);
+  }, [location.search, location.pathname]);
   
   // Update debug context whenever context changes
   useEffect(() => {
@@ -210,7 +236,7 @@ export default function Results() {
                 isCondoUnit={hasCondoUnits && isUnitLot && !isCoop}
                 isCoop={isCoop}
                 coopUnitContext={coopUnitContext}
-                onCoopUnitContextChange={isCoop ? setCoopUnitContext : undefined}
+                onCoopUnitContextChange={isCoop ? handleCoopUnitContextChange : undefined}
                 scope={scope}
                 onScopeChange={setScope}
               />
