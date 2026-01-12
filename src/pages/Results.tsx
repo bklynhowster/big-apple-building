@@ -3,6 +3,7 @@ import { useLocation, Link } from 'react-router-dom';
 import { ArrowLeft, AlertCircle } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
 import { Footer } from '@/components/layout/Footer';
+import { PropertyOverview } from '@/components/results/PropertyOverview';
 import { SummaryTab } from '@/components/results/SummaryTab';
 import { ViolationsTab } from '@/components/results/ViolationsTab';
 import { ECBTab } from '@/components/results/ECBTab';
@@ -31,6 +32,8 @@ export default function Results() {
   const address = params.get('address') || '';
   const borough = params.get('borough') || '';
   const bin = params.get('bin') || '';
+  const latitude = params.get('lat') ? parseFloat(params.get('lat')!) : undefined;
+  const longitude = params.get('lon') ? parseFloat(params.get('lon')!) : undefined;
 
   const isValidBBL = bbl.length === 10;
 
@@ -71,17 +74,15 @@ export default function Results() {
           {/* Results - render tabs only when we have a valid BBL */}
           {isValidBBL && (
             <div className="space-y-6">
-              {/* Property Header */}
-              <div className="bg-card border border-border rounded-lg p-4">
-                {address && (
-                  <h1 className="text-xl font-semibold text-foreground">{address}</h1>
-                )}
-                <div className="flex flex-wrap gap-4 mt-2 text-sm text-muted-foreground">
-                  {borough && <span>{borough}</span>}
-                  <span className="font-mono">BBL: {bbl}</span>
-                  {bin && <span className="font-mono">BIN: {bin}</span>}
-                </div>
-              </div>
+              {/* Property Overview */}
+              <PropertyOverview
+                bbl={bbl}
+                address={address}
+                borough={borough}
+                bin={bin}
+                latitude={latitude}
+                longitude={longitude}
+              />
 
               <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
                 <TabsList className="w-full justify-start bg-card border-b border-border rounded-none h-auto p-0 flex-wrap">

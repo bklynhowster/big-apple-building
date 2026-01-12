@@ -22,7 +22,9 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { AlertCircle, ChevronLeft, ChevronRight, ChevronDown, ChevronUp } from 'lucide-react';
+import { AlertCircle, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Download } from 'lucide-react';
+import { exportToCSV, SAFETY_COLUMNS } from '@/lib/csv-export';
+import { toast } from '@/hooks/use-toast';
 
 interface SafetyTabProps {
   bbl: string;
@@ -129,6 +131,18 @@ export function SafetyTab({ bbl }: SafetyTabProps) {
   const items = data?.items || [];
   const totalApprox = data?.totalApprox || 0;
 
+  const handleExportCSV = () => {
+    if (items.length === 0) return;
+    exportToCSV(items as unknown as Record<string, unknown>[], {
+      filename: `safety_violations_${bbl}_${new Date().toISOString().split('T')[0]}.csv`,
+      columns: SAFETY_COLUMNS,
+    });
+    toast({
+      title: 'Export complete',
+      description: `Exported ${items.length} safety violations to CSV`,
+    });
+  };
+
   return (
     <div className="space-y-4">
       {/* Filters */}
@@ -170,11 +184,23 @@ export function SafetyTab({ bbl }: SafetyTabProps) {
         </div>
       </div>
 
-      {/* Results count */}
-      <p className="text-sm text-muted-foreground">
-        Showing {items.length} of {totalApprox} safety violations
-        {loading && ' (updating...)'}
-      </p>
+      {/* Results count with Export */}
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-muted-foreground">
+          Showing {items.length} of {totalApprox} safety violations
+          {loading && ' (updating...)'}
+        </p>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={handleExportCSV}
+          disabled={items.length === 0 || loading}
+          className="gap-1.5"
+        >
+          <Download className="h-3.5 w-3.5" />
+          Export CSV
+        </Button>
+      </div>
 
       {/* Empty State */}
       {items.length === 0 && !loading && (

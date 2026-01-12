@@ -163,3 +163,32 @@
     background-color: hsl(var(--info));
   }
 }
+
+/* Print styles for reports */
+@media print {
+  body {
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+  
+  .print\\:hidden {
+    display: none !important;
+  }
+  
+  .print\\:block {
+    display: block !important;
+  }
+  
+  header, footer, nav {
+    display: none !important;
+  }
+  
+  main {
+    padding: 0 !important;
+  }
+  
+  .container {
+    max-width: 100% !important;
+    padding: 1rem !important;
+  }
+}
