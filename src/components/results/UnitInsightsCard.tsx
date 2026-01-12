@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { Eye, Info, Users, AlertTriangle, Phone, FileText, ExternalLink, ChevronDown, ChevronUp, X, Shield, Loader2, RefreshCw, Pause } from 'lucide-react';
+import { useMemo, useState, useCallback } from 'react';
+import { Eye, Info, Users, AlertTriangle, Phone, FileText, ExternalLink, ChevronDown, ChevronUp, X, Shield, Loader2, RefreshCw, Pause, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -30,6 +30,113 @@ import type { UnitFromFilings, FilingReference, JobFilingRecord } from '@/hooks/
 import type { ViolationRecord } from '@/hooks/useViolations';
 import type { ECBRecord } from '@/hooks/useECB';
 import type { PermitRecord } from '@/hooks/usePermits';
+
+// ============================================================================
+// SORTING TYPES & HELPERS
+// ============================================================================
+
+type SortField = 'unit' | 'lastActivity' | 'totalMentions';
+type SortDirection = 'asc' | 'desc';
+
+interface SortConfig {
+  field: SortField;
+  direction: SortDirection;
+}
+
+// Special unit patterns that should sort last
+const SPECIAL_UNITS = ['PH', 'PHA', 'PHB', 'PHC', 'PHD', 'PENTHOUSE', 'BSMT', 'BASEMENT', 'G', 'GF', 'GND', 'GROUND', 'L', 'LL', 'LOWER', 'R', 'REAR', 'ROOF', 'STORE', 'COMMERCIAL'];
+
+/**
+ * Parse a unit string into components for natural sorting.
+ * Handles patterns like: 1, 1A, 2, 2A, 2B, 10, 10A, PH, PHA, BSMT, etc.
+ */
+function parseUnitForSort(unit: string): { isSpecial: boolean; numericPart: number; alphaPart: string; original: string } {
+  const upperUnit = unit.toUpperCase().trim();
+  
+  // Check if it's a special unit
+  const isSpecial = SPECIAL_UNITS.some(s => upperUnit === s || upperUnit.startsWith(s));
+  
+  // Extract numeric and alpha parts
+  const match = upperUnit.match(/^(\d+)([A-Z]*)$/);
+  if (match) {
+    return {
+      isSpecial: false,
+      numericPart: parseInt(match[1], 10),
+      alphaPart: match[2] || '',
+      original: upperUnit
+    };
+  }
+  
+  // For special units or non-standard formats
+  return {
+    isSpecial,
+    numericPart: isSpecial ? Number.MAX_SAFE_INTEGER : 0,
+    alphaPart: upperUnit,
+    original: upperUnit
+  };
+}
+
+/**
+ * Compare two units using natural sort order:
+ * - Numeric units first (1, 2, 3...)
+ * - Alpha suffixes within same number (1A < 1B < 2)
+ * - Special units (PH, BSMT, etc.) last
+ */
+function compareUnitsNatural(a: string, b: string): number {
+  const parsedA = parseUnitForSort(a);
+  const parsedB = parseUnitForSort(b);
+  
+  // Special units always sort last
+  if (parsedA.isSpecial && !parsedB.isSpecial) return 1;
+  if (!parsedA.isSpecial && parsedB.isSpecial) return -1;
+  
+  // Both special - sort alphabetically
+  if (parsedA.isSpecial && parsedB.isSpecial) {
+    return parsedA.original.localeCompare(parsedB.original);
+  }
+  
+  // Compare numeric parts first
+  if (parsedA.numericPart !== parsedB.numericPart) {
+    return parsedA.numericPart - parsedB.numericPart;
+  }
+  
+  // Same number - compare alpha suffixes
+  return parsedA.alphaPart.localeCompare(parsedB.alphaPart);
+}
+
+/**
+ * Sort combined unit stats based on sort config
+ */
+function sortUnitStats(stats: CombinedUnitStats[], config: SortConfig): CombinedUnitStats[] {
+  const sorted = [...stats].sort((a, b) => {
+    let comparison = 0;
+    
+    switch (config.field) {
+      case 'unit':
+        comparison = compareUnitsNatural(a.unit, b.unit);
+        break;
+      
+      case 'lastActivity':
+        // Null dates sort last in descending, first in ascending
+        if (!a.lastActivity && !b.lastActivity) comparison = 0;
+        else if (!a.lastActivity) comparison = 1; // a has no date, goes last
+        else if (!b.lastActivity) comparison = -1; // b has no date, goes last
+        else comparison = a.lastActivity.getTime() - b.lastActivity.getTime();
+        break;
+      
+      case 'totalMentions':
+        const totalA = a.filingsCount + a.hpdCount + a.threeOneOneCount + a.dobViolationsCount + a.ecbViolationsCount + a.permitsCount;
+        const totalB = b.filingsCount + b.hpdCount + b.threeOneOneCount + b.dobViolationsCount + b.ecbViolationsCount + b.permitsCount;
+        comparison = totalA - totalB;
+        break;
+    }
+    
+    // Apply direction
+    return config.direction === 'desc' ? -comparison : comparison;
+  });
+  
+  return sorted;
+}
 
 interface UnitInsightsCardProps {
   buildingBbl: string;
@@ -1106,6 +1213,12 @@ export function UnitInsightsCard({
 }: UnitInsightsCardProps) {
   const [evidenceUnit, setEvidenceUnit] = useState<string | null>(null);
   const [evidenceStats, setEvidenceStats] = useState<CombinedUnitStats | null>(null);
+  
+  // Sorting state - default to Last Activity descending
+  const [sortConfig, setSortConfig] = useState<SortConfig>({
+    field: 'lastActivity',
+    direction: 'desc'
+  });
 
   // Use the new progressive loading hook
   // Map the prop interface to the hook's expected interface
@@ -1150,6 +1263,11 @@ export function UnitInsightsCard({
     hookLoadingStates
   );
 
+  // Sorted stats based on current sort config
+  const sortedStats = useMemo(() => {
+    return sortUnitStats(combinedStats, sortConfig);
+  }, [combinedStats, sortConfig]);
+
   const hasData = combinedStats.length > 0;
   const hasFilingsData = dobFilingsUnits.length > 0;
   const showScanningStatus = isScanning || isPaused || isCached;
@@ -1157,6 +1275,29 @@ export function UnitInsightsCard({
   const handleViewEvidence = (stat: CombinedUnitStats) => {
     setEvidenceUnit(stat.unit);
     setEvidenceStats(stat);
+  };
+
+  // Toggle sort for a field
+  const handleSort = useCallback((field: SortField) => {
+    setSortConfig(prev => {
+      if (prev.field === field) {
+        // Toggle direction
+        return { field, direction: prev.direction === 'asc' ? 'desc' : 'asc' };
+      }
+      // New field - use sensible default direction
+      const defaultDirection: SortDirection = field === 'unit' ? 'asc' : 'desc';
+      return { field, direction: defaultDirection };
+    });
+  }, []);
+
+  // Get sort icon for a field
+  const getSortIcon = (field: SortField) => {
+    if (sortConfig.field !== field) {
+      return <ArrowUpDown className="h-3.5 w-3.5 text-muted-foreground/50" />;
+    }
+    return sortConfig.direction === 'asc' 
+      ? <ArrowUp className="h-3.5 w-3.5" />
+      : <ArrowDown className="h-3.5 w-3.5" />;
   };
 
   return (
@@ -1274,7 +1415,17 @@ export function UnitInsightsCard({
               <Table>
                 <TableHeader>
                   <TableRow className="bg-amber-100/50 dark:bg-amber-900/30">
-                    <TableHead className="font-semibold">Mentioned Unit</TableHead>
+                    {/* Sortable: Mentioned Unit */}
+                    <TableHead className="font-semibold">
+                      <button
+                        onClick={() => handleSort('unit')}
+                        className="flex items-center gap-1.5 hover:text-foreground transition-colors"
+                        title="Sort by unit (natural order: 1, 1A, 2, 2B, ... PH, BSMT)"
+                      >
+                        Mentioned Unit
+                        {getSortIcon('unit')}
+                      </button>
+                    </TableHead>
                     <TableHead className="text-center">
                       <TooltipProvider>
                         <Tooltip>
@@ -1314,6 +1465,26 @@ export function UnitInsightsCard({
                         </Tooltip>
                       </TooltipProvider>
                     </TableHead>
+                    {/* Sortable: Total Mentions */}
+                    <TableHead className="text-center">
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <button
+                              onClick={() => handleSort('totalMentions')}
+                              className="flex items-center justify-center gap-1 hover:text-foreground transition-colors"
+                              title="Sort by total mentions (DOB + HPD + 311 + Violations + Permits)"
+                            >
+                              Total
+                              {getSortIcon('totalMentions')}
+                            </button>
+                          </TooltipTrigger>
+                          <TooltipContent className="max-w-xs">
+                            <p>Total mentions across all record types (DOB filings, HPD, 311, Violations, Permits). Click to sort.</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    </TableHead>
                     <TableHead className="text-center w-16">
                       <TooltipProvider>
                         <Tooltip>
@@ -1327,12 +1498,22 @@ export function UnitInsightsCard({
                       </TooltipProvider>
                     </TableHead>
                     <TableHead className="min-w-[120px]">Referenced In</TableHead>
-                    <TableHead>Last Activity</TableHead>
+                    {/* Sortable: Last Activity */}
+                    <TableHead>
+                      <button
+                        onClick={() => handleSort('lastActivity')}
+                        className="flex items-center gap-1.5 hover:text-foreground transition-colors"
+                        title="Sort by last activity date"
+                      >
+                        Last Activity
+                        {getSortIcon('lastActivity')}
+                      </button>
+                    </TableHead>
                     <TableHead className="text-right">Action</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {combinedStats.map((stat) => (
+                  {sortedStats.map((stat) => (
                     <TableRow 
                       key={stat.unit}
                       className={`
@@ -1389,6 +1570,20 @@ export function UnitInsightsCard({
                         ) : (
                           <span className="text-muted-foreground">-</span>
                         )}
+                      </TableCell>
+                      {/* Total Mentions */}
+                      <TableCell className="text-center">
+                        {(() => {
+                          const total = stat.filingsCount + stat.hpdCount + stat.threeOneOneCount + 
+                            stat.dobViolationsCount + stat.ecbViolationsCount + stat.permitsCount;
+                          return total > 0 ? (
+                            <Badge variant="secondary" className="font-mono font-semibold">
+                              {total}
+                            </Badge>
+                          ) : (
+                            <span className="text-muted-foreground">-</span>
+                          );
+                        })()}
                       </TableCell>
                       {/* Confidence indicator */}
                       <TableCell className="text-center">
