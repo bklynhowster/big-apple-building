@@ -1,29 +1,35 @@
 import { useEffect, useState } from "react";
+import { getLandmarkStatus, type LandmarkResult } from "@/lib/landmarks";
 
 export interface LandmarkStatus {
   isLoading: boolean;
-  isLandmarked: boolean | null;   // null = unknown
-  source: "LPC" | "N/A" | "error";
-  designation?: string;           // optional text like "Individual Landmark" if available
+  status: 'yes' | 'no' | 'unknown';
+  isIndividual: boolean;
+  isHistoricDistrict: boolean;
+  individualName?: string;
+  individualDate?: string;
+  districtName?: string;
   error?: string;
 }
 
 export function useLandmarkStatus(params: {
   bbl?: string | number;
-  bin?: string | number;
+  lat?: number;
+  lon?: number;
 }): LandmarkStatus {
   const [state, setState] = useState<LandmarkStatus>({
     isLoading: false,
-    isLandmarked: null,
-    source: "N/A",
+    status: 'unknown',
+    isIndividual: false,
+    isHistoricDistrict: false,
   });
 
   useEffect(() => {
-    const { bbl, bin } = params;
-    const hasBbl = bbl !== undefined && bbl !== null && bbl !== "";
-    const hasBin = bin !== undefined && bin !== null && bin !== "";
+    const { bbl, lat, lon } = params;
+    const bblStr = bbl?.toString() ?? "";
+    const hasBbl = bblStr.length === 10;
     
-    if (!hasBbl && !hasBin) return;
+    if (!hasBbl) return;
 
     let cancelled = false;
 
@@ -31,29 +37,31 @@ export function useLandmarkStatus(params: {
       setState(s => ({ ...s, isLoading: true, error: undefined }));
 
       try {
-        // TODO: Implement actual landmark lookup here
-        // Options:
-        // 1. Call NYC LPC API directly via edge function
-        // 2. Query NYC Open Data Landmarks dataset
-        // 3. Use a cached landmarks table in Supabase
-        //
-        // For now, return "unknown" status to avoid build breaks
-        
+        const result: LandmarkResult = await getLandmarkStatus({
+          bbl: bblStr,
+          lat,
+          lon,
+        });
+
         if (cancelled) return;
 
-        // STUB: Always return unknown status
         setState({
           isLoading: false,
-          isLandmarked: null,
-          source: "N/A",
+          status: result.status,
+          isIndividual: result.isIndividual,
+          isHistoricDistrict: result.isHistoricDistrict,
+          individualName: result.individualName,
+          individualDate: result.individualDate,
+          districtName: result.districtName,
         });
       } catch (e: unknown) {
         if (cancelled) return;
         const message = e instanceof Error ? e.message : "Failed to check landmark status";
         setState({
           isLoading: false,
-          isLandmarked: null,
-          source: "error",
+          status: 'unknown',
+          isIndividual: false,
+          isHistoricDistrict: false,
           error: message,
         });
       }
@@ -64,7 +72,7 @@ export function useLandmarkStatus(params: {
     return () => {
       cancelled = true;
     };
-  }, [params.bbl, params.bin]);
+  }, [params.bbl, params.lat, params.lon]);
 
   return state;
 }

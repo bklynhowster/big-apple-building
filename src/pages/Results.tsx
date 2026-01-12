@@ -89,7 +89,7 @@ export default function Results() {
   const permitsHook = usePermits(isCoop && isValidBBL ? bbl : null);
   
   // Landmark status lookup
-  const landmarkStatus = useLandmarkStatus({ bbl, bin });
+  const landmarkStatus = useLandmarkStatus({ bbl, lat: latitude, lon: longitude });
   
   // Track if we've fetched data for insights
   const insightsFetchedRef = useRef(false);
@@ -304,25 +304,44 @@ export default function Results() {
                 onScopeChange={setScope}
               />
 
-              {/* Landmark Badge */}
+              {/* Landmark Badge with Tooltip */}
               {!landmarkStatus.isLoading && (
-                <>
-                  {landmarkStatus.isLandmarked === true && (
-                    <span className="inline-flex items-center rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
-                      Landmarked
+                <div className="flex items-center gap-2">
+                  {landmarkStatus.status === 'yes' && (
+                    <div className="group relative">
+                      <span className="inline-flex items-center rounded-full border border-primary/30 bg-primary/10 px-2.5 py-0.5 text-xs font-medium text-primary cursor-help">
+                        Landmark: Yes
+                      </span>
+                      {(landmarkStatus.individualName || landmarkStatus.districtName) && (
+                        <div className="absolute left-0 top-full mt-1 z-50 hidden group-hover:block w-64 p-2 bg-popover border rounded-md shadow-lg text-xs">
+                          {landmarkStatus.isIndividual && landmarkStatus.individualName && (
+                            <div className="mb-1">
+                              <span className="font-medium">Individual Landmark:</span> {landmarkStatus.individualName}
+                              {landmarkStatus.individualDate && (
+                                <span className="text-muted-foreground"> (Designated {landmarkStatus.individualDate})</span>
+                              )}
+                            </div>
+                          )}
+                          {landmarkStatus.isHistoricDistrict && landmarkStatus.districtName && (
+                            <div>
+                              <span className="font-medium">Historic District:</span> {landmarkStatus.districtName}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {landmarkStatus.status === 'no' && !landmarkStatus.error && (
+                    <span className="inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium text-muted-foreground">
+                      Landmark: No
                     </span>
                   )}
-                  {landmarkStatus.isLandmarked === false && !landmarkStatus.error && (
-                    <span className="inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium text-muted-foreground">
-                      Not landmarked
-                    </span>
-                  )}
-                  {landmarkStatus.isLandmarked === null && !landmarkStatus.error && (
-                    <span className="inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium text-muted-foreground">
+                  {landmarkStatus.status === 'unknown' && (
+                    <span className="inline-flex items-center rounded-full border border-destructive/30 px-2.5 py-0.5 text-xs font-medium text-muted-foreground">
                       Landmark: Unknown
                     </span>
                   )}
-                </>
+                </div>
               )}
 
               {/* Property Profile */}
