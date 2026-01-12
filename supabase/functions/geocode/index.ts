@@ -6,6 +6,61 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// ============ Inline Shared Utilities ============
+function generateRequestId(): string {
+  return `${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 10)}`;
+}
+
+interface RequestContext { requestId: string; endpoint: string; startTime: number; }
+
+function createRequestContext(endpoint: string): RequestContext {
+  return { requestId: generateRequestId(), endpoint, startTime: Date.now() };
+}
+
+function logRequest(ctx: RequestContext, message: string, extra?: Record<string, unknown>) {
+  console.log(JSON.stringify({ requestId: ctx.requestId, endpoint: ctx.endpoint, durationMs: Date.now() - ctx.startTime, message, ...extra }));
+}
+
+interface StandardError { error: string; details: string; userMessage: string; requestId: string; upstream?: { service: string; status: number }; }
+
+function createErrorResponse(ctx: RequestContext, statusCode: number, error: string, details: string, userMessage: string, upstream?: { service: string; status: number }): Response {
+  const body: StandardError = { error, details, userMessage, requestId: ctx.requestId, ...(upstream && { upstream }) };
+  logRequest(ctx, `Error: ${error}`, { statusCode, upstreamStatus: upstream?.status });
+  return new Response(JSON.stringify(body), { status: statusCode, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+}
+
+const rateLimitStore = new Map<string, { count: number; windowStart: number }>();
+function checkRateLimit(ip: string): { allowed: boolean; retryAfter?: number } {
+  const now = Date.now(); const entry = rateLimitStore.get(ip);
+  if (!entry || now - entry.windowStart >= 60000) { rateLimitStore.set(ip, { count: 1, windowStart: now }); return { allowed: true }; }
+  if (entry.count >= 30) { return { allowed: false, retryAfter: Math.ceil((entry.windowStart + 60000 - now) / 1000) }; }
+  entry.count++; return { allowed: true };
+}
+
+function getClientIP(req: Request): string {
+  return req.headers.get('x-forwarded-for')?.split(',')[0].trim() || req.headers.get('x-real-ip') || 'unknown';
+}
+
+// Geoclient cache (24 hours for address lookups)
+const geoclientCache = new Map<string, { data: unknown; expiresAt: number }>();
+const GEOCLIENT_CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
+
+function getGeoclientCached<T>(key: string): T | null {
+  const entry = geoclientCache.get(key);
+  if (!entry || entry.expiresAt < Date.now()) { if (entry) geoclientCache.delete(key); return null; }
+  return entry.data as T;
+}
+
+function setGeoclientCache<T>(key: string, data: T): void {
+  geoclientCache.set(key, { data, expiresAt: Date.now() + GEOCLIENT_CACHE_TTL });
+  // Limit cache size
+  if (geoclientCache.size > 500) {
+    const oldest = geoclientCache.keys().next().value;
+    if (oldest) geoclientCache.delete(oldest);
+  }
+}
+// ============ End Shared Utilities ============
+
 const GEOCLIENT_APP_ID = Deno.env.get('GEOCLIENT_APP_ID') || '';
 const GEOCLIENT_APP_KEY = Deno.env.get('GEOCLIENT_APP_KEY') || '';
 
@@ -438,17 +493,30 @@ serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
+  const ctx = createRequestContext('geocode');
+
   try {
+    // Rate limiting
+    const clientIP = getClientIP(req);
+    const rateLimit = checkRateLimit(clientIP);
+    if (!rateLimit.allowed) {
+      return new Response(JSON.stringify({
+        error: 'Rate limit exceeded',
+        details: `Too many requests. Please wait ${rateLimit.retryAfter} seconds.`,
+        userMessage: 'You\'re making too many requests. Please wait a moment and try again.',
+        requestId: ctx.requestId,
+      }), {
+        status: 429,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json', 'Retry-After': String(rateLimit.retryAfter) },
+      });
+    }
+
     const url = new URL(req.url);
     const params = url.searchParams;
     const searchType = params.get('type');
 
     if (!GEOCLIENT_APP_KEY) {
-      console.error('Missing GEOCLIENT_APP_KEY');
-      return new Response(
-        JSON.stringify({ error: 'Geoclient API not configured', details: 'Missing API key' }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return createErrorResponse(ctx, 500, 'Configuration error', 'Geoclient API not configured', 'The geocoding service is not properly configured.');
     }
 
     let propertyInfo: PropertyInfo;
@@ -594,13 +662,8 @@ serve(async (req) => {
     });
 
   } catch (error) {
-    console.error('Error in geocode function:', error);
-    return new Response(
-      JSON.stringify({ 
-        error: 'Internal server error',
-        details: error instanceof Error ? error.message : 'Unknown error'
-      }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return createErrorResponse(ctx, 500, 'Internal server error', 
+      error instanceof Error ? error.message : 'Unknown error',
+      'An unexpected error occurred. Please try again.');
   }
 });
