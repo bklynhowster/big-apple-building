@@ -12,10 +12,28 @@ import { useHPDViolations, useHPDComplaints, HPDFilters, HPDViolationRecord, HPD
 import { exportToCSV } from '@/lib/csv-export';
 import { toast } from '@/hooks/use-toast';
 import { ErrorBanner } from '@/components/ui/error-banner';
+import { RecordDetailDrawer, RecordType } from './RecordDetailDrawer';
+import { ColumnSelector, useColumnVisibility, ColumnConfig } from './ColumnSelector';
 
 interface HPDTabProps {
   bbl: string;
 }
+
+const VIOLATION_COLUMN_CONFIGS: ColumnConfig[] = [
+  { key: 'date', label: 'Date', defaultVisible: true },
+  { key: 'status', label: 'Status', defaultVisible: true },
+  { key: 'class', label: 'Class', defaultVisible: true },
+  { key: 'description', label: 'Description', defaultVisible: true },
+  { key: 'recordId', label: 'ID', defaultVisible: true },
+];
+
+const COMPLAINT_COLUMN_CONFIGS: ColumnConfig[] = [
+  { key: 'date', label: 'Date', defaultVisible: true },
+  { key: 'status', label: 'Status', defaultVisible: true },
+  { key: 'category', label: 'Category', defaultVisible: true },
+  { key: 'description', label: 'Description', defaultVisible: true },
+  { key: 'recordId', label: 'ID', defaultVisible: true },
+];
 
 function StatusBadge({ status }: { status: 'open' | 'closed' | 'unknown' }) {
   const variants: Record<string, 'destructive' | 'secondary' | 'outline'> = {
@@ -78,11 +96,20 @@ export function HPDTab({ bbl }: HPDTabProps) {
   const [activeSubTab, setActiveSubTab] = useState<'violations' | 'complaints'>('violations');
   const [fetchedTabs, setFetchedTabs] = useState<Set<string>>(new Set());
   
+  // Drawer state
+  const [selectedRecord, setSelectedRecord] = useState<HPDViolationRecord | HPDComplaintRecord | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [drawerRecordType, setDrawerRecordType] = useState<RecordType>('hpd-violation');
+  
   const violations = useHPDViolations(bbl);
   const complaints = useHPDComplaints(bbl);
 
   const [localViolationFilters, setLocalViolationFilters] = useState<HPDFilters>({ status: 'all', keyword: '' });
   const [localComplaintFilters, setLocalComplaintFilters] = useState<HPDFilters>({ status: 'all', keyword: '' });
+  
+  // Column visibility
+  const violationColumns = useColumnVisibility(VIOLATION_COLUMN_CONFIGS);
+  const complaintColumns = useColumnVisibility(COMPLAINT_COLUMN_CONFIGS);
 
   // Lazy-load: only fetch when subtab is first viewed
   useEffect(() => {
@@ -96,6 +123,18 @@ export function HPDTab({ bbl }: HPDTabProps) {
       setFetchedTabs(prev => new Set(prev).add('complaints'));
     }
   }, [bbl, activeSubTab, fetchedTabs]);
+  
+  const handleViolationRowClick = (record: HPDViolationRecord) => {
+    setSelectedRecord(record);
+    setDrawerRecordType('hpd-violation');
+    setDrawerOpen(true);
+  };
+  
+  const handleComplaintRowClick = (record: HPDComplaintRecord) => {
+    setSelectedRecord(record);
+    setDrawerRecordType('hpd-complaint');
+    setDrawerOpen(true);
+  };
 
   const renderViolationsContent = () => {
     if (violations.loading && !violations.data) return <LoadingSkeleton />;
@@ -148,9 +187,12 @@ export function HPDTab({ bbl }: HPDTabProps) {
 
         <div className="flex items-center justify-between text-sm text-muted-foreground">
           <div>Showing {items.length} of ~{violations.data?.totalApprox || 0} HPD violations</div>
-          <Button variant="outline" size="sm" onClick={() => { exportToCSV(items as unknown as Record<string, unknown>[], { filename: `hpd_violations_${bbl}.csv`, columns: HPD_COLUMNS }); toast({ title: 'Exported' }); }} disabled={items.length === 0}>
-            <Download className="h-3.5 w-3.5 mr-1" />Export
-          </Button>
+          <div className="flex items-center gap-2">
+            <ColumnSelector columns={VIOLATION_COLUMN_CONFIGS} visibleColumns={violationColumns.visibleColumns} onToggle={violationColumns.toggle} onReset={violationColumns.reset} />
+            <Button variant="outline" size="sm" onClick={() => { exportToCSV(items as unknown as Record<string, unknown>[], { filename: `hpd_violations_${bbl}.csv`, columns: HPD_COLUMNS }); toast({ title: 'Exported' }); }} disabled={items.length === 0}>
+              <Download className="h-3.5 w-3.5 mr-1" />Export
+            </Button>
+          </div>
         </div>
 
         {items.length === 0 ? (
@@ -163,23 +205,29 @@ export function HPDTab({ bbl }: HPDTabProps) {
             <Table>
               <TableHeader>
                 <TableRow className="bg-muted/50">
-                  <TableHead>Date</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Class</TableHead>
-                  <TableHead>Description</TableHead>
-                  <TableHead>ID</TableHead>
+                  {violationColumns.isVisible('date') && <TableHead>Date</TableHead>}
+                  {violationColumns.isVisible('status') && <TableHead>Status</TableHead>}
+                  {violationColumns.isVisible('class') && <TableHead>Class</TableHead>}
+                  {violationColumns.isVisible('description') && <TableHead>Description</TableHead>}
+                  {violationColumns.isVisible('recordId') && <TableHead>ID</TableHead>}
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {items.map((item, i) => (
-                  <TableRow key={`${item.recordId}-${i}`}>
-                    <TableCell className="text-sm">{item.issueDate ? new Date(item.issueDate).toLocaleDateString() : '-'}</TableCell>
-                    <TableCell><StatusBadge status={item.status} /></TableCell>
-                    <TableCell><ClassBadge violationClass={item.violationClass} /></TableCell>
-                    <TableCell className="max-w-xs">
-                      <TooltipProvider><Tooltip><TooltipTrigger asChild><span className="text-sm line-clamp-2 cursor-help">{item.description || '-'}</span></TooltipTrigger><TooltipContent className="max-w-md"><p>{item.description}</p></TooltipContent></Tooltip></TooltipProvider>
-                    </TableCell>
-                    <TableCell><span className="font-mono text-sm">{item.recordId}</span></TableCell>
+                  <TableRow 
+                    key={`${item.recordId}-${i}`}
+                    className="cursor-pointer hover:bg-muted/50"
+                    onClick={() => handleViolationRowClick(item)}
+                  >
+                    {violationColumns.isVisible('date') && <TableCell className="text-sm">{item.issueDate ? new Date(item.issueDate).toLocaleDateString() : '-'}</TableCell>}
+                    {violationColumns.isVisible('status') && <TableCell><StatusBadge status={item.status} /></TableCell>}
+                    {violationColumns.isVisible('class') && <TableCell><ClassBadge violationClass={item.violationClass} /></TableCell>}
+                    {violationColumns.isVisible('description') && (
+                      <TableCell className="max-w-xs">
+                        <TooltipProvider><Tooltip><TooltipTrigger asChild><span className="text-sm line-clamp-2 cursor-help">{item.description || '-'}</span></TooltipTrigger><TooltipContent className="max-w-md"><p>{item.description}</p></TooltipContent></Tooltip></TooltipProvider>
+                      </TableCell>
+                    )}
+                    {violationColumns.isVisible('recordId') && <TableCell><span className="font-mono text-sm">{item.recordId}</span></TableCell>}
                   </TableRow>
                 ))}
               </TableBody>
@@ -200,9 +248,12 @@ export function HPDTab({ bbl }: HPDTabProps) {
       <div className="space-y-4">
         <div className="flex items-center justify-between text-sm text-muted-foreground">
           <div>Showing {items.length} of ~{complaints.data?.totalApprox || 0} HPD complaints</div>
-          <Button variant="outline" size="sm" onClick={() => { exportToCSV(items as unknown as Record<string, unknown>[], { filename: `hpd_complaints_${bbl}.csv`, columns: HPD_COLUMNS }); toast({ title: 'Exported' }); }} disabled={items.length === 0}>
-            <Download className="h-3.5 w-3.5 mr-1" />Export
-          </Button>
+          <div className="flex items-center gap-2">
+            <ColumnSelector columns={COMPLAINT_COLUMN_CONFIGS} visibleColumns={complaintColumns.visibleColumns} onToggle={complaintColumns.toggle} onReset={complaintColumns.reset} />
+            <Button variant="outline" size="sm" onClick={() => { exportToCSV(items as unknown as Record<string, unknown>[], { filename: `hpd_complaints_${bbl}.csv`, columns: HPD_COLUMNS }); toast({ title: 'Exported' }); }} disabled={items.length === 0}>
+              <Download className="h-3.5 w-3.5 mr-1" />Export
+            </Button>
+          </div>
         </div>
 
         {items.length === 0 ? (
@@ -215,23 +266,29 @@ export function HPDTab({ bbl }: HPDTabProps) {
             <Table>
               <TableHeader>
                 <TableRow className="bg-muted/50">
-                  <TableHead>Date</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Category</TableHead>
-                  <TableHead>Description</TableHead>
-                  <TableHead>ID</TableHead>
+                  {complaintColumns.isVisible('date') && <TableHead>Date</TableHead>}
+                  {complaintColumns.isVisible('status') && <TableHead>Status</TableHead>}
+                  {complaintColumns.isVisible('category') && <TableHead>Category</TableHead>}
+                  {complaintColumns.isVisible('description') && <TableHead>Description</TableHead>}
+                  {complaintColumns.isVisible('recordId') && <TableHead>ID</TableHead>}
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {items.map((item, i) => (
-                  <TableRow key={`${item.recordId}-${i}`}>
-                    <TableCell className="text-sm">{item.issueDate ? new Date(item.issueDate).toLocaleDateString() : '-'}</TableCell>
-                    <TableCell><StatusBadge status={item.status} /></TableCell>
-                    <TableCell className="text-sm">{item.category || '-'}</TableCell>
-                    <TableCell className="max-w-xs">
-                      <TooltipProvider><Tooltip><TooltipTrigger asChild><span className="text-sm line-clamp-2 cursor-help">{item.description || '-'}</span></TooltipTrigger><TooltipContent className="max-w-md"><p>{item.description}</p></TooltipContent></Tooltip></TooltipProvider>
-                    </TableCell>
-                    <TableCell><span className="font-mono text-sm">{item.recordId}</span></TableCell>
+                  <TableRow 
+                    key={`${item.recordId}-${i}`}
+                    className="cursor-pointer hover:bg-muted/50"
+                    onClick={() => handleComplaintRowClick(item)}
+                  >
+                    {complaintColumns.isVisible('date') && <TableCell className="text-sm">{item.issueDate ? new Date(item.issueDate).toLocaleDateString() : '-'}</TableCell>}
+                    {complaintColumns.isVisible('status') && <TableCell><StatusBadge status={item.status} /></TableCell>}
+                    {complaintColumns.isVisible('category') && <TableCell className="text-sm">{item.category || '-'}</TableCell>}
+                    {complaintColumns.isVisible('description') && (
+                      <TableCell className="max-w-xs">
+                        <TooltipProvider><Tooltip><TooltipTrigger asChild><span className="text-sm line-clamp-2 cursor-help">{item.description || '-'}</span></TooltipTrigger><TooltipContent className="max-w-md"><p>{item.description}</p></TooltipContent></Tooltip></TooltipProvider>
+                      </TableCell>
+                    )}
+                    {complaintColumns.isVisible('recordId') && <TableCell><span className="font-mono text-sm">{item.recordId}</span></TableCell>}
                   </TableRow>
                 ))}
               </TableBody>
@@ -257,6 +314,14 @@ export function HPDTab({ bbl }: HPDTabProps) {
         <TabsContent value="violations" className="mt-4">{renderViolationsContent()}</TabsContent>
         <TabsContent value="complaints" className="mt-4">{renderComplaintsContent()}</TabsContent>
       </Tabs>
+      
+      {/* Record Detail Drawer */}
+      <RecordDetailDrawer
+        open={drawerOpen}
+        onOpenChange={setDrawerOpen}
+        recordType={drawerRecordType}
+        record={selectedRecord as unknown as Record<string, unknown>}
+      />
     </div>
   );
 }

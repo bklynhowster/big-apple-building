@@ -21,14 +21,36 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { AlertCircle, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Download } from 'lucide-react';
+import { AlertCircle, ChevronLeft, ChevronRight, Download } from 'lucide-react';
 import { exportToCSV, SAFETY_COLUMNS } from '@/lib/csv-export';
 import { toast } from '@/hooks/use-toast';
 import { ErrorBanner } from '@/components/ui/error-banner';
+import { RecordDetailDrawer } from './RecordDetailDrawer';
+import { ColumnSelector, useColumnVisibility, ColumnConfig } from './ColumnSelector';
 
 interface SafetyTabProps {
   bbl: string;
 }
+
+interface SafetyViolation {
+  recordType: 'Safety';
+  recordId: string;
+  status: 'open' | 'closed' | 'unknown';
+  issueDate: string | null;
+  resolvedDate: string | null;
+  category: string | null;
+  description: string | null;
+  raw: Record<string, unknown>;
+}
+
+const COLUMN_CONFIGS: ColumnConfig[] = [
+  { key: 'date', label: 'Date', defaultVisible: true },
+  { key: 'status', label: 'Status', defaultVisible: true },
+  { key: 'category', label: 'Category', defaultVisible: true },
+  { key: 'description', label: 'Description', defaultVisible: true },
+  { key: 'recordId', label: 'Record ID', defaultVisible: true },
+  { key: 'resolvedDate', label: 'Resolved Date', defaultVisible: false },
+];
 
 function StatusBadge({ status }: { status: 'open' | 'closed' | 'unknown' }) {
   const variants: Record<string, 'destructive' | 'default' | 'secondary' | 'outline'> = {
@@ -66,20 +88,24 @@ export function SafetyTab({ bbl }: SafetyTabProps) {
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
   const [offset, setOffset] = useState(0);
-  const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
   const limit = 50;
+  
+  // Drawer state
+  const [selectedRecord, setSelectedRecord] = useState<SafetyViolation | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  
+  // Column visibility
+  const { visibleColumns, toggle, reset, isVisible } = useColumnVisibility(COLUMN_CONFIGS);
 
   const { loading, error, data, refetch } = useSafety({
     bbl, limit, offset, status,
     fromDate: fromDate || undefined,
     toDate: toDate || undefined,
   });
-
-  const toggleRow = (id: string) => {
-    const newExpanded = new Set(expandedRows);
-    if (newExpanded.has(id)) newExpanded.delete(id);
-    else newExpanded.add(id);
-    setExpandedRows(newExpanded);
+  
+  const handleRowClick = (record: SafetyViolation) => {
+    setSelectedRecord(record);
+    setDrawerOpen(true);
   };
 
   const handleStatusChange = (value: string) => {
@@ -96,7 +122,7 @@ export function SafetyTab({ bbl }: SafetyTabProps) {
   if (loading && !data) return <LoadingSkeleton />;
   if (error) return <div className="space-y-4"><ErrorBanner error={error} onRetry={refetch} retrying={loading} /></div>;
 
-  const items = data?.items || [];
+  const items = (data?.items || []) as SafetyViolation[];
   const totalApprox = data?.totalApprox || 0;
 
   const handleExportCSV = () => {
@@ -134,9 +160,12 @@ export function SafetyTab({ bbl }: SafetyTabProps) {
 
       <div className="flex items-center justify-between">
         <p className="text-sm text-muted-foreground">Showing {items.length} of {totalApprox} safety violations{loading && ' (updating...)'}</p>
-        <Button variant="outline" size="sm" onClick={handleExportCSV} disabled={items.length === 0 || loading} className="gap-1.5">
-          <Download className="h-3.5 w-3.5" />Export CSV
-        </Button>
+        <div className="flex items-center gap-2">
+          <ColumnSelector columns={COLUMN_CONFIGS} visibleColumns={visibleColumns} onToggle={toggle} onReset={reset} />
+          <Button variant="outline" size="sm" onClick={handleExportCSV} disabled={items.length === 0 || loading} className="gap-1.5">
+            <Download className="h-3.5 w-3.5" />Export CSV
+          </Button>
+        </div>
       </div>
 
       {items.length === 0 && !loading && (
@@ -148,41 +177,29 @@ export function SafetyTab({ bbl }: SafetyTabProps) {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead className="w-10"></TableHead>
-                <TableHead>Date</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Category</TableHead>
-                <TableHead>Description</TableHead>
-                <TableHead>Record ID</TableHead>
+                {isVisible('date') && <TableHead>Date</TableHead>}
+                {isVisible('status') && <TableHead>Status</TableHead>}
+                {isVisible('category') && <TableHead>Category</TableHead>}
+                {isVisible('description') && <TableHead>Description</TableHead>}
+                {isVisible('recordId') && <TableHead>Record ID</TableHead>}
+                {isVisible('resolvedDate') && <TableHead>Resolved Date</TableHead>}
               </TableRow>
             </TableHeader>
             <TableBody>
-              {items.map((item) => {
-                const isExpanded = expandedRows.has(item.recordId);
-                return (
-                  <>
-                    <TableRow key={item.recordId} className="cursor-pointer hover:bg-muted/50" onClick={() => toggleRow(item.recordId)}>
-                      <TableCell>{isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}</TableCell>
-                      <TableCell className="whitespace-nowrap">{formatDate(item.issueDate)}</TableCell>
-                      <TableCell><StatusBadge status={item.status} /></TableCell>
-                      <TableCell>{item.category || 'N/A'}</TableCell>
-                      <TableCell className="max-w-xs"><span className={isExpanded ? '' : 'line-clamp-2'}>{item.description || 'No description available'}</span></TableCell>
-                      <TableCell className="font-mono text-sm">{item.recordId}</TableCell>
-                    </TableRow>
-                    {isExpanded && (
-                      <TableRow key={`${item.recordId}-details`}>
-                        <TableCell colSpan={6} className="bg-muted/30">
-                          <div className="p-4 space-y-2">
-                            <p className="text-sm"><strong>Full Description:</strong> {item.description || 'N/A'}</p>
-                            <p className="text-sm"><strong>Issue Date:</strong> {formatDate(item.issueDate)}</p>
-                            {item.resolvedDate && <p className="text-sm"><strong>Resolved Date:</strong> {formatDate(item.resolvedDate)}</p>}
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    )}
-                  </>
-                );
-              })}
+              {items.map((item) => (
+                <TableRow 
+                  key={item.recordId} 
+                  className="cursor-pointer hover:bg-muted/50"
+                  onClick={() => handleRowClick(item)}
+                >
+                  {isVisible('date') && <TableCell className="whitespace-nowrap">{formatDate(item.issueDate)}</TableCell>}
+                  {isVisible('status') && <TableCell><StatusBadge status={item.status} /></TableCell>}
+                  {isVisible('category') && <TableCell>{item.category || 'N/A'}</TableCell>}
+                  {isVisible('description') && <TableCell className="max-w-xs"><span className="line-clamp-2">{item.description || 'No description available'}</span></TableCell>}
+                  {isVisible('recordId') && <TableCell className="font-mono text-sm">{item.recordId}</TableCell>}
+                  {isVisible('resolvedDate') && <TableCell className="whitespace-nowrap">{formatDate(item.resolvedDate)}</TableCell>}
+                </TableRow>
+              ))}
             </TableBody>
           </Table>
         </div>
@@ -195,6 +212,14 @@ export function SafetyTab({ bbl }: SafetyTabProps) {
           <Button variant="outline" size="sm" onClick={() => setOffset(offset + limit)} disabled={!data?.nextOffset || loading}>Next<ChevronRight className="h-4 w-4 ml-1" /></Button>
         </div>
       )}
+      
+      {/* Record Detail Drawer */}
+      <RecordDetailDrawer
+        open={drawerOpen}
+        onOpenChange={setDrawerOpen}
+        recordType="safety"
+        record={selectedRecord as unknown as Record<string, unknown>}
+      />
     </div>
   );
 }

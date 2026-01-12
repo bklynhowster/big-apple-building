@@ -8,15 +8,25 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { Slider } from '@/components/ui/slider';
-import { use311, ServiceRequestFilters } from '@/hooks/use311';
+import { use311, ServiceRequestFilters, ServiceRequestRecord } from '@/hooks/use311';
 import { exportToCSV } from '@/lib/csv-export';
 import { toast } from '@/hooks/use-toast';
 import { ErrorBanner } from '@/components/ui/error-banner';
+import { RecordDetailDrawer } from './RecordDetailDrawer';
+import { ColumnSelector, useColumnVisibility, ColumnConfig } from './ColumnSelector';
 
 interface ThreeOneOneTabProps {
   lat?: number;
   lon?: number;
 }
+
+const COLUMN_CONFIGS: ColumnConfig[] = [
+  { key: 'date', label: 'Date', defaultVisible: true },
+  { key: 'status', label: 'Status', defaultVisible: true },
+  { key: 'type', label: 'Type', defaultVisible: true },
+  { key: 'description', label: 'Description', defaultVisible: true },
+  { key: 'agency', label: 'Agency', defaultVisible: true },
+];
 
 function StatusBadge({ status }: { status: 'open' | 'closed' | 'unknown' }) {
   const variants: Record<string, 'destructive' | 'secondary' | 'outline'> = {
@@ -68,6 +78,13 @@ export function ThreeOneOneTab({ lat, lon }: ThreeOneOneTabProps) {
     radiusMeters: 250,
     fromDate: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
   });
+  
+  // Drawer state
+  const [selectedRecord, setSelectedRecord] = useState<ServiceRequestRecord | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  
+  // Column visibility
+  const { visibleColumns, toggle, reset, isVisible } = useColumnVisibility(COLUMN_CONFIGS);
 
   useEffect(() => {
     if (lat !== undefined && lon !== undefined && !isNaN(lat) && !isNaN(lon)) {
@@ -80,6 +97,11 @@ export function ThreeOneOneTab({ lat, lon }: ThreeOneOneTabProps) {
     if (lat !== undefined && lon !== undefined) {
       fetch(lat, lon);
     }
+  };
+  
+  const handleRowClick = (record: ServiceRequestRecord) => {
+    setSelectedRecord(record);
+    setDrawerOpen(true);
   };
 
   if (!lat || !lon || isNaN(lat) || isNaN(lon)) {
@@ -149,9 +171,12 @@ export function ThreeOneOneTab({ lat, lon }: ThreeOneOneTabProps) {
 
       <div className="flex items-center justify-between text-sm text-muted-foreground">
         <div>Showing {items.length} of ~{data?.totalApprox || 0} nearby 311 requests</div>
-        <Button variant="outline" size="sm" onClick={() => { exportToCSV(items as unknown as Record<string, unknown>[], { filename: `311_requests_${lat}_${lon}.csv`, columns: COLUMNS }); toast({ title: 'Exported' }); }} disabled={items.length === 0}>
-          <Download className="h-3.5 w-3.5 mr-1" />Export
-        </Button>
+        <div className="flex items-center gap-2">
+          <ColumnSelector columns={COLUMN_CONFIGS} visibleColumns={visibleColumns} onToggle={toggle} onReset={reset} />
+          <Button variant="outline" size="sm" onClick={() => { exportToCSV(items as unknown as Record<string, unknown>[], { filename: `311_requests_${lat}_${lon}.csv`, columns: COLUMNS }); toast({ title: 'Exported' }); }} disabled={items.length === 0}>
+            <Download className="h-3.5 w-3.5 mr-1" />Export
+          </Button>
+        </div>
       </div>
 
       {items.length === 0 ? (
@@ -165,29 +190,43 @@ export function ThreeOneOneTab({ lat, lon }: ThreeOneOneTabProps) {
           <Table>
             <TableHeader>
               <TableRow className="bg-muted/50">
-                <TableHead>Date</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Type</TableHead>
-                <TableHead>Description</TableHead>
-                <TableHead>Agency</TableHead>
+                {isVisible('date') && <TableHead>Date</TableHead>}
+                {isVisible('status') && <TableHead>Status</TableHead>}
+                {isVisible('type') && <TableHead>Type</TableHead>}
+                {isVisible('description') && <TableHead>Description</TableHead>}
+                {isVisible('agency') && <TableHead>Agency</TableHead>}
               </TableRow>
             </TableHeader>
             <TableBody>
               {items.map((item, i) => (
-                <TableRow key={`${item.recordId}-${i}`}>
-                  <TableCell className="text-sm">{item.issueDate ? new Date(item.issueDate).toLocaleDateString() : '-'}</TableCell>
-                  <TableCell><StatusBadge status={item.status} /></TableCell>
-                  <TableCell className="text-sm">{item.category || '-'}</TableCell>
-                  <TableCell className="max-w-xs">
-                    <TooltipProvider><Tooltip><TooltipTrigger asChild><span className="text-sm line-clamp-2 cursor-help">{item.description || '-'}</span></TooltipTrigger><TooltipContent className="max-w-md"><p>{item.description}</p></TooltipContent></Tooltip></TooltipProvider>
-                  </TableCell>
-                  <TableCell className="text-sm">{item.agency || '-'}</TableCell>
+                <TableRow 
+                  key={`${item.recordId}-${i}`}
+                  className="cursor-pointer hover:bg-muted/50"
+                  onClick={() => handleRowClick(item)}
+                >
+                  {isVisible('date') && <TableCell className="text-sm">{item.issueDate ? new Date(item.issueDate).toLocaleDateString() : '-'}</TableCell>}
+                  {isVisible('status') && <TableCell><StatusBadge status={item.status} /></TableCell>}
+                  {isVisible('type') && <TableCell className="text-sm">{item.category || '-'}</TableCell>}
+                  {isVisible('description') && (
+                    <TableCell className="max-w-xs">
+                      <TooltipProvider><Tooltip><TooltipTrigger asChild><span className="text-sm line-clamp-2 cursor-help">{item.description || '-'}</span></TooltipTrigger><TooltipContent className="max-w-md"><p>{item.description}</p></TooltipContent></Tooltip></TooltipProvider>
+                    </TableCell>
+                  )}
+                  {isVisible('agency') && <TableCell className="text-sm">{item.agency || '-'}</TableCell>}
                 </TableRow>
               ))}
             </TableBody>
           </Table>
         </div>
       )}
+      
+      {/* Record Detail Drawer */}
+      <RecordDetailDrawer
+        open={drawerOpen}
+        onOpenChange={setDrawerOpen}
+        recordType="311"
+        record={selectedRecord as unknown as Record<string, unknown>}
+      />
     </div>
   );
 }
