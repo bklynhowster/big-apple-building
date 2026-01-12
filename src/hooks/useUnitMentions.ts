@@ -1,9 +1,8 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { 
-  extractUnitFromRecordWithTrace, 
-  getUnitStats,
+import {
+  extractUnitFromRecordWithTrace,
   type UnitConfidence,
-  type UnitType
+  type UnitType,
 } from '@/utils/unit';
 import type { HPDComplaintRecord, HPDViolationRecord } from '@/hooks/useHPD';
 import type { ServiceRequestRecord } from '@/hooks/use311';
@@ -92,6 +91,9 @@ const CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
 // Cache versioning to prevent "stuck at zero" after deployments
 const UNIT_MENTIONS_CACHE_VERSION = 3;
 const CACHE_KEY_PREFIX = `unit_mentions_cache_v${UNIT_MENTIONS_CACHE_VERSION}_`;
+
+// DEV-only debug mode (Vite-safe). Enabled only with ?debug=1.
+const DEBUG_MODE = import.meta.env.DEV && typeof window !== 'undefined' && window.location.search.includes('debug=1');
 
 // Debug stats collector
 interface DebugStats {
