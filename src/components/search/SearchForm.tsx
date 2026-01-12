@@ -24,6 +24,7 @@ const BOROUGHS: { value: Borough; label: string }[] = [
 ];
 
 const STREET_TYPES = [
+  { value: 'None', label: '(None / Already included)' },
   { value: 'St', label: 'Street (St)' },
   { value: 'Ave', label: 'Avenue (Ave)' },
   { value: 'Rd', label: 'Road (Rd)' },
@@ -37,6 +38,54 @@ const STREET_TYPES = [
   { value: 'Way', label: 'Way' },
   { value: 'Hwy', label: 'Highway (Hwy)' },
 ];
+
+// Mapping of full suffix words to abbreviations (case-insensitive)
+const SUFFIX_MAP: Record<string, string> = {
+  'street': 'St',
+  'st': 'St',
+  'avenue': 'Ave',
+  'ave': 'Ave',
+  'road': 'Rd',
+  'rd': 'Rd',
+  'boulevard': 'Blvd',
+  'blvd': 'Blvd',
+  'place': 'Pl',
+  'pl': 'Pl',
+  'drive': 'Dr',
+  'dr': 'Dr',
+  'court': 'Ct',
+  'ct': 'Ct',
+  'lane': 'Ln',
+  'ln': 'Ln',
+  'terrace': 'Ter',
+  'ter': 'Ter',
+  'parkway': 'Pkwy',
+  'pkwy': 'Pkwy',
+  'way': 'Way',
+  'highway': 'Hwy',
+  'hwy': 'Hwy',
+};
+
+// Extract suffix from street name if present
+function extractSuffix(streetName: string): { name: string; type: string } {
+  const trimmed = streetName.trim();
+  const words = trimmed.split(/\s+/);
+  
+  if (words.length < 2) {
+    return { name: trimmed, type: '' };
+  }
+  
+  const lastWord = words[words.length - 1].toLowerCase();
+  const abbreviation = SUFFIX_MAP[lastWord];
+  
+  if (abbreviation) {
+    // Remove the last word and return the abbreviation
+    const nameWithoutSuffix = words.slice(0, -1).join(' ');
+    return { name: nameWithoutSuffix, type: abbreviation };
+  }
+  
+  return { name: trimmed, type: '' };
+}
 
 export function SearchForm() {
   const navigate = useNavigate();
@@ -55,13 +104,26 @@ export function SearchForm() {
 
   const handleAddressSearch = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!houseNumber || !streetName || !streetType || !borough) return;
+    if (!houseNumber || !streetName || !borough) return;
+    
+    // Auto-detect suffix if streetType not explicitly set
+    let finalStreetName = streetName.trim();
+    let finalStreetType = streetType || 'None';
+    
+    // If no street type selected, try to extract from street name
+    if (!streetType) {
+      const extracted = extractSuffix(streetName);
+      if (extracted.type) {
+        finalStreetName = extracted.name;
+        finalStreetType = extracted.type;
+      }
+    }
     
     const params = new URLSearchParams({
       type: 'address',
       house: houseNumber,
-      streetName: streetName,
-      streetType: streetType,
+      streetName: finalStreetName,
+      streetType: finalStreetType,
       borough: borough,
     });
     navigate(`/results?${params.toString()}`);
@@ -122,7 +184,7 @@ export function SearchForm() {
                   <Label htmlFor="streetType">Street Type</Label>
                   <Select value={streetType} onValueChange={setStreetType}>
                     <SelectTrigger id="streetType">
-                      <SelectValue placeholder="Type" />
+                      <SelectValue placeholder="Type (optional)" />
                     </SelectTrigger>
                     <SelectContent>
                       {STREET_TYPES.map((st) => (
@@ -132,7 +194,7 @@ export function SearchForm() {
                       ))}
                     </SelectContent>
                   </Select>
-                  <p className="text-xs text-muted-foreground">St, Ave, Rd, etc.</p>
+                  <p className="text-xs text-muted-foreground">Select suffix or None for Broadway</p>
                 </div>
               </div>
               <div className="space-y-2">

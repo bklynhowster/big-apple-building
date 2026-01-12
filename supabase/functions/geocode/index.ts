@@ -364,9 +364,10 @@ serve(async (req) => {
       const borough = params.get('borough') || '';
 
       // Construct full street from streetName + streetType
-      const constructedStreet = streetName && streetType 
+      // If streetType is "None" or empty, use streetName only
+      const constructedStreet = streetType && streetType !== 'None'
         ? `${streetName} ${streetType}` 
-        : streetName || '';
+        : streetName;
 
       // Debug logging
       console.log(`Received params - house: "${houseNumber}", streetName: "${streetName}", streetType: "${streetType}", constructedStreet: "${constructedStreet}", borough: "${borough}"`);
