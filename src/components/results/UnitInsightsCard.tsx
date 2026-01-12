@@ -1246,6 +1246,9 @@ export function UnitInsightsCard({
     isScanning, 
     isPaused, 
     isCached,
+    allLoadingComplete,
+    totalSourceRecords,
+    debugStats,
     stopScanning, 
     refreshData 
   } = useUnitMentions(
@@ -1270,7 +1273,15 @@ export function UnitInsightsCard({
 
   const hasData = combinedStats.length > 0;
   const hasFilingsData = dobFilingsUnits.length > 0;
-  const showScanningStatus = isScanning || isPaused || isCached;
+  // Show scanning status only when actively scanning, not when all loading is done
+  const showScanningStatus = (isScanning && !allLoadingComplete) || isPaused || isCached;
+  // Determine the empty state reason
+  const emptyStateReason = useMemo(() => {
+    if (!allLoadingComplete) return null; // Still loading
+    if (hasData) return null; // Has data
+    if (totalSourceRecords === 0) return 'no_records';
+    return 'no_units_extracted';
+  }, [allLoadingComplete, hasData, totalSourceRecords]);
 
   const handleViewEvidence = (stat: CombinedUnitStats) => {
     setEvidenceUnit(stat.unit);
@@ -1382,14 +1393,33 @@ export function UnitInsightsCard({
             </AlertDescription>
           </Alert>
 
-          {/* Empty State */}
-          {!hasData && !showScanningStatus && (
+          {/* Debug line (dev only or ?debug=1) */}
+          {(process.env.NODE_ENV === 'development' || window.location.search.includes('debug=1')) && (
+            <div className="text-xs font-mono bg-muted/50 p-2 rounded border">
+              Scanned: DOB={debugStats.recordCounts.dobFilingsUnits + debugStats.recordCounts.dobPermits + debugStats.recordCounts.dobViolations} | 
+              HPD={debugStats.recordCounts.hpdViolations + debugStats.recordCounts.hpdComplaints} | 
+              311={debugStats.recordCounts.serviceRequests} | 
+              Total={debugStats.totalRecords} | 
+              Extracted units={debugStats.extractedUnits} | 
+              Loading={allLoadingComplete ? 'complete' : 'in progress'} | 
+              Stage={debugStats.stage}
+            </div>
+          )}
+
+          {/* Empty State - now more robust */}
+          {!hasData && emptyStateReason && (
             <div className="flex flex-col items-center justify-center py-8 text-center">
               <AlertTriangle className="h-10 w-10 text-muted-foreground mb-3" />
               <p className="text-foreground font-medium mb-1">No mentioned units found</p>
               <p className="text-sm text-muted-foreground max-w-md">
-                No city records (DOB filings, HPD complaints, 311 requests) explicitly mention an apartment or unit number for this building. 
-                All records are building-wide.
+                {emptyStateReason === 'no_records' ? (
+                  <>No source records scanned for this building. Data may still be loading or unavailable.</>
+                ) : (
+                  <>
+                    {totalSourceRecords} record{totalSourceRecords !== 1 ? 's' : ''} scanned, but no unit tokens were extracted. 
+                    All records are building-wide with no explicit apartment mentions.
+                  </>
+                )}
               </p>
               {dobNowUrl && (
                 <a 
@@ -1422,6 +1452,14 @@ export function UnitInsightsCard({
                   </CollapsibleContent>
                 </Collapsible>
               )}
+            </div>
+          )}
+          
+          {/* Loading state when not complete and no data yet */}
+          {!hasData && !emptyStateReason && !showScanningStatus && !allLoadingComplete && (
+            <div className="flex flex-col items-center justify-center py-8 text-center">
+              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground mb-3" />
+              <p className="text-sm text-muted-foreground">Loading unit mentions...</p>
             </div>
           )}
 
