@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { Search, X, ChevronLeft, ChevronRight, Loader2, FileX, Download, Info } from 'lucide-react';
+import { useState, useEffect, useMemo } from 'react';
+import { Search, X, ChevronLeft, ChevronRight, Loader2, FileX, Download, Info, Home, Building2 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import { useHPDViolations, useHPDComplaints, HPDFilters, HPDViolationRecord, HPDComplaintRecord } from '@/hooks/useHPD';
 import { exportToCSV } from '@/lib/csv-export';
 import { toast } from '@/hooks/use-toast';
@@ -17,6 +18,7 @@ import { ColumnSelector, useColumnVisibility, ColumnConfig } from './ColumnSelec
 import { QueriedIdentifier, DatasetCapability } from './QueriedIdentifier';
 import { QueryScope } from './ScopeSelector';
 import { BuildingLevelBanner } from './BuildingLevelBanner';
+import { filterRecordsByUnit } from '@/utils/unit';
 
 interface HPDTabProps {
   bbl: string;
@@ -24,6 +26,7 @@ interface HPDTabProps {
   scope?: QueryScope;
   isCoop?: boolean;
   coopUnitContext?: string | null;
+  onClearUnitContext?: () => void;
 }
 
 const VIOLATION_COLUMN_CONFIGS: ColumnConfig[] = [
@@ -99,7 +102,7 @@ const HPD_COLUMNS = [
   { key: 'recordId', header: 'ID' },
 ];
 
-export function HPDTab({ bbl, bin, scope = 'building', isCoop, coopUnitContext }: HPDTabProps) {
+export function HPDTab({ bbl, bin, scope = 'building', isCoop, coopUnitContext, onClearUnitContext }: HPDTabProps) {
   const [activeSubTab, setActiveSubTab] = useState<'violations' | 'complaints'>('violations');
   const [fetchedTabs, setFetchedTabs] = useState<Set<string>>(new Set());
   
@@ -117,6 +120,23 @@ export function HPDTab({ bbl, bin, scope = 'building', isCoop, coopUnitContext }
   // Column visibility
   const violationColumns = useColumnVisibility(VIOLATION_COLUMN_CONFIGS);
   const complaintColumns = useColumnVisibility(COMPLAINT_COLUMN_CONFIGS);
+
+  // Filter by unit context for co-ops (client-side filtering)
+  const filteredViolations = useMemo(() => {
+    if (!isCoop || !coopUnitContext) return violations.items;
+    return filterRecordsByUnit(
+      violations.items.map(item => ({ ...item, ...item.raw })),
+      coopUnitContext
+    ) as unknown as HPDViolationRecord[];
+  }, [violations.items, isCoop, coopUnitContext]);
+
+  const filteredComplaints = useMemo(() => {
+    if (!isCoop || !coopUnitContext) return complaints.items;
+    return filterRecordsByUnit(
+      complaints.items.map(item => ({ ...item, ...item.raw })),
+      coopUnitContext
+    ) as unknown as HPDComplaintRecord[];
+  }, [complaints.items, isCoop, coopUnitContext]);
 
   // Lazy-load: only fetch when subtab is first viewed
   useEffect(() => {
@@ -147,7 +167,7 @@ export function HPDTab({ bbl, bin, scope = 'building', isCoop, coopUnitContext }
     if (violations.loading && !violations.data) return <LoadingSkeleton />;
     if (violations.error) return <ErrorBanner error={violations.error} onRetry={violations.retry} retrying={violations.loading} />;
 
-    const items = violations.items;
+    const items = filteredViolations;
     const hasActiveFilters = localViolationFilters.status !== 'all' || localViolationFilters.keyword;
 
     return (
@@ -249,7 +269,7 @@ export function HPDTab({ bbl, bin, scope = 'building', isCoop, coopUnitContext }
     if (complaints.loading && !complaints.data) return <LoadingSkeleton />;
     if (complaints.error) return <ErrorBanner error={complaints.error} onRetry={complaints.retry} retrying={complaints.loading} />;
 
-    const items = complaints.items;
+    const items = filteredComplaints;
 
     return (
       <div className="space-y-4">
@@ -313,6 +333,42 @@ export function HPDTab({ bbl, bin, scope = 'building', isCoop, coopUnitContext }
     <div className="space-y-4">
       {/* Co-op building-level banner */}
       {isCoop && <BuildingLevelBanner coopUnitContext={coopUnitContext} compact />}
+      
+      {/* Unit context filter indicator for co-ops */}
+      {isCoop && (
+        <Alert className={coopUnitContext 
+          ? 'border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30' 
+          : 'border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/30'
+        }>
+          {coopUnitContext ? (
+            <Home className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+          ) : (
+            <Building2 className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+          )}
+          <AlertDescription className="flex items-center justify-between w-full">
+            <span className={coopUnitContext 
+              ? 'text-amber-800 dark:text-amber-200' 
+              : 'text-blue-800 dark:text-blue-200'
+            }>
+              {coopUnitContext 
+                ? <>Showing records referencing <strong>Unit {coopUnitContext}</strong> (unit-referenced)</>
+                : 'Showing building-wide records (no unit filter)'
+              }
+            </span>
+            {coopUnitContext && onClearUnitContext && (
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                onClick={onClearUnitContext}
+                className="h-6 px-2 text-xs"
+              >
+                <X className="h-3 w-3 mr-1" />
+                Clear filter
+              </Button>
+            )}
+          </AlertDescription>
+        </Alert>
+      )}
       
       {/* Queried Identifier */}
       <QueriedIdentifier

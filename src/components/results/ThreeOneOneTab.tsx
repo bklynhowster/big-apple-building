@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { Search, X, Loader2, FileX, Download, Info, MapPin } from 'lucide-react';
+import { useState, useEffect, useMemo } from 'react';
+import { Search, X, Loader2, FileX, Download, Info, MapPin, Home, Building2 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { Slider } from '@/components/ui/slider';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import { use311, ServiceRequestFilters, ServiceRequestRecord } from '@/hooks/use311';
 import { exportToCSV } from '@/lib/csv-export';
 import { toast } from '@/hooks/use-toast';
@@ -16,11 +17,16 @@ import { RecordDetailDrawer } from './RecordDetailDrawer';
 import { ColumnSelector, useColumnVisibility, ColumnConfig } from './ColumnSelector';
 import { QueriedIdentifier, DatasetCapability } from './QueriedIdentifier';
 import { QueryScope } from './ScopeSelector';
+import { BuildingLevelBanner } from './BuildingLevelBanner';
+import { filterRecordsByUnit } from '@/utils/unit';
 
 interface ThreeOneOneTabProps {
   lat?: number;
   lon?: number;
   scope?: QueryScope;
+  isCoop?: boolean;
+  coopUnitContext?: string | null;
+  onClearUnitContext?: () => void;
 }
 
 const COLUMN_CONFIGS: ColumnConfig[] = [
@@ -73,7 +79,7 @@ const COLUMNS = [
   { key: 'recordId', header: 'ID' },
 ];
 
-export function ThreeOneOneTab({ lat, lon, scope = 'building' }: ThreeOneOneTabProps) {
+export function ThreeOneOneTab({ lat, lon, scope = 'building', isCoop, coopUnitContext, onClearUnitContext }: ThreeOneOneTabProps) {
   const { loading, error, data, items, fetch, filters, setFilters, applyFilters, retry } = use311(lat, lon);
   const [localFilters, setLocalFilters] = useState<ServiceRequestFilters>({
     status: 'all',
@@ -88,6 +94,15 @@ export function ThreeOneOneTab({ lat, lon, scope = 'building' }: ThreeOneOneTabP
   
   // Column visibility
   const { visibleColumns, toggle, reset, isVisible } = useColumnVisibility(COLUMN_CONFIGS);
+
+  // Filter by unit context for co-ops (client-side filtering)
+  const filteredItems = useMemo(() => {
+    if (!isCoop || !coopUnitContext) return items;
+    return filterRecordsByUnit(
+      items.map(item => ({ ...item, ...item.raw })),
+      coopUnitContext
+    ) as unknown as ServiceRequestRecord[];
+  }, [items, isCoop, coopUnitContext]);
 
   useEffect(() => {
     if (lat !== undefined && lon !== undefined && !isNaN(lat) && !isNaN(lon)) {
@@ -124,6 +139,45 @@ export function ThreeOneOneTab({ lat, lon, scope = 'building' }: ThreeOneOneTabP
 
   return (
     <div className="space-y-4">
+      {/* Co-op building-level banner */}
+      {isCoop && <BuildingLevelBanner coopUnitContext={coopUnitContext} compact />}
+      
+      {/* Unit context filter indicator for co-ops */}
+      {isCoop && (
+        <Alert className={coopUnitContext 
+          ? 'border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30' 
+          : 'border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/30'
+        }>
+          {coopUnitContext ? (
+            <Home className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+          ) : (
+            <Building2 className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+          )}
+          <AlertDescription className="flex items-center justify-between w-full">
+            <span className={coopUnitContext 
+              ? 'text-amber-800 dark:text-amber-200' 
+              : 'text-blue-800 dark:text-blue-200'
+            }>
+              {coopUnitContext 
+                ? <>Showing records referencing <strong>Unit {coopUnitContext}</strong> (unit-referenced)</>
+                : 'Showing building-wide records (no unit filter)'
+              }
+            </span>
+            {coopUnitContext && onClearUnitContext && (
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                onClick={onClearUnitContext}
+                className="h-6 px-2 text-xs"
+              >
+                <X className="h-3 w-3 mr-1" />
+                Clear filter
+              </Button>
+            )}
+          </AlertDescription>
+        </Alert>
+      )}
+
       {/* Queried Identifier */}
       <QueriedIdentifier
         bbl=""
@@ -181,20 +235,37 @@ export function ThreeOneOneTab({ lat, lon, scope = 'building' }: ThreeOneOneTabP
       </div>
 
       <div className="flex items-center justify-between text-sm text-muted-foreground">
-        <div>Showing {items.length} of ~{data?.totalApprox || 0} nearby 311 requests</div>
+        <div>
+          Showing {filteredItems.length} of ~{data?.totalApprox || 0} nearby 311 requests
+          {isCoop && coopUnitContext && filteredItems.length !== items.length && (
+            <span className="text-amber-600 dark:text-amber-400 ml-1">
+              ({items.length} total, {filteredItems.length} unit-referenced)
+            </span>
+          )}
+        </div>
         <div className="flex items-center gap-2">
           <ColumnSelector columns={COLUMN_CONFIGS} visibleColumns={visibleColumns} onToggle={toggle} onReset={reset} />
-          <Button variant="outline" size="sm" onClick={() => { exportToCSV(items as unknown as Record<string, unknown>[], { filename: `311_requests_${lat}_${lon}.csv`, columns: COLUMNS }); toast({ title: 'Exported' }); }} disabled={items.length === 0}>
+          <Button variant="outline" size="sm" onClick={() => { exportToCSV(filteredItems as unknown as Record<string, unknown>[], { filename: `311_requests_${lat}_${lon}.csv`, columns: COLUMNS }); toast({ title: 'Exported' }); }} disabled={filteredItems.length === 0}>
             <Download className="h-3.5 w-3.5 mr-1" />Export
           </Button>
         </div>
       </div>
 
-      {items.length === 0 ? (
+      {filteredItems.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-12 text-center border rounded-lg bg-muted/20">
           <FileX className="h-12 w-12 text-muted-foreground mb-4" />
-          <p className="text-foreground font-medium mb-2">No 311 requests found nearby</p>
-          <p className="text-sm text-muted-foreground">Try expanding the radius or date range.</p>
+          <p className="text-foreground font-medium mb-2">
+            {isCoop && coopUnitContext 
+              ? `No 311 requests found referencing Unit ${coopUnitContext}` 
+              : 'No 311 requests found nearby'
+            }
+          </p>
+          <p className="text-sm text-muted-foreground">
+            {isCoop && coopUnitContext 
+              ? 'Try clearing the unit filter to see all building records.' 
+              : 'Try expanding the radius or date range.'
+            }
+          </p>
         </div>
       ) : (
         <div className="rounded-md border overflow-hidden">
@@ -209,7 +280,7 @@ export function ThreeOneOneTab({ lat, lon, scope = 'building' }: ThreeOneOneTabP
               </TableRow>
             </TableHeader>
             <TableBody>
-              {items.map((item, i) => (
+              {filteredItems.map((item, i) => (
                 <TableRow 
                   key={`${item.recordId}-${i}`}
                   className="cursor-pointer hover:bg-muted/50"
