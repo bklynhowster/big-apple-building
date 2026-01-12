@@ -11,3 +11,6 @@ verify_jwt = false
 
 [functions.dob-permits]
 verify_jwt = false
+
+[functions.dob-safety]
+verify_jwt = false
