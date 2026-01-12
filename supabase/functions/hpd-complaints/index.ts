@@ -6,9 +6,9 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-// NYC Open Data HPD Complaints dataset (uwyv-629c)
-const NYC_OPEN_DATA_BASE = 'https://data.cityofnewyork.us/resource/uwyv-629c.json';
-const NYC_OPEN_DATA_APP_TOKEN = Deno.env.get('NYC_OPEN_DATA_APP_TOKEN');
+// NYC Open Data HPD Complaints and Problems dataset (ygpa-z7cr) - PUBLIC
+// https://data.cityofnewyork.us/Housing-Development/Housing-Maintenance-Code-Complaints-and-Problems/ygpa-z7cr
+const NYC_OPEN_DATA_BASE = 'https://data.cityofnewyork.us/resource/ygpa-z7cr.json';
 
 // ============ Inline Shared Utilities ============
 
@@ -96,10 +96,12 @@ async function fetchWithRetry(url: string, options: RequestInit = {}): Promise<{
         const retryAfter = parseInt(response.headers.get('retry-after') || '60', 10);
         return { ok: false, status: 429, error: 'Rate limit exceeded', retryAfter };
       }
+      // Only retry on 5xx errors
       if (response.status >= 500 && attempt < 1) {
         await new Promise(r => setTimeout(r, 250));
         continue;
       }
+      // For 4xx errors (including 403), return immediately without retry
       return { ok: false, status: response.status, error: await response.text() };
     } catch (error) {
       if (attempt < 1) {
@@ -153,6 +155,7 @@ function parseDateToISO(dateStr: string | undefined | null): string | null {
 }
 
 function normalizeComplaint(raw: Record<string, unknown>): HPDComplaintRecord {
+  // This dataset uses "status" field with values like "CLOSE" or "OPEN"
   const statusValue = (raw.status as string || '').toLowerCase();
   
   let status: 'open' | 'closed' | 'unknown' = 'unknown';
@@ -162,26 +165,26 @@ function normalizeComplaint(raw: Record<string, unknown>): HPDComplaintRecord {
     status = 'open';
   }
 
-  // Build description from complaint type and space type
-  const complaintType = raw.complainttype as string || raw.majorcategory as string || '';
+  // Build description from major/minor category and code
+  const majorCategory = raw.majorcategory as string || '';
   const minorCategory = raw.minorcategory as string || '';
-  const spaceType = raw.spacetype as string || '';
+  const code = raw.code as string || '';
   
-  let description = complaintType;
+  let description = majorCategory;
   if (minorCategory && !description.includes(minorCategory)) {
     description = `${description} - ${minorCategory}`;
   }
-  if (spaceType) {
-    description = `[${spaceType}] ${description}`;
+  if (code) {
+    description = `[${code}] ${description}`;
   }
 
   return {
     recordType: 'HPD Complaint',
-    recordId: raw.complaintid as string || 'Unknown',
+    recordId: raw.complaintid as string || raw.problemid as string || 'Unknown',
     status,
-    issueDate: parseDateToISO(raw.receiveddate as string),
-    resolvedDate: parseDateToISO(raw.statusdate as string),
-    category: raw.majorcategory as string || raw.complainttype as string || null,
+    issueDate: parseDateToISO(raw.receiveddate as string) || parseDateToISO(raw.statusdate as string),
+    resolvedDate: status === 'closed' ? parseDateToISO(raw.statusdate as string) : null,
+    category: majorCategory || null,
     description: description || null,
     raw,
   };
@@ -193,8 +196,15 @@ serve(async (req) => {
   }
 
   const ctx = createRequestContext('hpd-complaints');
+  const NYC_OPEN_DATA_APP_TOKEN = Deno.env.get('NYC_OPEN_DATA_APP_TOKEN');
 
   try {
+    // Check for required app token
+    if (!NYC_OPEN_DATA_APP_TOKEN) {
+      return createErrorResponse(ctx, 500, 'Configuration error', 'NYC_OPEN_DATA_APP_TOKEN is not configured', 
+        'Server is missing NYC Open Data token configuration.');
+    }
+
     const clientIP = getClientIP(req);
     const rateLimit = checkRateLimit(clientIP);
     if (!rateLimit.allowed) {
@@ -230,7 +240,7 @@ serve(async (req) => {
       return createErrorResponse(ctx, 400, 'Invalid BBL', 'bbl must be exactly 10 digits', 'The property identifier (BBL) format is invalid.');
     }
 
-    // HPD complaints use boroid, block, lot
+    // This dataset uses boroid, block, lot fields
     const boroId = bbl.charAt(0);
     const block = parseInt(bbl.slice(1, 6), 10).toString();
     const lot = parseInt(bbl.slice(6, 10), 10).toString();
@@ -254,8 +264,7 @@ serve(async (req) => {
       });
     }
 
-    logRequest(ctx, 'Fetching from NYC Open Data HPD Complaints', { boroId, block, lot });
-
+    // Build SoQL query - ygpa-z7cr dataset uses boroid, block, lot
     const whereConditions: string[] = [
       `boroid='${boroId}'`,
       `block='${block}'`,
@@ -263,7 +272,7 @@ serve(async (req) => {
     ];
     if (fromDate) whereConditions.push(`receiveddate >= '${fromDate}'`);
     if (toDate) whereConditions.push(`receiveddate <= '${toDate}'`);
-    if (keyword) whereConditions.push(`upper(complainttype) like upper('%${keyword.replace(/'/g, "''")}%')`);
+    if (keyword) whereConditions.push(`(upper(majorcategory) like upper('%${keyword.replace(/'/g, "''")}%') OR upper(minorcategory) like upper('%${keyword.replace(/'/g, "''")}%'))`);
 
     const whereClause = whereConditions.join(' AND ');
     const dataUrl = new URL(NYC_OPEN_DATA_BASE);
@@ -272,18 +281,51 @@ serve(async (req) => {
     dataUrl.searchParams.set('$offset', String(offset));
     dataUrl.searchParams.set('$order', 'receiveddate DESC');
 
-    const headers: Record<string, string> = { 'Accept': 'application/json' };
-    if (NYC_OPEN_DATA_APP_TOKEN) headers['X-App-Token'] = NYC_OPEN_DATA_APP_TOKEN;
+    // DIAGNOSTIC: Log the upstream URL (without sensitive data)
+    const upstreamUrl = dataUrl.toString();
+    logRequest(ctx, 'Fetching from NYC Open Data HPD Complaints', { 
+      boroId, 
+      block, 
+      lot,
+      upstreamUrl,
+      hasAppToken: !!NYC_OPEN_DATA_APP_TOKEN
+    });
 
-    const result = await fetchWithRetry(dataUrl.toString(), { headers });
+    const headers: Record<string, string> = { 
+      'Accept': 'application/json',
+      'X-App-Token': NYC_OPEN_DATA_APP_TOKEN,
+    };
+
+    const result = await fetchWithRetry(upstreamUrl, { headers });
+
+    // DIAGNOSTIC: Log upstream status
+    logRequest(ctx, 'Upstream response received', { 
+      upstreamStatus: result.status,
+      upstreamOk: result.ok 
+    });
 
     if (!result.ok) {
-      if (result.status === 429) {
+      // Pass through the actual status code instead of wrapping everything as 502
+      const upstreamStatus = result.status;
+      
+      if (upstreamStatus === 429) {
         return createErrorResponse(ctx, 429, 'Upstream rate limit', 'NYC Open Data rate limit exceeded', 
           'The NYC data service is busy. Please try again in a moment.', { service: 'NYC Open Data', status: 429 });
       }
+      
+      if (upstreamStatus === 403) {
+        return createErrorResponse(ctx, 403, 'Access denied', result.error || 'Upstream returned 403',
+          'Access to NYC Open Data was denied. The dataset may require authentication.', { service: 'NYC Open Data', status: 403 });
+      }
+      
+      if (upstreamStatus === 404) {
+        return createErrorResponse(ctx, 404, 'Not found', result.error || 'Upstream returned 404',
+          'The requested data was not found on NYC Open Data.', { service: 'NYC Open Data', status: 404 });
+      }
+      
+      // For other errors (5xx), use 502
       return createErrorResponse(ctx, 502, 'Upstream error', result.error || 'Unknown error',
-        'Unable to retrieve HPD complaint data from NYC Open Data. Please try again later.', { service: 'NYC Open Data', status: result.status });
+        'Unable to retrieve HPD complaint data from NYC Open Data. Please try again later.', { service: 'NYC Open Data', status: upstreamStatus });
     }
 
     const rawData = result.data as Record<string, unknown>[];
