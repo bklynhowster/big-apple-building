@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef } from 'react';
+import { parseApiError, type ApiError } from '@/types/api-error';
 
 export interface ViolationRecord {
   recordType: string;
@@ -17,6 +18,7 @@ export interface ViolationsApiResponse {
   totalApprox: number;
   items: ViolationRecord[];
   nextOffset: number | null;
+  requestId?: string;
 }
 
 export interface ViolationsFilters {
@@ -28,7 +30,7 @@ export interface ViolationsFilters {
 
 export interface UseViolationsReturn {
   loading: boolean;
-  error: string | null;
+  error: ApiError | null;
   data: ViolationsApiResponse | null;
   items: ViolationRecord[];
   blocked: boolean;
@@ -40,13 +42,14 @@ export interface UseViolationsReturn {
   goToNextPage: () => void;
   goToPrevPage: () => void;
   reset: () => void;
+  retry: () => void;
 }
 
 const DEFAULT_LIMIT = 50;
 
 export function useViolations(bbl?: string | null): UseViolationsReturn {
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<ApiError | null>(null);
   const [data, setData] = useState<ViolationsApiResponse | null>(null);
   const [filters, setFilters] = useState<ViolationsFilters>({
     status: 'all',
@@ -63,7 +66,6 @@ export function useViolations(bbl?: string | null): UseViolationsReturn {
   const blocked = !bbl || bbl.length !== 10;
 
   const fetchViolations = useCallback(async (targetBBL: string, targetOffset = 0, targetFilters?: ViolationsFilters) => {
-    // Hard gate: never fetch unless we have a valid 10-digit BBL
     if (!targetBBL || targetBBL.length !== 10) return;
 
     setLoading(true);
@@ -73,31 +75,21 @@ export function useViolations(bbl?: string | null): UseViolationsReturn {
     const filtersToUse = targetFilters || appliedFilters;
 
     try {
-      // Build query params
       const queryParams: Record<string, string> = {
         bbl: targetBBL,
         limit: String(DEFAULT_LIMIT),
         offset: String(targetOffset),
       };
 
-      if (filtersToUse.status !== 'all') {
-        queryParams.status = filtersToUse.status;
-      }
-      if (filtersToUse.fromDate) {
-        queryParams.fromDate = filtersToUse.fromDate;
-      }
-      if (filtersToUse.toDate) {
-        queryParams.toDate = filtersToUse.toDate;
-      }
-      if (filtersToUse.keyword) {
-        queryParams.q = filtersToUse.keyword;
-      }
+      if (filtersToUse.status !== 'all') queryParams.status = filtersToUse.status;
+      if (filtersToUse.fromDate) queryParams.fromDate = filtersToUse.fromDate;
+      if (filtersToUse.toDate) queryParams.toDate = filtersToUse.toDate;
+      if (filtersToUse.keyword) queryParams.q = filtersToUse.keyword;
 
       const baseUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/dob-violations`;
       const urlParams = new URLSearchParams(queryParams);
       const fullUrl = `${baseUrl}?${urlParams.toString()}`;
 
-      // Temporary diagnostics: log the actual request URL once per unique URL
       if (!loggedUrlsRef.current.has(fullUrl)) {
         console.log('[useViolations] fetching:', fullUrl);
         loggedUrlsRef.current.add(fullUrl);
@@ -112,8 +104,10 @@ export function useViolations(bbl?: string | null): UseViolationsReturn {
       });
 
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || errorData.details || `HTTP ${response.status}`);
+        const apiError = await parseApiError(response);
+        setError(apiError);
+        setData(null);
+        return;
       }
 
       const result: ViolationsApiResponse = await response.json();
@@ -121,7 +115,12 @@ export function useViolations(bbl?: string | null): UseViolationsReturn {
       setOffset(targetOffset);
     } catch (err) {
       console.error('Error fetching violations:', err);
-      setError(err instanceof Error ? err.message : 'Failed to fetch violations');
+      setError({
+        error: 'Network error',
+        details: err instanceof Error ? err.message : 'Unknown error',
+        userMessage: 'Unable to connect to the server. Please check your connection and try again.',
+        requestId: 'unknown',
+      });
       setData(null);
     } finally {
       setLoading(false);
@@ -157,16 +156,17 @@ export function useViolations(bbl?: string | null): UseViolationsReturn {
     setError(null);
   }, []);
 
-  const derivedLoading = blocked ? false : loading;
-  const derivedError = blocked ? null : error;
-  const derivedData = blocked ? null : data;
-  const derivedItems = blocked ? [] : (data?.items || []);
+  const retry = useCallback(() => {
+    if (currentBBL) {
+      fetchViolations(currentBBL, offset, appliedFilters);
+    }
+  }, [currentBBL, offset, appliedFilters, fetchViolations]);
 
   return {
-    loading: derivedLoading,
-    error: derivedError,
-    data: derivedData,
-    items: derivedItems,
+    loading: blocked ? false : loading,
+    error: blocked ? null : error,
+    data: blocked ? null : data,
+    items: blocked ? [] : (data?.items || []),
     blocked,
     filters,
     offset: blocked ? 0 : offset,
@@ -176,5 +176,6 @@ export function useViolations(bbl?: string | null): UseViolationsReturn {
     goToNextPage,
     goToPrevPage,
     reset,
+    retry,
   };
 }
