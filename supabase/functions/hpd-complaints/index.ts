@@ -7,7 +7,10 @@ const corsHeaders = {
 };
 
 // NYC Open Data HPD Complaints and Problems dataset (ygpa-z7cr) - PUBLIC
-// https://data.cityofnewyork.us/Housing-Development/Housing-Maintenance-Code-Complaints-and-Problems/ygpa-z7cr
+// Schema verified columns: complaintid, buildingid, boroughid, borough, housenumber, streetname, 
+// apartment, zip, block, lot, latitude, longitude, communityboard, status, statusdate, 
+// statusid, majorcategory, majorcategoryid, minorcategory, minorcategoryid, code, type, spacetype
+// NOTE: This dataset does NOT have a 'bbl' column, but has 'boroughid', 'block', 'lot'
 const NYC_OPEN_DATA_BASE = 'https://data.cityofnewyork.us/resource/ygpa-z7cr.json';
 
 // ============ Inline Shared Utilities ============
@@ -48,7 +51,6 @@ function createErrorResponse(ctx: RequestContext, statusCode: number, error: str
   return new Response(JSON.stringify(body), { status: statusCode, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
 }
 
-// Simple in-memory rate limiter
 const rateLimitStore = new Map<string, { count: number; windowStart: number }>();
 function checkRateLimit(ip: string, maxRequests = 30, windowMs = 60000): { allowed: boolean; retryAfter?: number } {
   const now = Date.now();
@@ -68,7 +70,6 @@ function getClientIP(req: Request): string {
   return req.headers.get('x-forwarded-for')?.split(',')[0].trim() || req.headers.get('x-real-ip') || 'unknown';
 }
 
-// Simple in-memory cache
 const cache = new Map<string, { data: unknown; expiresAt: number }>();
 const CACHE_TTL = 10 * 60 * 1000;
 
@@ -96,12 +97,10 @@ async function fetchWithRetry(url: string, options: RequestInit = {}): Promise<{
         const retryAfter = parseInt(response.headers.get('retry-after') || '60', 10);
         return { ok: false, status: 429, error: 'Rate limit exceeded', retryAfter };
       }
-      // Only retry on 5xx errors
       if (response.status >= 500 && attempt < 1) {
         await new Promise(r => setTimeout(r, 250));
         continue;
       }
-      // For 4xx errors (including 403), return immediately without retry
       return { ok: false, status: response.status, error: await response.text() };
     } catch (error) {
       if (attempt < 1) {
@@ -155,7 +154,7 @@ function parseDateToISO(dateStr: string | undefined | null): string | null {
 }
 
 function normalizeComplaint(raw: Record<string, unknown>): HPDComplaintRecord {
-  // This dataset uses "status" field with values like "CLOSE" or "OPEN"
+  // Dataset uses "status" field with values like "CLOSE" or "OPEN"
   const statusValue = (raw.status as string || '').toLowerCase();
   
   let status: 'open' | 'closed' | 'unknown' = 'unknown';
@@ -165,29 +164,44 @@ function normalizeComplaint(raw: Record<string, unknown>): HPDComplaintRecord {
     status = 'open';
   }
 
-  // Build description from major/minor category and code
+  // Build description from major/minor category
   const majorCategory = raw.majorcategory as string || '';
   const minorCategory = raw.minorcategory as string || '';
   const code = raw.code as string || '';
+  const spaceType = raw.spacetype as string || '';
   
   let description = majorCategory;
   if (minorCategory && !description.includes(minorCategory)) {
     description = `${description} - ${minorCategory}`;
   }
+  if (spaceType) {
+    description = `[${spaceType}] ${description}`;
+  }
   if (code) {
-    description = `[${code}] ${description}`;
+    description = `${description} (${code})`;
   }
 
   return {
     recordType: 'HPD Complaint',
     recordId: raw.complaintid as string || raw.problemid as string || 'Unknown',
     status,
-    issueDate: parseDateToISO(raw.receiveddate as string) || parseDateToISO(raw.statusdate as string),
+    // Use statusdate as the primary date field (verified in schema)
+    issueDate: parseDateToISO(raw.statusdate as string),
     resolvedDate: status === 'closed' ? parseDateToISO(raw.statusdate as string) : null,
     category: majorCategory || null,
     description: description || null,
     raw,
   };
+}
+
+// Parse BBL into components
+function parseBBL(bbl: string): { boroughId: string; block: string; lot: string } {
+  // BBL format: BBBBBLLLL (1 digit borough, 5 digit block, 4 digit lot)
+  const boroughId = bbl.charAt(0);
+  // Remove leading zeros for block and lot to match dataset format
+  const block = parseInt(bbl.slice(1, 6), 10).toString();
+  const lot = parseInt(bbl.slice(6, 10), 10).toString();
+  return { boroughId, block, lot };
 }
 
 serve(async (req) => {
@@ -240,10 +254,8 @@ serve(async (req) => {
       return createErrorResponse(ctx, 400, 'Invalid BBL', 'bbl must be exactly 10 digits', 'The property identifier (BBL) format is invalid.');
     }
 
-    // This dataset uses boroid, block, lot fields
-    const boroId = bbl.charAt(0);
-    const block = parseInt(bbl.slice(1, 6), 10).toString();
-    const lot = parseInt(bbl.slice(6, 10), 10).toString();
+    // Parse BBL into components
+    const { boroughId, block, lot } = parseBBL(bbl);
 
     let limit = parseInt(params.get('limit') || '50', 10);
     limit = Math.min(Math.max(1, limit), 200);
@@ -252,10 +264,10 @@ serve(async (req) => {
 
     const fromDate = params.get('fromDate');
     const toDate = params.get('toDate');
-    const status = params.get('status') || 'all';
+    const statusFilter = params.get('status') || 'all';
     const keyword = params.get('q');
 
-    const cacheKey = `hpd-complaints:${bbl}:${limit}:${offset}:${status}:${fromDate || ''}:${toDate || ''}:${keyword || ''}`;
+    const cacheKey = `hpd-complaints:${bbl}:${limit}:${offset}:${statusFilter}:${fromDate || ''}:${toDate || ''}:${keyword || ''}`;
     const cached = getCached<ApiResponse>(cacheKey);
     if (cached) {
       logRequest(ctx, 'Cache hit');
@@ -264,31 +276,38 @@ serve(async (req) => {
       });
     }
 
-    // Build SoQL query - ygpa-z7cr dataset uses boroid, block, lot
+    // Build SoQL query using verified schema columns: boroughid, block, lot
+    // Dataset ygpa-z7cr uses 'boroughid' (numeric: 1-5), 'block', 'lot'
     const whereConditions: string[] = [
-      `boroid='${boroId}'`,
+      `boroughid='${boroughId}'`,
       `block='${block}'`,
       `lot='${lot}'`,
     ];
-    if (fromDate) whereConditions.push(`receiveddate >= '${fromDate}'`);
-    if (toDate) whereConditions.push(`receiveddate <= '${toDate}'`);
-    if (keyword) whereConditions.push(`(upper(majorcategory) like upper('%${keyword.replace(/'/g, "''")}%') OR upper(minorcategory) like upper('%${keyword.replace(/'/g, "''")}%'))`);
+    
+    // Use 'statusdate' which is a verified column in this dataset
+    if (fromDate) whereConditions.push(`statusdate >= '${fromDate}'`);
+    if (toDate) whereConditions.push(`statusdate <= '${toDate}'`);
+    if (keyword) {
+      whereConditions.push(`(upper(majorcategory) like upper('%${keyword.replace(/'/g, "''")}%') OR upper(minorcategory) like upper('%${keyword.replace(/'/g, "''")}%'))`);
+    }
 
     const whereClause = whereConditions.join(' AND ');
     const dataUrl = new URL(NYC_OPEN_DATA_BASE);
     dataUrl.searchParams.set('$where', whereClause);
     dataUrl.searchParams.set('$limit', String(limit + 1));
     dataUrl.searchParams.set('$offset', String(offset));
-    dataUrl.searchParams.set('$order', 'receiveddate DESC');
+    // Use statusdate for ordering (verified column)
+    dataUrl.searchParams.set('$order', 'statusdate DESC NULLS LAST');
 
-    // DIAGNOSTIC: Log the upstream URL (without sensitive data)
     const upstreamUrl = dataUrl.toString();
-    logRequest(ctx, 'Fetching from NYC Open Data HPD Complaints', { 
-      boroId, 
-      block, 
+    
+    // Log columns being used (diagnostic)
+    logRequest(ctx, 'Building query with schema columns', { 
+      columns: ['boroughid', 'block', 'lot', 'statusdate', 'majorcategory', 'minorcategory'],
+      boroughId,
+      block,
       lot,
-      upstreamUrl,
-      hasAppToken: !!NYC_OPEN_DATA_APP_TOKEN
+      upstreamUrl
     });
 
     const headers: Record<string, string> = { 
@@ -298,24 +317,24 @@ serve(async (req) => {
 
     const result = await fetchWithRetry(upstreamUrl, { headers });
 
-    // DIAGNOSTIC: Log upstream status
-    logRequest(ctx, 'Upstream response received', { 
+    // Log upstream response status
+    logRequest(ctx, 'Upstream response', { 
       upstreamStatus: result.status,
       upstreamOk: result.ok 
     });
 
     if (!result.ok) {
-      // Pass through the actual status code instead of wrapping everything as 502
       const upstreamStatus = result.status;
       
-      if (upstreamStatus === 429) {
-        return createErrorResponse(ctx, 429, 'Upstream rate limit', 'NYC Open Data rate limit exceeded', 
-          'The NYC data service is busy. Please try again in a moment.', { service: 'NYC Open Data', status: 429 });
+      // Pass through actual status codes
+      if (upstreamStatus === 400) {
+        return createErrorResponse(ctx, 400, 'Bad request', result.error || 'Upstream returned 400',
+          'Invalid query to NYC Open Data. Please check your search parameters.', { service: 'NYC Open Data', status: 400 });
       }
       
       if (upstreamStatus === 403) {
         return createErrorResponse(ctx, 403, 'Access denied', result.error || 'Upstream returned 403',
-          'Access to NYC Open Data was denied. The dataset may require authentication.', { service: 'NYC Open Data', status: 403 });
+          'Access to NYC Open Data was denied.', { service: 'NYC Open Data', status: 403 });
       }
       
       if (upstreamStatus === 404) {
@@ -323,7 +342,12 @@ serve(async (req) => {
           'The requested data was not found on NYC Open Data.', { service: 'NYC Open Data', status: 404 });
       }
       
-      // For other errors (5xx), use 502
+      if (upstreamStatus === 429) {
+        return createErrorResponse(ctx, 429, 'Upstream rate limit', 'NYC Open Data rate limit exceeded', 
+          'The NYC data service is busy. Please try again in a moment.', { service: 'NYC Open Data', status: 429 });
+      }
+      
+      // For 5xx errors, use 502
       return createErrorResponse(ctx, 502, 'Upstream error', result.error || 'Unknown error',
         'Unable to retrieve HPD complaint data from NYC Open Data. Please try again later.', { service: 'NYC Open Data', status: upstreamStatus });
     }
@@ -333,8 +357,8 @@ serve(async (req) => {
     const dataToProcess = hasMore ? rawData.slice(0, limit) : rawData;
 
     let items = dataToProcess.map(normalizeComplaint);
-    if (status === 'open') items = items.filter(item => item.status === 'open');
-    else if (status === 'closed') items = items.filter(item => item.status === 'closed');
+    if (statusFilter === 'open') items = items.filter(item => item.status === 'open');
+    else if (statusFilter === 'closed') items = items.filter(item => item.status === 'closed');
 
     let totalApprox = items.length + offset;
     try {
