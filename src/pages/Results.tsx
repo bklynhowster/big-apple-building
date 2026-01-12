@@ -1,9 +1,8 @@
 import { useMemo, useState } from 'react';
 import { useLocation, Link } from 'react-router-dom';
-import { ArrowLeft, Loader2, AlertCircle } from 'lucide-react';
+import { ArrowLeft, AlertCircle } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
 import { Footer } from '@/components/layout/Footer';
-import { PropertyHeader } from '@/components/results/PropertyHeader';
 import { SummaryTab } from '@/components/results/SummaryTab';
 import { ViolationsTab } from '@/components/results/ViolationsTab';
 import { ECBTab } from '@/components/results/ECBTab';
@@ -12,29 +11,28 @@ import { PermitsTab } from '@/components/results/PermitsTab';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { usePropertySearch } from '@/hooks/usePropertySearch';
 
 function normalizeBBL(bbl: string | null): string {
   if (!bbl) return '';
-  return String(bbl).padStart(10, '0');
+  const padded = String(bbl).padStart(10, '0');
+  return padded.length === 10 ? padded : '';
 }
 
 export default function Results() {
   const location = useLocation();
-  const { loading, error, data } = usePropertySearch();
   const [activeTab, setActiveTab] = useState('summary');
 
+  // Read BBL directly from URL - no hooks that do async work
   const bbl = useMemo(() => {
     const raw = new URLSearchParams(location.search).get('bbl');
-    const normalized = normalizeBBL(raw);
-    return normalized.length === 10 ? normalized : '';
+    return normalizeBBL(raw);
   }, [location.search]);
+
+  const isValidBBL = bbl.length === 10;
 
   const handleTabChange = (tab: string) => {
     setActiveTab(tab);
   };
-
-  const showMissingBBL = !loading && !error && !bbl;
 
   return (
     <div className="flex flex-col min-h-screen">
@@ -52,32 +50,8 @@ export default function Results() {
             </Link>
           </div>
 
-          {/* Loading State */}
-          {loading && (
-            <Card>
-              <CardContent className="flex flex-col items-center justify-center py-16">
-                <Loader2 className="h-8 w-8 text-primary animate-spin mb-4" />
-                <p className="text-muted-foreground">Fetching property records...</p>
-              </CardContent>
-            </Card>
-          )}
-
-          {/* Error State */}
-          {error && !loading && (
-            <Card className="border-destructive/50">
-              <CardContent className="flex flex-col items-center justify-center py-16">
-                <AlertCircle className="h-8 w-8 text-destructive mb-4" />
-                <p className="text-foreground font-medium mb-2">Unable to fetch property data</p>
-                <p className="text-sm text-muted-foreground mb-4">{error}</p>
-                <Link to="/">
-                  <Button variant="outline">Return to Search</Button>
-                </Link>
-              </CardContent>
-            </Card>
-          )}
-
-          {/* Missing BBL State */}
-          {showMissingBBL && (
+          {/* Missing/Invalid BBL State */}
+          {!isValidBBL && (
             <Card className="border-destructive/50">
               <CardContent className="flex flex-col items-center justify-center py-16">
                 <AlertCircle className="h-8 w-8 text-destructive mb-4" />
@@ -90,11 +64,13 @@ export default function Results() {
             </Card>
           )}
 
-          {/* Results - render tabs as soon as we have a valid BBL */}
-          {!loading && !error && bbl && (
+          {/* Results - render tabs only when we have a valid BBL */}
+          {isValidBBL && (
             <div className="space-y-6">
-              {/* Property header is optional (may be missing after refresh) */}
-              {data?.info && <PropertyHeader info={data.info} />}
+              {/* BBL header */}
+              <div className="text-sm text-muted-foreground font-mono bg-muted/30 px-3 py-2 rounded inline-block">
+                BBL: {bbl}
+              </div>
 
               <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
                 <TabsList className="w-full justify-start bg-card border-b border-border rounded-none h-auto p-0 flex-wrap">
@@ -136,7 +112,6 @@ export default function Results() {
                       <CardContent className="p-6">
                         <SummaryTab 
                           bbl={bbl}
-                          address={data?.info?.address}
                           onTabChange={handleTabChange}
                         />
                       </CardContent>
