@@ -29,10 +29,25 @@ import { useECB, ECBFilters, ECBRecord } from '@/hooks/useECB';
 import { exportToCSV, ECB_COLUMNS } from '@/lib/csv-export';
 import { toast } from '@/hooks/use-toast';
 import { ErrorBanner } from '@/components/ui/error-banner';
+import { RecordDetailDrawer } from './RecordDetailDrawer';
+import { ColumnSelector, useColumnVisibility, ColumnConfig } from './ColumnSelector';
 
 interface ECBTabProps {
   bbl: string;
 }
+
+const COLUMN_CONFIGS: ColumnConfig[] = [
+  { key: 'issueDate', label: 'Issue Date', defaultVisible: true },
+  { key: 'status', label: 'Status', defaultVisible: true },
+  { key: 'severity', label: 'Severity', defaultVisible: true },
+  { key: 'category', label: 'Category', defaultVisible: true },
+  { key: 'description', label: 'Description', defaultVisible: true },
+  { key: 'penaltyAmount', label: 'Penalty', defaultVisible: true },
+  { key: 'balanceDue', label: 'Balance', defaultVisible: true },
+  { key: 'recordId', label: 'Record ID', defaultVisible: true },
+  { key: 'amountPaid', label: 'Amount Paid', defaultVisible: false },
+  { key: 'resolvedDate', label: 'Resolved Date', defaultVisible: false },
+];
 
 function StatusBadge({ status }: { status: ECBRecord['status'] }) {
   const variants: Record<string, 'destructive' | 'secondary' | 'outline'> = {
@@ -95,6 +110,13 @@ function formatCurrency(amount: number | null): string {
 export function ECBTab({ bbl }: ECBTabProps) {
   const { loading, error, data, filters, offset, fetchECB, setFilters, applyFilters, goToNextPage, goToPrevPage, retry } = useECB(bbl);
   const [localFilters, setLocalFilters] = useState<ECBFilters>({ status: 'all', keyword: '' });
+  
+  // Drawer state
+  const [selectedRecord, setSelectedRecord] = useState<ECBRecord | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  
+  // Column visibility
+  const { visibleColumns, toggle, reset, isVisible } = useColumnVisibility(COLUMN_CONFIGS);
 
   useEffect(() => {
     if (bbl && bbl.length === 10) fetchECB(bbl);
@@ -110,6 +132,11 @@ export function ECBTab({ bbl }: ECBTabProps) {
     const clearedFilters: ECBFilters = { status: 'all', keyword: '', fromDate: undefined, toDate: undefined };
     setLocalFilters(clearedFilters);
     setFilters(clearedFilters);
+  };
+  
+  const handleRowClick = (record: ECBRecord) => {
+    setSelectedRecord(record);
+    setDrawerOpen(true);
   };
 
   const hasActiveFilters = localFilters.status !== 'all' || localFilters.keyword || localFilters.fromDate || localFilters.toDate;
@@ -161,6 +188,7 @@ export function ECBTab({ bbl }: ECBTabProps) {
         <div>Showing {items.length} of ~{totalApprox} ECB summonses{hasActiveFilters && <span className="ml-2 text-primary">(filtered)</span>}</div>
         <div className="flex items-center gap-2">
           {loading && <Loader2 className="h-4 w-4 animate-spin" />}
+          <ColumnSelector columns={COLUMN_CONFIGS} visibleColumns={visibleColumns} onToggle={toggle} onReset={reset} />
           <Button variant="outline" size="sm" onClick={handleExportCSV} disabled={items.length === 0 || loading} className="gap-1.5"><Download className="h-3.5 w-3.5" />Export CSV</Button>
         </div>
       </div>
@@ -179,31 +207,41 @@ export function ECBTab({ bbl }: ECBTabProps) {
           <Table>
             <TableHeader>
               <TableRow className="bg-muted/50">
-                <TableHead className="font-semibold">Issue Date</TableHead>
-                <TableHead className="font-semibold">Status</TableHead>
-                <TableHead className="font-semibold">Severity</TableHead>
-                <TableHead className="font-semibold">Category</TableHead>
-                <TableHead className="font-semibold">Description</TableHead>
-                <TableHead className="font-semibold text-right">Penalty</TableHead>
-                <TableHead className="font-semibold text-right">Balance</TableHead>
-                <TableHead className="font-semibold">Record ID</TableHead>
+                {isVisible('issueDate') && <TableHead className="font-semibold">Issue Date</TableHead>}
+                {isVisible('status') && <TableHead className="font-semibold">Status</TableHead>}
+                {isVisible('severity') && <TableHead className="font-semibold">Severity</TableHead>}
+                {isVisible('category') && <TableHead className="font-semibold">Category</TableHead>}
+                {isVisible('description') && <TableHead className="font-semibold">Description</TableHead>}
+                {isVisible('penaltyAmount') && <TableHead className="font-semibold text-right">Penalty</TableHead>}
+                {isVisible('balanceDue') && <TableHead className="font-semibold text-right">Balance</TableHead>}
+                {isVisible('recordId') && <TableHead className="font-semibold">Record ID</TableHead>}
+                {isVisible('amountPaid') && <TableHead className="font-semibold text-right">Paid</TableHead>}
+                {isVisible('resolvedDate') && <TableHead className="font-semibold">Resolved</TableHead>}
               </TableRow>
             </TableHeader>
             <TableBody>
               {items.map((item, index) => (
-                <TableRow key={`${item.recordId}-${index}`}>
-                  <TableCell className="text-sm">{item.issueDate ? new Date(item.issueDate).toLocaleDateString() : '-'}</TableCell>
-                  <TableCell><StatusBadge status={item.status} /></TableCell>
-                  <TableCell><SeverityBadge severity={item.severity} /></TableCell>
-                  <TableCell className="text-sm">{item.category || '-'}</TableCell>
-                  <TableCell className="max-w-xs">
-                    {item.description ? (
-                      <TooltipProvider><Tooltip><TooltipTrigger asChild><span className="text-sm line-clamp-2 cursor-help">{item.description}</span></TooltipTrigger><TooltipContent className="max-w-md"><p>{item.description}</p></TooltipContent></Tooltip></TooltipProvider>
-                    ) : <span className="text-muted-foreground">-</span>}
-                  </TableCell>
-                  <TableCell className="text-right font-mono text-sm">{formatCurrency(item.penaltyAmount)}</TableCell>
-                  <TableCell className="text-right font-mono text-sm"><span className={item.balanceDue && item.balanceDue > 0 ? 'text-destructive font-medium' : ''}>{formatCurrency(item.balanceDue)}</span></TableCell>
-                  <TableCell><span className="font-mono text-sm">{item.recordId}</span></TableCell>
+                <TableRow 
+                  key={`${item.recordId}-${index}`}
+                  className="cursor-pointer hover:bg-muted/50"
+                  onClick={() => handleRowClick(item)}
+                >
+                  {isVisible('issueDate') && <TableCell className="text-sm">{item.issueDate ? new Date(item.issueDate).toLocaleDateString() : '-'}</TableCell>}
+                  {isVisible('status') && <TableCell><StatusBadge status={item.status} /></TableCell>}
+                  {isVisible('severity') && <TableCell><SeverityBadge severity={item.severity} /></TableCell>}
+                  {isVisible('category') && <TableCell className="text-sm">{item.category || '-'}</TableCell>}
+                  {isVisible('description') && (
+                    <TableCell className="max-w-xs">
+                      {item.description ? (
+                        <TooltipProvider><Tooltip><TooltipTrigger asChild><span className="text-sm line-clamp-2 cursor-help">{item.description}</span></TooltipTrigger><TooltipContent className="max-w-md"><p>{item.description}</p></TooltipContent></Tooltip></TooltipProvider>
+                      ) : <span className="text-muted-foreground">-</span>}
+                    </TableCell>
+                  )}
+                  {isVisible('penaltyAmount') && <TableCell className="text-right font-mono text-sm">{formatCurrency(item.penaltyAmount)}</TableCell>}
+                  {isVisible('balanceDue') && <TableCell className="text-right font-mono text-sm"><span className={item.balanceDue && item.balanceDue > 0 ? 'text-destructive font-medium' : ''}>{formatCurrency(item.balanceDue)}</span></TableCell>}
+                  {isVisible('recordId') && <TableCell><span className="font-mono text-sm">{item.recordId}</span></TableCell>}
+                  {isVisible('amountPaid') && <TableCell className="text-right font-mono text-sm">{formatCurrency(item.amountPaid)}</TableCell>}
+                  {isVisible('resolvedDate') && <TableCell className="text-sm">{item.resolvedDate ? new Date(item.resolvedDate).toLocaleDateString() : '-'}</TableCell>}
                 </TableRow>
               ))}
             </TableBody>
@@ -220,6 +258,14 @@ export function ECBTab({ bbl }: ECBTabProps) {
           </div>
         </div>
       )}
+      
+      {/* Record Detail Drawer */}
+      <RecordDetailDrawer
+        open={drawerOpen}
+        onOpenChange={setDrawerOpen}
+        recordType="ecb"
+        record={selectedRecord as unknown as Record<string, unknown>}
+      />
     </div>
   );
 }

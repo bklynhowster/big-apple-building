@@ -29,10 +29,24 @@ import { usePermits, PermitsFilters, PermitRecord } from '@/hooks/usePermits';
 import { exportToCSV, PERMITS_COLUMNS } from '@/lib/csv-export';
 import { toast } from '@/hooks/use-toast';
 import { ErrorBanner } from '@/components/ui/error-banner';
+import { RecordDetailDrawer } from './RecordDetailDrawer';
+import { ColumnSelector, useColumnVisibility, ColumnConfig } from './ColumnSelector';
 
 interface PermitsTabProps {
   bbl: string;
 }
+
+const COLUMN_CONFIGS: ColumnConfig[] = [
+  { key: 'issueDate', label: 'Issue Date', defaultVisible: true },
+  { key: 'status', label: 'Status', defaultVisible: true },
+  { key: 'permitType', label: 'Type', defaultVisible: true },
+  { key: 'workType', label: 'Work Type', defaultVisible: true },
+  { key: 'description', label: 'Description', defaultVisible: true },
+  { key: 'expirationDate', label: 'Expiration', defaultVisible: true },
+  { key: 'jobNumber', label: 'Job #', defaultVisible: true },
+  { key: 'applicantName', label: 'Applicant', defaultVisible: false },
+  { key: 'ownerName', label: 'Owner', defaultVisible: false },
+];
 
 function StatusBadge({ status }: { status: PermitRecord['status'] }) {
   const variants: Record<string, 'default' | 'secondary' | 'outline'> = { open: 'default', closed: 'secondary', unknown: 'outline' };
@@ -73,6 +87,13 @@ function LoadingSkeleton() {
 export function PermitsTab({ bbl }: PermitsTabProps) {
   const { loading, error, data, filters, offset, fetchPermits, setFilters, applyFilters, goToNextPage, goToPrevPage, retry } = usePermits(bbl);
   const [localFilters, setLocalFilters] = useState<PermitsFilters>({ status: 'all', keyword: '' });
+  
+  // Drawer state
+  const [selectedRecord, setSelectedRecord] = useState<PermitRecord | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  
+  // Column visibility
+  const { visibleColumns, toggle, reset, isVisible } = useColumnVisibility(COLUMN_CONFIGS);
 
   useEffect(() => {
     if (bbl && bbl.length === 10) fetchPermits(bbl);
@@ -88,6 +109,11 @@ export function PermitsTab({ bbl }: PermitsTabProps) {
     const clearedFilters: PermitsFilters = { status: 'all', keyword: '', fromDate: undefined, toDate: undefined };
     setLocalFilters(clearedFilters);
     setFilters(clearedFilters);
+  };
+  
+  const handleRowClick = (record: PermitRecord) => {
+    setSelectedRecord(record);
+    setDrawerOpen(true);
   };
 
   const hasActiveFilters = localFilters.status !== 'all' || localFilters.keyword || localFilters.fromDate || localFilters.toDate;
@@ -139,6 +165,7 @@ export function PermitsTab({ bbl }: PermitsTabProps) {
         <div>Showing {items.length} of ~{totalApprox} permits{hasActiveFilters && <span className="ml-2 text-primary">(filtered)</span>}</div>
         <div className="flex items-center gap-2">
           {loading && <Loader2 className="h-4 w-4 animate-spin" />}
+          <ColumnSelector columns={COLUMN_CONFIGS} visibleColumns={visibleColumns} onToggle={toggle} onReset={reset} />
           <Button variant="outline" size="sm" onClick={handleExportCSV} disabled={items.length === 0 || loading} className="gap-1.5"><Download className="h-3.5 w-3.5" />Export CSV</Button>
         </div>
       </div>
@@ -157,31 +184,43 @@ export function PermitsTab({ bbl }: PermitsTabProps) {
           <Table>
             <TableHeader>
               <TableRow className="bg-muted/50">
-                <TableHead className="font-semibold">Issue Date</TableHead>
-                <TableHead className="font-semibold">Status</TableHead>
-                <TableHead className="font-semibold">Type</TableHead>
-                <TableHead className="font-semibold">Work Type</TableHead>
-                <TableHead className="font-semibold">Description</TableHead>
-                <TableHead className="font-semibold">Expiration</TableHead>
-                <TableHead className="font-semibold">Job #</TableHead>
+                {isVisible('issueDate') && <TableHead className="font-semibold">Issue Date</TableHead>}
+                {isVisible('status') && <TableHead className="font-semibold">Status</TableHead>}
+                {isVisible('permitType') && <TableHead className="font-semibold">Type</TableHead>}
+                {isVisible('workType') && <TableHead className="font-semibold">Work Type</TableHead>}
+                {isVisible('description') && <TableHead className="font-semibold">Description</TableHead>}
+                {isVisible('expirationDate') && <TableHead className="font-semibold">Expiration</TableHead>}
+                {isVisible('jobNumber') && <TableHead className="font-semibold">Job #</TableHead>}
+                {isVisible('applicantName') && <TableHead className="font-semibold">Applicant</TableHead>}
+                {isVisible('ownerName') && <TableHead className="font-semibold">Owner</TableHead>}
               </TableRow>
             </TableHeader>
             <TableBody>
               {items.map((item, index) => (
-                <TableRow key={`${item.recordId}-${index}`}>
-                  <TableCell className="text-sm">{item.issueDate ? new Date(item.issueDate).toLocaleDateString() : '-'}</TableCell>
-                  <TableCell><StatusBadge status={item.status} /></TableCell>
-                  <TableCell className="text-sm font-medium">{item.permitType || item.category || '-'}</TableCell>
-                  <TableCell className="text-sm">{item.workType || '-'}</TableCell>
-                  <TableCell className="max-w-xs">
-                    {item.description ? (
-                      <TooltipProvider><Tooltip><TooltipTrigger asChild><span className="text-sm line-clamp-2 cursor-help">{item.description}</span></TooltipTrigger><TooltipContent className="max-w-md"><p>{item.description}</p>{item.applicantName && <p className="mt-1 text-xs text-muted-foreground">Applicant: {item.applicantName}</p>}{item.ownerName && <p className="text-xs text-muted-foreground">Owner: {item.ownerName}</p>}</TooltipContent></Tooltip></TooltipProvider>
-                    ) : <span className="text-muted-foreground">-</span>}
-                  </TableCell>
-                  <TableCell className="text-sm">
-                    {item.expirationDate ? <span className={new Date(item.expirationDate) < new Date() ? 'text-destructive' : ''}>{new Date(item.expirationDate).toLocaleDateString()}</span> : '-'}
-                  </TableCell>
-                  <TableCell><span className="font-mono text-sm">{item.jobNumber || item.recordId}</span></TableCell>
+                <TableRow 
+                  key={`${item.recordId}-${index}`}
+                  className="cursor-pointer hover:bg-muted/50"
+                  onClick={() => handleRowClick(item)}
+                >
+                  {isVisible('issueDate') && <TableCell className="text-sm">{item.issueDate ? new Date(item.issueDate).toLocaleDateString() : '-'}</TableCell>}
+                  {isVisible('status') && <TableCell><StatusBadge status={item.status} /></TableCell>}
+                  {isVisible('permitType') && <TableCell className="text-sm font-medium">{item.permitType || item.category || '-'}</TableCell>}
+                  {isVisible('workType') && <TableCell className="text-sm">{item.workType || '-'}</TableCell>}
+                  {isVisible('description') && (
+                    <TableCell className="max-w-xs">
+                      {item.description ? (
+                        <TooltipProvider><Tooltip><TooltipTrigger asChild><span className="text-sm line-clamp-2 cursor-help">{item.description}</span></TooltipTrigger><TooltipContent className="max-w-md"><p>{item.description}</p>{item.applicantName && <p className="mt-1 text-xs text-muted-foreground">Applicant: {item.applicantName}</p>}{item.ownerName && <p className="text-xs text-muted-foreground">Owner: {item.ownerName}</p>}</TooltipContent></Tooltip></TooltipProvider>
+                      ) : <span className="text-muted-foreground">-</span>}
+                    </TableCell>
+                  )}
+                  {isVisible('expirationDate') && (
+                    <TableCell className="text-sm">
+                      {item.expirationDate ? <span className={new Date(item.expirationDate) < new Date() ? 'text-destructive' : ''}>{new Date(item.expirationDate).toLocaleDateString()}</span> : '-'}
+                    </TableCell>
+                  )}
+                  {isVisible('jobNumber') && <TableCell><span className="font-mono text-sm">{item.jobNumber || item.recordId}</span></TableCell>}
+                  {isVisible('applicantName') && <TableCell className="text-sm">{item.applicantName || '-'}</TableCell>}
+                  {isVisible('ownerName') && <TableCell className="text-sm">{item.ownerName || '-'}</TableCell>}
                 </TableRow>
               ))}
             </TableBody>
@@ -198,6 +237,14 @@ export function PermitsTab({ bbl }: PermitsTabProps) {
           </div>
         </div>
       )}
+      
+      {/* Record Detail Drawer */}
+      <RecordDetailDrawer
+        open={drawerOpen}
+        onOpenChange={setDrawerOpen}
+        recordType="permit"
+        record={selectedRecord as unknown as Record<string, unknown>}
+      />
     </div>
   );
 }

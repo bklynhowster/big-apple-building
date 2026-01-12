@@ -29,10 +29,22 @@ import { useViolations, ViolationsFilters, ViolationRecord } from '@/hooks/useVi
 import { exportToCSV, VIOLATIONS_COLUMNS } from '@/lib/csv-export';
 import { toast } from '@/hooks/use-toast';
 import { ErrorBanner } from '@/components/ui/error-banner';
+import { RecordDetailDrawer, RecordType } from './RecordDetailDrawer';
+import { ColumnSelector, useColumnVisibility, ColumnConfig } from './ColumnSelector';
 
 interface ViolationsTabProps {
   bbl: string;
 }
+
+const COLUMN_CONFIGS: ColumnConfig[] = [
+  { key: 'issueDate', label: 'Issue Date', defaultVisible: true },
+  { key: 'status', label: 'Status', defaultVisible: true },
+  { key: 'category', label: 'Category', defaultVisible: true },
+  { key: 'description', label: 'Description', defaultVisible: true },
+  { key: 'recordId', label: 'Record ID', defaultVisible: true },
+  { key: 'resolvedDate', label: 'Resolved Date', defaultVisible: false },
+  { key: 'lawSection', label: 'Law Section', defaultVisible: false },
+];
 
 function StatusBadge({ status }: { status: ViolationRecord['status'] }) {
   const variants: Record<string, 'destructive' | 'secondary' | 'outline'> = {
@@ -51,7 +63,6 @@ function StatusBadge({ status }: { status: ViolationRecord['status'] }) {
 function LoadingSkeleton() {
   return (
     <div className="space-y-4">
-      {/* Filter bar skeleton */}
       <div className="flex flex-col md:flex-row gap-4 p-4 bg-muted/50 rounded-lg">
         <Skeleton className="h-10 flex-1" />
         <div className="flex gap-3">
@@ -61,11 +72,7 @@ function LoadingSkeleton() {
           <Skeleton className="h-10 w-20" />
         </div>
       </div>
-      
-      {/* Summary skeleton */}
       <Skeleton className="h-6 w-64" />
-      
-      {/* Table skeleton */}
       <div className="rounded-md border">
         <div className="p-4 space-y-4">
           {Array.from({ length: 5 }).map((_, i) => (
@@ -102,8 +109,14 @@ export function ViolationsTab({ bbl }: ViolationsTabProps) {
     status: 'all',
     keyword: '',
   });
+  
+  // Drawer state
+  const [selectedRecord, setSelectedRecord] = useState<ViolationRecord | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  
+  // Column visibility
+  const { visibleColumns, toggle, reset, isVisible } = useColumnVisibility(COLUMN_CONFIGS);
 
-  // Fetch on mount when bbl is available
   useEffect(() => {
     if (bbl && bbl.length === 10) {
       fetchViolations(bbl);
@@ -130,6 +143,11 @@ export function ViolationsTab({ bbl }: ViolationsTabProps) {
   const handleApply = () => {
     applyFilters();
   };
+  
+  const handleRowClick = (record: ViolationRecord) => {
+    setSelectedRecord(record);
+    setDrawerOpen(true);
+  };
 
   const hasActiveFilters =
     localFilters.status !== 'all' ||
@@ -137,12 +155,10 @@ export function ViolationsTab({ bbl }: ViolationsTabProps) {
     localFilters.fromDate ||
     localFilters.toDate;
 
-  // Loading state
   if (loading && !data) {
     return <LoadingSkeleton />;
   }
 
-  // Error state
   if (error) {
     return (
       <div className="space-y-4">
@@ -233,7 +249,7 @@ export function ViolationsTab({ bbl }: ViolationsTabProps) {
         </div>
       </div>
 
-      {/* Summary Line with Export */}
+      {/* Summary Line with Export & Column Selector */}
       <div className="flex items-center justify-between text-sm text-muted-foreground">
         <div>
           Showing {items.length} of ~{totalApprox} DOB violations
@@ -241,6 +257,12 @@ export function ViolationsTab({ bbl }: ViolationsTabProps) {
         </div>
         <div className="flex items-center gap-2">
           {loading && <Loader2 className="h-4 w-4 animate-spin" />}
+          <ColumnSelector
+            columns={COLUMN_CONFIGS}
+            visibleColumns={visibleColumns}
+            onToggle={toggle}
+            onReset={reset}
+          />
           <Button
             variant="outline"
             size="sm"
@@ -276,48 +298,76 @@ export function ViolationsTab({ bbl }: ViolationsTabProps) {
           <Table>
             <TableHeader>
               <TableRow className="bg-muted/50">
-                <TableHead className="font-semibold">Issue Date</TableHead>
-                <TableHead className="font-semibold">Status</TableHead>
-                <TableHead className="font-semibold">Category</TableHead>
-                <TableHead className="font-semibold">Description</TableHead>
-                <TableHead className="font-semibold">Record ID</TableHead>
+                {isVisible('issueDate') && <TableHead className="font-semibold">Issue Date</TableHead>}
+                {isVisible('status') && <TableHead className="font-semibold">Status</TableHead>}
+                {isVisible('category') && <TableHead className="font-semibold">Category</TableHead>}
+                {isVisible('description') && <TableHead className="font-semibold">Description</TableHead>}
+                {isVisible('recordId') && <TableHead className="font-semibold">Record ID</TableHead>}
+                {isVisible('resolvedDate') && <TableHead className="font-semibold">Resolved Date</TableHead>}
+                {isVisible('lawSection') && <TableHead className="font-semibold">Law Section</TableHead>}
               </TableRow>
             </TableHeader>
             <TableBody>
               {items.map((item, index) => (
-                <TableRow key={`${item.recordId}-${index}`}>
-                  <TableCell className="text-sm">
-                    {item.issueDate
-                      ? new Date(item.issueDate).toLocaleDateString()
-                      : '-'}
-                  </TableCell>
-                  <TableCell>
-                    <StatusBadge status={item.status} />
-                  </TableCell>
-                  <TableCell className="text-sm">
-                    {item.category || '-'}
-                  </TableCell>
-                  <TableCell className="max-w-xs">
-                    {item.description ? (
-                      <TooltipProvider>
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <span className="text-sm line-clamp-2 cursor-help">
-                              {item.description}
-                            </span>
-                          </TooltipTrigger>
-                          <TooltipContent className="max-w-md">
-                            <p>{item.description}</p>
-                          </TooltipContent>
-                        </Tooltip>
-                      </TooltipProvider>
-                    ) : (
-                      <span className="text-muted-foreground">-</span>
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    <span className="font-mono text-sm">{item.recordId}</span>
-                  </TableCell>
+                <TableRow 
+                  key={`${item.recordId}-${index}`}
+                  className="cursor-pointer hover:bg-muted/50"
+                  onClick={() => handleRowClick(item)}
+                >
+                  {isVisible('issueDate') && (
+                    <TableCell className="text-sm">
+                      {item.issueDate
+                        ? new Date(item.issueDate).toLocaleDateString()
+                        : '-'}
+                    </TableCell>
+                  )}
+                  {isVisible('status') && (
+                    <TableCell>
+                      <StatusBadge status={item.status} />
+                    </TableCell>
+                  )}
+                  {isVisible('category') && (
+                    <TableCell className="text-sm">
+                      {item.category || '-'}
+                    </TableCell>
+                  )}
+                  {isVisible('description') && (
+                    <TableCell className="max-w-xs">
+                      {item.description ? (
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span className="text-sm line-clamp-2 cursor-help">
+                                {item.description}
+                              </span>
+                            </TooltipTrigger>
+                            <TooltipContent className="max-w-md">
+                              <p>{item.description}</p>
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      ) : (
+                        <span className="text-muted-foreground">-</span>
+                      )}
+                    </TableCell>
+                  )}
+                  {isVisible('recordId') && (
+                    <TableCell>
+                      <span className="font-mono text-sm">{item.recordId}</span>
+                    </TableCell>
+                  )}
+                  {isVisible('resolvedDate') && (
+                    <TableCell className="text-sm">
+                      {item.resolvedDate
+                        ? new Date(item.resolvedDate).toLocaleDateString()
+                        : '-'}
+                    </TableCell>
+                  )}
+                  {isVisible('lawSection') && (
+                    <TableCell className="text-sm">
+                      {(item.raw as Record<string, unknown>)?.law_section as string || '-'}
+                    </TableCell>
+                  )}
                 </TableRow>
               ))}
             </TableBody>
@@ -353,6 +403,14 @@ export function ViolationsTab({ bbl }: ViolationsTabProps) {
           </div>
         </div>
       )}
+      
+      {/* Record Detail Drawer */}
+      <RecordDetailDrawer
+        open={drawerOpen}
+        onOpenChange={setDrawerOpen}
+        recordType="violation"
+        record={selectedRecord as unknown as Record<string, unknown>}
+      />
     </div>
   );
 }
