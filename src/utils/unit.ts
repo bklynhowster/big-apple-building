@@ -1190,33 +1190,33 @@ export function recordMentionsUnit(
 }
 
 // ============================================================================
-// DEV-ONLY SANITY CHECK (runs on module load)
+// DEV-ONLY SANITY CHECK (callable from console)
 // ============================================================================
 
-if (typeof window !== 'undefined') {
-  console.log('[UnitSanity] Module loaded, running sanity checks...');
-  
-  try {
-    const sanityTests = [
-      { test: () => isLikelyUnitLabel('6G', false), expected: true, desc: 'isLikelyUnitLabel("6G", false) → true' },
-      { test: () => normalizeUnit('6G', false, false), expected: '6G', desc: 'normalizeUnit("6G", false, false) → "6G"' },
-      { test: () => normalizeUnit('APT 12', false, true), expected: '12', desc: 'normalizeUnit("APT 12", false, true) → "12"' },
-      { test: () => normalizeUnit('12', false, false), expected: null, desc: 'normalizeUnit("12", false, false) → null' },
-      { test: () => normalizeUnit('12', false, true), expected: '12', desc: 'normalizeUnit("12", false, true) → "12"' },
-      { test: () => isLikelyUnitLabel('6TH', false), expected: false, desc: 'isLikelyUnitLabel("6TH", false) → false (ordinal)' },
-    ];
+export function runUnitSanityChecks(): boolean {
+  const sanityTests = [
+    { test: () => isLikelyUnitLabel('6G', false), expected: true, desc: 'isLikelyUnitLabel("6G", false) → true' },
+    { test: () => normalizeUnit('6G', false, false), expected: '6G', desc: 'normalizeUnit("6G", false, false) → "6G"' },
+    { test: () => normalizeUnit('APT 12', false, true), expected: '12', desc: 'normalizeUnit("APT 12", false, true) → "12"' },
+    { test: () => normalizeUnit('12', false, false), expected: null, desc: 'normalizeUnit("12", false, false) → null' },
+    { test: () => normalizeUnit('12', false, true), expected: '12', desc: 'normalizeUnit("12", false, true) → "12"' },
+    { test: () => isLikelyUnitLabel('6TH', false), expected: false, desc: 'isLikelyUnitLabel("6TH", false) → false (ordinal)' },
+  ];
 
-    let allPassed = true;
-    const results: string[] = [];
-    for (const { test, expected, desc } of sanityTests) {
-      const result = test();
-      const passed = result === expected;
-      results.push(`${passed ? '✓' : '✗'} ${desc} → got ${JSON.stringify(result)}`);
-      if (!passed) allPassed = false;
-    }
-    
-    console.log(`[UnitSanity] Results (${allPassed ? 'ALL PASSED' : 'SOME FAILED'}):\n${results.join('\n')}`);
-  } catch (e) {
-    console.error('[UnitSanity] Error running sanity checks:', e);
+  let allPassed = true;
+  const results: string[] = [];
+  for (const { test, expected, desc } of sanityTests) {
+    const result = test();
+    const passed = result === expected;
+    results.push(`${passed ? '✓' : '✗'} ${desc} → got ${JSON.stringify(result)}`);
+    if (!passed) allPassed = false;
   }
+  
+  console.log(`[UnitSanity] Results (${allPassed ? 'ALL PASSED' : 'SOME FAILED'}):\n${results.join('\n')}`);
+  return allPassed;
+}
+
+// Expose to window for manual console testing
+if (typeof window !== 'undefined') {
+  (window as unknown as Record<string, unknown>).runUnitSanityChecks = runUnitSanityChecks;
 }
