@@ -770,6 +770,16 @@ function extractUnitFromText(
         }
       }
 
+      // HARD BLOCK: numeric-only units from free text without strong evidence
+      // This is a critical guard to prevent floor numbers (1, 2, 12, 100) from being
+      // extracted as unit identifiers when they appear in narrative text.
+      if (/^\d{1,3}$/.test(normalized) && !hasStrongEvidence) {
+        if (EXTRACTION_DEBUG) {
+          debugLog('UnitExtract.reject', { fieldName, keyword, normalized, reason: 'numeric_only_no_evidence' });
+        }
+        continue;
+      }
+
       const matchIndex = match.index || 0;
       const snippetStart = Math.max(0, matchIndex - 30);
       const snippetEnd = Math.min(textStr.length, matchIndex + match[0].length + 30);
