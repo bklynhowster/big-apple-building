@@ -162,6 +162,30 @@
   .bg-info {
     background-color: hsl(var(--info));
   }
+  
+  .text-warning-foreground {
+    color: hsl(var(--warning-foreground));
+  }
+  
+  .bg-warning\/10 {
+    background-color: hsl(var(--warning) / 0.1);
+  }
+  
+  .border-warning\/20 {
+    border-color: hsl(var(--warning) / 0.2);
+  }
+  
+  .bg-info\/10 {
+    background-color: hsl(var(--info) / 0.1);
+  }
+  
+  .border-info\/20 {
+    border-color: hsl(var(--info) / 0.2);
+  }
+  
+  .text-info {
+    color: hsl(var(--info));
+  }
 }
 
 /* Print styles for reports */

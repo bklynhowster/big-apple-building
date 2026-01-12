@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useCallback } from 'react';
 import { useLocation, Link } from 'react-router-dom';
 import { ArrowLeft, AlertCircle } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
@@ -9,6 +9,7 @@ import { ViolationsTab } from '@/components/results/ViolationsTab';
 import { ECBTab } from '@/components/results/ECBTab';
 import { SafetyTab } from '@/components/results/SafetyTab';
 import { PermitsTab } from '@/components/results/PermitsTab';
+import { AllRecordsTab } from '@/components/results/AllRecordsTab';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -37,9 +38,17 @@ export default function Results() {
 
   const isValidBBL = bbl.length === 10;
 
-  const handleTabChange = (tab: string) => {
+  // State for passing keyword filter to tabs from "View in tab"
+  const [tabKeywordFilter, setTabKeywordFilter] = useState<string | undefined>();
+
+  const handleTabChange = useCallback((tab: string, keyword?: string) => {
     setActiveTab(tab);
-  };
+    setTabKeywordFilter(keyword);
+  }, []);
+
+  const handleViewInTab = useCallback((tab: string, keyword?: string) => {
+    handleTabChange(tab, keyword);
+  }, [handleTabChange]);
 
   return (
     <div className="flex flex-col min-h-screen">
@@ -116,6 +125,12 @@ export default function Results() {
                   >
                     Permits
                   </TabsTrigger>
+                  <TabsTrigger 
+                    value="all" 
+                    className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent py-3 px-6"
+                  >
+                    All Records
+                  </TabsTrigger>
                 </TabsList>
 
                 <div className="mt-6">
@@ -158,6 +173,14 @@ export default function Results() {
                     <Card>
                       <CardContent className="p-6">
                         <PermitsTab bbl={bbl} />
+                      </CardContent>
+                    </Card>
+                  </TabsContent>
+                  
+                  <TabsContent value="all" className="mt-0">
+                    <Card>
+                      <CardContent className="p-6">
+                        <AllRecordsTab bbl={bbl} onViewInTab={handleViewInTab} />
                       </CardContent>
                     </Card>
                   </TabsContent>
