@@ -31,9 +31,13 @@ import { toast } from '@/hooks/use-toast';
 import { ErrorBanner } from '@/components/ui/error-banner';
 import { RecordDetailDrawer, RecordType } from './RecordDetailDrawer';
 import { ColumnSelector, useColumnVisibility, ColumnConfig } from './ColumnSelector';
+import { QueriedIdentifier, DatasetCapability } from './QueriedIdentifier';
+import { QueryScope } from './ScopeSelector';
 
 interface ViolationsTabProps {
   bbl: string;
+  bin?: string;
+  scope?: QueryScope;
 }
 
 const COLUMN_CONFIGS: ColumnConfig[] = [
@@ -90,7 +94,7 @@ function LoadingSkeleton() {
   );
 }
 
-export function ViolationsTab({ bbl }: ViolationsTabProps) {
+export function ViolationsTab({ bbl, bin, scope = 'building' }: ViolationsTabProps) {
   const {
     loading,
     error,
@@ -155,6 +159,9 @@ export function ViolationsTab({ bbl }: ViolationsTabProps) {
     localFilters.fromDate ||
     localFilters.toDate;
 
+  // Dataset capability for DOB Violations - it's BBL-based but building-level
+  const datasetCapability: DatasetCapability = 'building-bbl';
+
   if (loading && !data) {
     return <LoadingSkeleton />;
   }
@@ -191,7 +198,14 @@ export function ViolationsTab({ bbl }: ViolationsTabProps) {
 
   return (
     <div className="space-y-4">
-      {/* Filter Bar */}
+      {/* Queried Identifier */}
+      <QueriedIdentifier
+        bbl={bbl}
+        bin={bin}
+        scope={scope}
+        datasetCapability={datasetCapability}
+        datasetName="DOB Violations (3h2n-5cm9)"
+      />
       <div className="flex flex-col md:flex-row gap-4 p-4 bg-muted/50 rounded-lg">
         <div className="flex-1">
           <div className="relative">

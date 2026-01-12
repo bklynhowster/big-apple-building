@@ -14,9 +14,13 @@ import { toast } from '@/hooks/use-toast';
 import { ErrorBanner } from '@/components/ui/error-banner';
 import { RecordDetailDrawer, RecordType } from './RecordDetailDrawer';
 import { ColumnSelector, useColumnVisibility, ColumnConfig } from './ColumnSelector';
+import { QueriedIdentifier, DatasetCapability } from './QueriedIdentifier';
+import { QueryScope } from './ScopeSelector';
 
 interface HPDTabProps {
   bbl: string;
+  bin?: string;
+  scope?: QueryScope;
 }
 
 const VIOLATION_COLUMN_CONFIGS: ColumnConfig[] = [
@@ -92,7 +96,7 @@ const HPD_COLUMNS = [
   { key: 'recordId', header: 'ID' },
 ];
 
-export function HPDTab({ bbl }: HPDTabProps) {
+export function HPDTab({ bbl, bin, scope = 'building' }: HPDTabProps) {
   const [activeSubTab, setActiveSubTab] = useState<'violations' | 'complaints'>('violations');
   const [fetchedTabs, setFetchedTabs] = useState<Set<string>>(new Set());
   
@@ -299,8 +303,20 @@ export function HPDTab({ bbl }: HPDTabProps) {
     );
   };
 
+  // Dataset capability for HPD - BBL-based, building-level
+  const datasetCapability: DatasetCapability = 'building-bbl';
+
   return (
     <div className="space-y-4">
+      {/* Queried Identifier */}
+      <QueriedIdentifier
+        bbl={bbl}
+        bin={bin}
+        scope={scope}
+        datasetCapability={datasetCapability}
+        datasetName="HPD Violations & Complaints"
+      />
+      
       <div className="flex items-center gap-2 text-sm text-muted-foreground mb-4">
         <Info className="h-4 w-4" />
         <span>HPD (Housing Preservation & Development) violations and complaints for this property.</span>

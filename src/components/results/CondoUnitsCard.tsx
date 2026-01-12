@@ -26,9 +26,8 @@ import { useCondoUnits } from '@/hooks/useCondoUnits';
 
 interface CondoUnitsCardProps {
   bbl: string;
-  onContextChange?: (contextBbl: string, isUnit: boolean) => void;
   onUnitLabelResolved?: (unitLabel: string | null) => void;
-  onBillingBblResolved?: (billingBbl: string | null) => void;
+  onBillingBblResolved?: (billingBbl: string) => void;
 }
 
 function LoadingSkeleton() {

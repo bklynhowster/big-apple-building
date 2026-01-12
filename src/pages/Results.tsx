@@ -15,6 +15,7 @@ import { AllRecordsTab } from '@/components/results/AllRecordsTab';
 import { HPDTab } from '@/components/results/HPDTab';
 import { ThreeOneOneTab } from '@/components/results/ThreeOneOneTab';
 import { QueryDebugPanel } from '@/components/results/QueryDebugPanel';
+import { ScopeSelector, QueryScope } from '@/components/results/ScopeSelector';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -64,28 +65,48 @@ export default function Results() {
   // State for passing keyword filter to tabs from "View in tab"
   const [tabKeywordFilter, setTabKeywordFilter] = useState<string | undefined>();
   
-  // Context switching state for condos
-  const [contextBbl, setContextBbl] = useState<string>(bbl);
-  const [isUnitContext, setIsUnitContext] = useState<boolean>(false);
-  const [currentUnitLabel, setCurrentUnitLabel] = useState<string | null>(null);
+  // Condo and scope state
   const [billingBbl, setBillingBbl] = useState<string | null>(null);
+  const [currentUnitLabel, setCurrentUnitLabel] = useState<string | null>(null);
+  const [hasCondoUnits, setHasCondoUnits] = useState(false);
   
-  // Update context BBL when main BBL changes
-  useEffect(() => {
-    setContextBbl(bbl);
-    setIsUnitContext(false);
-    setCurrentUnitLabel(null);
+  // Determine if current BBL is a unit lot (1001-6999) or billing lot (75xx)
+  const lotNumber = useMemo(() => {
+    if (bbl.length !== 10) return 0;
+    return parseInt(bbl.slice(6), 10);
   }, [bbl]);
+  
+  const isUnitLot = lotNumber >= 1001 && lotNumber <= 6999;
+  const isBillingLot = lotNumber >= 7500 && lotNumber <= 7599;
+  
+  // Scope defaults: unit lot -> unit scope, billing lot -> building scope
+  const [scope, setScope] = useState<QueryScope>(() => {
+    return isUnitLot ? 'unit' : 'building';
+  });
+  
+  // The BBL to use for queries based on scope
+  const queryBbl = useMemo(() => {
+    if (scope === 'building' && billingBbl) {
+      return billingBbl;
+    }
+    return bbl;
+  }, [scope, billingBbl, bbl]);
+  
+  // Update scope default when BBL changes
+  useEffect(() => {
+    setScope(isUnitLot ? 'unit' : 'building');
+    setCurrentUnitLabel(null);
+  }, [bbl, isUnitLot]);
   
   // Update debug context whenever context changes
   useEffect(() => {
-    setContextInfo(contextBbl, billingBbl, bin || null);
-  }, [contextBbl, billingBbl, bin, setContextInfo]);
+    setContextInfo(queryBbl, billingBbl, bin || null);
+  }, [queryBbl, billingBbl, bin, setContextInfo]);
   
-  // Handle context switch from condo units card
-  const handleContextChange = useCallback((newContextBbl: string, isUnit: boolean) => {
-    setContextBbl(newContextBbl);
-    setIsUnitContext(isUnit);
+  // Handle billing BBL resolution from condo units card
+  const handleBillingBblResolved = useCallback((resolvedBillingBbl: string) => {
+    setBillingBbl(resolvedBillingBbl);
+    setHasCondoUnits(true);
   }, []);
 
   // Sync tab changes to URL
@@ -170,37 +191,18 @@ export default function Results() {
               {/* Condo Units Discovery */}
               <CondoUnitsCard 
                 bbl={bbl} 
-                onContextChange={handleContextChange} 
                 onUnitLabelResolved={setCurrentUnitLabel}
-                onBillingBblResolved={setBillingBbl}
+                onBillingBblResolved={handleBillingBblResolved}
               />
               
-              {/* Context Indicator - show when viewing unit vs building context */}
-              {contextBbl !== bbl && (
-                <div className="flex items-center gap-3 p-3 bg-primary/10 border border-primary/20 rounded-lg">
-                  <div className="flex items-center gap-2">
-                    {isUnitContext ? (
-                      <Home className="h-4 w-4 text-primary" />
-                    ) : (
-                      <Building2 className="h-4 w-4 text-primary" />
-                    )}
-                    <span className="text-sm font-medium">
-                      {isUnitContext ? 'Unit Context' : 'Building Context'}
-                    </span>
-                    <Badge variant="secondary" className="font-mono text-xs">
-                      {contextBbl}
-                    </Badge>
-                  </div>
-                  <Button 
-                    variant="ghost" 
-                    size="sm" 
-                    onClick={() => handleContextChange(bbl, false)}
-                    className="ml-auto"
-                  >
-                    Reset to original
-                  </Button>
-                </div>
-              )}
+              {/* Scope Selector - show when condo units exist */}
+              <ScopeSelector
+                scope={scope}
+                onScopeChange={setScope}
+                unitBbl={isUnitLot ? bbl : null}
+                billingBbl={billingBbl}
+                isCondoUnit={hasCondoUnits && (isUnitLot || isBillingLot)}
+              />
 
               <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
                 <TabsList className="w-full justify-start bg-card border-b border-border rounded-none h-auto p-0 flex-wrap">
@@ -259,7 +261,7 @@ export default function Results() {
                     <Card>
                       <CardContent className="p-6">
                         <SummaryTab 
-                          bbl={contextBbl}
+                          bbl={queryBbl}
                           onTabChange={handleTabChange}
                         />
                       </CardContent>
@@ -269,7 +271,7 @@ export default function Results() {
                   <TabsContent value="violations" className="mt-0">
                     <Card>
                       <CardContent className="p-6">
-                        <ViolationsTab bbl={contextBbl} />
+                        <ViolationsTab bbl={queryBbl} bin={bin} scope={scope} />
                       </CardContent>
                     </Card>
                   </TabsContent>
@@ -277,7 +279,7 @@ export default function Results() {
                   <TabsContent value="ecb" className="mt-0">
                     <Card>
                       <CardContent className="p-6">
-                        <ECBTab bbl={contextBbl} />
+                        <ECBTab bbl={queryBbl} bin={bin} scope={scope} />
                       </CardContent>
                     </Card>
                   </TabsContent>
@@ -285,7 +287,7 @@ export default function Results() {
                   <TabsContent value="safety" className="mt-0">
                     <Card>
                       <CardContent className="p-6">
-                        <SafetyTab bbl={contextBbl} />
+                        <SafetyTab bbl={queryBbl} bin={bin} scope={scope} />
                       </CardContent>
                     </Card>
                   </TabsContent>
@@ -293,7 +295,7 @@ export default function Results() {
                   <TabsContent value="permits" className="mt-0">
                     <Card>
                       <CardContent className="p-6">
-                        <PermitsTab bbl={contextBbl} />
+                        <PermitsTab bbl={queryBbl} bin={bin} scope={scope} />
                       </CardContent>
                     </Card>
                   </TabsContent>
@@ -301,7 +303,7 @@ export default function Results() {
                   <TabsContent value="hpd" className="mt-0">
                     <Card>
                       <CardContent className="p-6">
-                        <HPDTab bbl={contextBbl} />
+                        <HPDTab bbl={queryBbl} bin={bin} scope={scope} />
                       </CardContent>
                     </Card>
                   </TabsContent>
@@ -309,7 +311,7 @@ export default function Results() {
                   <TabsContent value="311" className="mt-0">
                     <Card>
                       <CardContent className="p-6">
-                        <ThreeOneOneTab lat={latitude} lon={longitude} />
+                        <ThreeOneOneTab lat={latitude} lon={longitude} scope={scope} />
                       </CardContent>
                     </Card>
                   </TabsContent>
@@ -317,7 +319,7 @@ export default function Results() {
                   <TabsContent value="all" className="mt-0">
                     <Card>
                       <CardContent className="p-6">
-                        <AllRecordsTab bbl={contextBbl} onViewInTab={handleViewInTab} />
+                        <AllRecordsTab bbl={queryBbl} onViewInTab={handleViewInTab} />
                       </CardContent>
                     </Card>
                   </TabsContent>

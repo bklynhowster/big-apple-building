@@ -31,9 +31,13 @@ import { toast } from '@/hooks/use-toast';
 import { ErrorBanner } from '@/components/ui/error-banner';
 import { RecordDetailDrawer } from './RecordDetailDrawer';
 import { ColumnSelector, useColumnVisibility, ColumnConfig } from './ColumnSelector';
+import { QueriedIdentifier, DatasetCapability } from './QueriedIdentifier';
+import { QueryScope } from './ScopeSelector';
 
 interface PermitsTabProps {
   bbl: string;
+  bin?: string;
+  scope?: QueryScope;
 }
 
 const COLUMN_CONFIGS: ColumnConfig[] = [
@@ -84,7 +88,7 @@ function LoadingSkeleton() {
   );
 }
 
-export function PermitsTab({ bbl }: PermitsTabProps) {
+export function PermitsTab({ bbl, bin, scope = 'building' }: PermitsTabProps) {
   const { loading, error, data, filters, offset, fetchPermits, setFilters, applyFilters, goToNextPage, goToPrevPage, retry } = usePermits(bbl);
   const [localFilters, setLocalFilters] = useState<PermitsFilters>({ status: 'all', keyword: '' });
   
@@ -121,6 +125,9 @@ export function PermitsTab({ bbl }: PermitsTabProps) {
   if (loading && !data) return <LoadingSkeleton />;
   if (error) return <div className="space-y-4"><ErrorBanner error={error} onRetry={retry} retrying={loading} /></div>;
 
+  // Dataset capability for Permits - BIN-based, building-level
+  const datasetCapability: DatasetCapability = 'bin';
+
   const items = data?.items || [];
   const totalApprox = data?.totalApprox || 0;
   const hasNextPage = data?.nextOffset !== null;
@@ -138,6 +145,15 @@ export function PermitsTab({ bbl }: PermitsTabProps) {
 
   return (
     <div className="space-y-4">
+      {/* Queried Identifier */}
+      <QueriedIdentifier
+        bbl={bbl}
+        bin={bin}
+        scope={scope}
+        datasetCapability={datasetCapability}
+        datasetName="DOB Permits (ipu4-2vj7)"
+      />
+      
       <div className="flex flex-col md:flex-row gap-4 p-4 bg-muted/50 rounded-lg">
         <div className="flex-1">
           <div className="relative">

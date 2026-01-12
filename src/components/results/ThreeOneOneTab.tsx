@@ -14,10 +14,13 @@ import { toast } from '@/hooks/use-toast';
 import { ErrorBanner } from '@/components/ui/error-banner';
 import { RecordDetailDrawer } from './RecordDetailDrawer';
 import { ColumnSelector, useColumnVisibility, ColumnConfig } from './ColumnSelector';
+import { QueriedIdentifier, DatasetCapability } from './QueriedIdentifier';
+import { QueryScope } from './ScopeSelector';
 
 interface ThreeOneOneTabProps {
   lat?: number;
   lon?: number;
+  scope?: QueryScope;
 }
 
 const COLUMN_CONFIGS: ColumnConfig[] = [
@@ -70,7 +73,7 @@ const COLUMNS = [
   { key: 'recordId', header: 'ID' },
 ];
 
-export function ThreeOneOneTab({ lat, lon }: ThreeOneOneTabProps) {
+export function ThreeOneOneTab({ lat, lon, scope = 'building' }: ThreeOneOneTabProps) {
   const { loading, error, data, items, fetch, filters, setFilters, applyFilters, retry } = use311(lat, lon);
   const [localFilters, setLocalFilters] = useState<ServiceRequestFilters>({
     status: 'all',
