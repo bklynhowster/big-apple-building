@@ -6,12 +6,12 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-// NYC Open Data DOF Rolling Sales dataset
-// https://data.cityofnewyork.us/dataset/NYC-Citywide-Annualized-Calendar-Sales-Update/w2pb-icbu
-const DATASET_ID = 'usep-8jbt';  // Rolling Sales (current year + recent)
+// NYC Open Data DOB Job Applications Filing dataset
+// https://data.cityofnewyork.us/Housing-Development/DOB-Job-Application-Filings/ic3t-wcy2
+const DATASET_ID = 'ic3t-wcy2';
 const NYC_OPEN_DATA_BASE = `https://data.cityofnewyork.us/resource/${DATASET_ID}.json`;
 
-// ============ Unit Normalization (must match client-side logic) ============
+// ============ Unit Extraction (must match client-side logic) ============
 
 const JUNK_VALUES = new Set([
   '', 'N/A', 'NA', 'NONE', 'UNKNOWN', '0', '-', 'N', 'NULL', 'BUILDING', 'BLDG',
@@ -72,6 +72,47 @@ function normalizeUnit(raw: string | null | undefined): string | null {
   return value;
 }
 
+// Extract unit tokens from free text (job description, work on floors, etc.)
+const UNIT_EXTRACTION_PATTERNS = [
+  /\bAPT\.?\s*([A-Z0-9]{1,6})\b/gi,
+  /\bAPARTMENT\s*([A-Z0-9]{1,6})\b/gi,
+  /\bUNIT\s*([A-Z0-9]{1,6})\b/gi,
+  /\b#\s*([A-Z0-9]{1,6})\b/g,
+  /\bPENTHOUSE\s*([A-Z0-9]{0,3})\b/gi,
+  /\bPH[\s\-]?([A-Z0-9]{0,3})\b/gi,
+  /\bRM\.?\s*([A-Z0-9]{1,6})\b/gi,
+  /\bROOM\s*([A-Z0-9]{1,6})\b/gi,
+];
+
+function extractUnitTokensFromText(text: string | null | undefined): string[] {
+  if (!text) return [];
+  
+  const units = new Set<string>();
+  const upperText = String(text).toUpperCase();
+  
+  for (const pattern of UNIT_EXTRACTION_PATTERNS) {
+    // Reset lastIndex for global patterns
+    pattern.lastIndex = 0;
+    let match;
+    while ((match = pattern.exec(upperText)) !== null) {
+      const candidate = match[1] || '';
+      // For penthouse without number, use "PH"
+      if (pattern.source.includes('PENTHOUSE') && !candidate) {
+        const normalized = normalizeUnit('PH');
+        if (normalized) units.add(normalized);
+      } else if (pattern.source.includes('PH[') && !candidate) {
+        const normalized = normalizeUnit('PH');
+        if (normalized) units.add(normalized);
+      } else {
+        const normalized = normalizeUnit(candidate);
+        if (normalized) units.add(normalized);
+      }
+    }
+  }
+  
+  return Array.from(units);
+}
+
 // ============ Request Utilities ============
 
 function generateRequestId(): string {
@@ -83,17 +124,17 @@ function generateRequestId(): string {
 interface RequestContext {
   requestId: string;
   endpoint: string;
-  bbl?: string;
+  bin?: string;
   startTime: number;
 }
 
-function createRequestContext(endpoint: string, bbl?: string): RequestContext {
-  return { requestId: generateRequestId(), endpoint, bbl, startTime: Date.now() };
+function createRequestContext(endpoint: string, bin?: string): RequestContext {
+  return { requestId: generateRequestId(), endpoint, bin, startTime: Date.now() };
 }
 
 function logRequest(ctx: RequestContext, message: string, extra?: Record<string, unknown>) {
   const duration = Date.now() - ctx.startTime;
-  console.log(JSON.stringify({ requestId: ctx.requestId, endpoint: ctx.endpoint, bbl: ctx.bbl, durationMs: duration, message, ...extra }));
+  console.log(JSON.stringify({ requestId: ctx.requestId, endpoint: ctx.endpoint, bin: ctx.bin, durationMs: duration, message, ...extra }));
 }
 
 interface StandardError {
@@ -130,7 +171,7 @@ function getClientIP(req: Request): string {
 }
 
 const responseCache = new Map<string, { data: unknown; expiresAt: number }>();
-const CACHE_TTL = 30 * 60 * 1000; // 30 minutes (sales data changes slowly)
+const CACHE_TTL = 15 * 60 * 1000; // 15 minutes
 
 function getCached<T>(key: string): T | null {
   const entry = responseCache.get(key);
@@ -168,46 +209,53 @@ async function fetchWithRetry(url: string, options: RequestInit = {}): Promise<{
   return { ok: false, status: 0, error: 'All retry attempts failed' };
 }
 
-// ============ Unit Aggregation ============
+// ============ Response Types ============
 
-interface UnitRosterEntry {
+interface JobFilingRecord {
+  jobNumber: string;
+  filingNumber: string | null;
+  jobType: string | null;
+  filingStatus: string | null;
+  address: string | null;
+  workOnFloors: string | null;
+  jobDescription: string | null;
+  modifiedDate: string | null;
+  extractedUnits: string[];
+  raw: Record<string, unknown>;
+}
+
+interface UnitFromFilings {
   unit: string;
   count: number;
   lastSeen: string | null;
   source: string;
+  filings: {
+    jobNumber: string;
+    jobType: string | null;
+    status: string | null;
+    modifiedDate: string | null;
+    snippet: string | null;
+  }[];
 }
 
 interface ApiResponse {
-  bbl: string;
-  units: UnitRosterEntry[];
-  totalRecordsScanned: number;
-  warning?: string;
+  bin: string;
+  filings: JobFilingRecord[];
+  units: UnitFromFilings[];
+  totalFilings: number;
+  fallbackMode: boolean;
+  dobNowUrl: string;
   requestId: string;
 }
 
-function validateBBL(bbl: string): boolean {
-  return /^\d{10}$/.test(bbl);
-}
-
-// Extract apartment/unit from a sales record
-const UNIT_FIELDS = ['apartment_number', 'apartment', 'apt', 'unit', 'unit_number', 'apt_no'];
-
-function extractUnitFromSalesRecord(record: Record<string, unknown>): string | null {
-  for (const field of UNIT_FIELDS) {
-    const value = record[field];
-    if (value != null && value !== '') {
-      const normalized = normalizeUnit(String(value));
-      if (normalized) return normalized;
-    }
-  }
-  return null;
+function validateBIN(bin: string): boolean {
+  return /^\d{7}$/.test(bin);
 }
 
 function parseDateToISO(dateStr: string | undefined | null): string | null {
   if (!dateStr) return null;
   try {
     if (dateStr.includes('T')) return new Date(dateStr).toISOString().split('T')[0];
-    // Handle other date formats
     const date = new Date(dateStr);
     if (!isNaN(date.getTime())) return date.toISOString().split('T')[0];
     return null;
@@ -216,12 +264,38 @@ function parseDateToISO(dateStr: string | undefined | null): string | null {
   }
 }
 
+// Extract snippet containing the unit reference
+function extractSnippet(text: string, unit: string, maxLength: number = 100): string | null {
+  if (!text) return null;
+  const upper = text.toUpperCase();
+  const patterns = [
+    new RegExp(`\\bAPT\\.?\\s*${unit}\\b`, 'gi'),
+    new RegExp(`\\bAPARTMENT\\s*${unit}\\b`, 'gi'),
+    new RegExp(`\\bUNIT\\s*${unit}\\b`, 'gi'),
+    new RegExp(`\\b#\\s*${unit}\\b`, 'g'),
+    new RegExp(`\\b${unit}\\b`, 'gi'),
+  ];
+  
+  for (const pattern of patterns) {
+    const match = pattern.exec(upper);
+    if (match) {
+      const start = Math.max(0, match.index - 30);
+      const end = Math.min(text.length, match.index + match[0].length + 30);
+      let snippet = text.substring(start, end);
+      if (start > 0) snippet = '...' + snippet;
+      if (end < text.length) snippet = snippet + '...';
+      return snippet.substring(0, maxLength);
+    }
+  }
+  return null;
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
 
-  const ctx = createRequestContext('coop-unit-roster');
+  const ctx = createRequestContext('dob-job-filings');
   const NYC_OPEN_DATA_APP_TOKEN = Deno.env.get('NYC_OPEN_DATA_APP_TOKEN');
 
   try {
@@ -242,50 +316,49 @@ serve(async (req) => {
     const url = new URL(req.url);
     const params = url.searchParams;
 
-    // Try to get BBL from query params first, then from JSON body
-    let bbl: string | null = null;
-    let limit = 200;
+    // Try to get BIN from query params first, then from JSON body
+    let bin: string | null = null;
+    let limit = 100;
     let offset = 0;
     
-    // Check query params
-    for (const key of ['bbl', 'BBL']) {
+    for (const key of ['bin', 'BIN']) {
       const v = params.get(key);
-      if (v?.trim()) { bbl = v.trim(); break; }
+      if (v?.trim()) { bin = v.trim(); break; }
     }
     
     // If not in query params, try JSON body
-    if (!bbl && req.method === 'POST') {
+    if (!bin && req.method === 'POST') {
       try {
         const body = await req.json();
-        if (body.bbl) bbl = String(body.bbl).trim();
+        if (body.bin) bin = String(body.bin).trim();
         if (body.limit) limit = parseInt(String(body.limit), 10);
         if (body.offset) offset = parseInt(String(body.offset), 10);
       } catch {
-        // Body parsing failed, continue with what we have
+        // Body parsing failed
       }
     }
 
-    if (!bbl) {
-      return createErrorResponse(ctx, 400, 'Missing parameter', 'bbl parameter is required', 'Please provide a valid property identifier (BBL).');
+    if (!bin) {
+      return createErrorResponse(ctx, 400, 'Missing parameter', 'bin parameter is required', 'Please provide a valid Building Identification Number (BIN).');
     }
 
-    bbl = bbl.padStart(10, '0');
-    ctx.bbl = bbl;
+    bin = bin.padStart(7, '0');
+    ctx.bin = bin;
 
-    if (!validateBBL(bbl)) {
-      return createErrorResponse(ctx, 400, 'Invalid BBL', 'bbl must be exactly 10 digits', 'The property identifier (BBL) format is invalid.');
+    if (!validateBIN(bin)) {
+      return createErrorResponse(ctx, 400, 'Invalid BIN', 'bin must be exactly 7 digits', 'The Building Identification Number (BIN) format is invalid.');
     }
 
-    // Apply limits from query params if present (they take precedence)
+    // Apply limits from query params
     const queryLimit = params.get('limit');
     const queryOffset = params.get('offset');
     if (queryLimit) limit = parseInt(queryLimit, 10);
     if (queryOffset) offset = parseInt(queryOffset, 10);
     
-    limit = Math.min(Math.max(1, limit), 500);
+    limit = Math.min(Math.max(1, limit), 200);
     offset = Math.max(0, offset);
 
-    const cacheKey = `coop-unit-roster:${bbl}`;
+    const cacheKey = `dob-job-filings:${bin}:${limit}:${offset}`;
     const cached = getCached<ApiResponse>(cacheKey);
     if (cached) {
       logRequest(ctx, 'Cache hit');
@@ -294,45 +367,43 @@ serve(async (req) => {
       });
     }
 
-    // Build BBL components for the query
-    // Rolling sales uses separate borough/block/lot columns
-    const borough = bbl.substring(0, 1);
-    const block = parseInt(bbl.substring(1, 6), 10).toString(); // Remove leading zeros
-    const lot = parseInt(bbl.substring(6, 10), 10).toString();   // Remove leading zeros
+    // DOB NOW link for fallback
+    const dobNowUrl = `https://a810-dobnow.nyc.gov/Publish/#!/dashboard?q=${bin}`;
 
-    // Query rolling sales for this property
-    // The dataset has: borough, block, lot, apartment_number, sale_date, sale_price, etc.
-    const whereClause = `borough='${borough}' AND block='${block}' AND lot='${lot}'`;
+    // Query DOB Job Applications by BIN
+    const whereClause = `bin__='${bin}'`;
 
     const dataUrl = new URL(NYC_OPEN_DATA_BASE);
     dataUrl.searchParams.set('$where', whereClause);
     dataUrl.searchParams.set('$limit', String(limit));
     dataUrl.searchParams.set('$offset', String(offset));
-    dataUrl.searchParams.set('$order', 'sale_date DESC NULL LAST');
+    dataUrl.searchParams.set('$order', 'latest_action_date DESC NULL LAST');
 
     const headers: Record<string, string> = { 'Accept': 'application/json' };
     if (NYC_OPEN_DATA_APP_TOKEN) {
       headers['X-App-Token'] = NYC_OPEN_DATA_APP_TOKEN;
     }
 
-    logRequest(ctx, 'Fetching from Rolling Sales', { borough, block, lot, limit });
+    logRequest(ctx, 'Fetching from DOB Job Filings', { bin, limit });
 
     const result = await fetchWithRetry(dataUrl.toString(), { headers });
 
-    // Handle upstream errors gracefully
+    // Handle fallback mode if API unavailable
     if (!result.ok) {
       const upstreamStatus = result.status;
       
-      // For 403/401, return empty with warning (dataset may require login)
       if (upstreamStatus === 403 || upstreamStatus === 401) {
+        // Fallback mode - return empty with link
         const response: ApiResponse = {
-          bbl,
+          bin,
+          filings: [],
           units: [],
-          totalRecordsScanned: 0,
-          warning: 'rolling_sales_unavailable',
+          totalFilings: 0,
+          fallbackMode: true,
+          dobNowUrl,
           requestId: ctx.requestId,
         };
-        logRequest(ctx, 'Rolling sales unavailable (auth required)', { upstreamStatus });
+        logRequest(ctx, 'Fallback mode (auth required)', { upstreamStatus });
         return new Response(JSON.stringify(response), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
@@ -343,54 +414,103 @@ serve(async (req) => {
           'The NYC data service is busy. Please try again in a moment.', { service: 'NYC Open Data', status: 429 });
       }
 
-      return createErrorResponse(ctx, 502, 'Upstream error', result.error || 'Unknown error',
-        'Unable to retrieve sales data. Please try again later.', { service: 'NYC Open Data', status: upstreamStatus });
+      // For other errors, return fallback mode
+      const response: ApiResponse = {
+        bin,
+        filings: [],
+        units: [],
+        totalFilings: 0,
+        fallbackMode: true,
+        dobNowUrl,
+        requestId: ctx.requestId,
+      };
+      logRequest(ctx, 'Fallback mode (upstream error)', { upstreamStatus, error: result.error });
+      return new Response(JSON.stringify(response), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
     }
 
     const rawData = result.data as Record<string, unknown>[];
-    logRequest(ctx, 'Raw sales records fetched', { count: rawData.length });
+    logRequest(ctx, 'Raw filings fetched', { count: rawData.length });
 
-    // Aggregate units from sales records
-    const unitMap = new Map<string, { count: number; lastSeen: string | null }>();
+    // Process filings and extract units
+    const filings: JobFilingRecord[] = [];
+    const unitMap = new Map<string, UnitFromFilings>();
 
-    for (const record of rawData) {
-      const unit = extractUnitFromSalesRecord(record);
-      if (unit) {
-        const existing = unitMap.get(unit) || { count: 0, lastSeen: null };
-        existing.count++;
+    for (const raw of rawData) {
+      const jobNumber = String(raw.job__ || raw.job_number || raw.jobnumber || 'Unknown');
+      const jobDescription = raw.job_description as string || raw.jobdescription as string || '';
+      const workOnFloors = raw.existing_occupancy as string || raw.proposed_occupancy as string || '';
+      const modifiedDate = parseDateToISO(raw.latest_action_date as string || raw.pre_filing_date as string);
+      
+      // Extract units from text fields
+      const textToSearch = [jobDescription, workOnFloors].filter(Boolean).join(' ');
+      const extractedUnits = extractUnitTokensFromText(textToSearch);
+      
+      const filing: JobFilingRecord = {
+        jobNumber,
+        filingNumber: raw.doc__ as string || null,
+        jobType: raw.job_type as string || null,
+        filingStatus: raw.job_status as string || raw.filing_status as string || null,
+        address: raw.house__ as string 
+          ? `${raw.house__} ${raw.street_name || ''}`
+          : raw.address as string || null,
+        workOnFloors,
+        jobDescription,
+        modifiedDate,
+        extractedUnits,
+        raw,
+      };
+      
+      filings.push(filing);
+
+      // Aggregate units
+      for (const unit of extractedUnits) {
+        const existing = unitMap.get(unit) || {
+          unit,
+          count: 0,
+          lastSeen: null,
+          source: 'dob_filings',
+          filings: [],
+        };
         
-        // Track most recent sale date
-        const saleDate = parseDateToISO(record.sale_date as string);
-        if (saleDate && (!existing.lastSeen || saleDate > existing.lastSeen)) {
-          existing.lastSeen = saleDate;
+        existing.count++;
+        if (modifiedDate && (!existing.lastSeen || modifiedDate > existing.lastSeen)) {
+          existing.lastSeen = modifiedDate;
         }
+        
+        // Add filing reference with snippet
+        const snippet = extractSnippet(textToSearch, unit);
+        existing.filings.push({
+          jobNumber,
+          jobType: filing.jobType,
+          status: filing.filingStatus,
+          modifiedDate,
+          snippet,
+        });
         
         unitMap.set(unit, existing);
       }
     }
 
-    // Convert to array and sort by count descending
-    const units: UnitRosterEntry[] = Array.from(unitMap.entries())
-      .map(([unit, data]) => ({
-        unit,
-        count: data.count,
-        lastSeen: data.lastSeen,
-        source: 'rolling_sales',
-      }))
-      .sort((a, b) => {
-        if (b.count !== a.count) return b.count - a.count;
-        return a.unit.localeCompare(b.unit, undefined, { numeric: true });
-      });
+    // Convert to array and sort
+    const units = Array.from(unitMap.values()).sort((a, b) => {
+      if (b.count !== a.count) return b.count - a.count;
+      return a.unit.localeCompare(b.unit, undefined, { numeric: true });
+    });
 
     const response: ApiResponse = {
-      bbl,
+      bin,
+      filings,
       units,
-      totalRecordsScanned: rawData.length,
+      totalFilings: filings.length,
+      fallbackMode: false,
+      dobNowUrl,
       requestId: ctx.requestId,
     };
 
     setCache(cacheKey, response);
-    logRequest(ctx, 'Success', { unitsFound: units.length, recordsScanned: rawData.length });
+    logRequest(ctx, 'Success', { filingsCount: filings.length, unitsFound: units.length });
 
     return new Response(JSON.stringify(response), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },

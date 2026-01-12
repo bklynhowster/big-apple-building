@@ -27,6 +27,7 @@ import { usePropertyProfile } from '@/hooks/usePropertyProfile';
 import { useHPDViolations, useHPDComplaints } from '@/hooks/useHPD';
 import { use311 } from '@/hooks/use311';
 import { useCoopUnitRoster } from '@/hooks/useCoopUnitRoster';
+import { useDobJobFilings } from '@/hooks/useDobJobFilings';
 
 const VALID_TABS = ['summary', 'violations', 'ecb', 'safety', 'permits', 'hpd', '311', 'all'] as const;
 type ValidTab = typeof VALID_TABS[number];
@@ -73,27 +74,31 @@ export default function Results() {
   const { profile } = usePropertyProfile(isValidBBL ? bbl : null);
   const isCoop = profile?.propertyTenure === 'COOP';
 
-  // Pre-fetch HPD, 311, and Rolling Sales for Unit Insights (co-ops only)
+  // Pre-fetch HPD, 311, Rolling Sales, and DOB Filings for Unit Insights (co-ops only)
   const hpdViolations = useHPDViolations(isCoop && isValidBBL ? bbl : null);
   const hpdComplaints = useHPDComplaints(isCoop && isValidBBL ? bbl : null);
   const threeOneOne = use311(isCoop ? latitude : undefined, isCoop ? longitude : undefined);
   const coopUnitRoster = useCoopUnitRoster();
+  const dobJobFilings = useDobJobFilings();
   
   // Track if we've fetched data for insights
   const insightsFetchedRef = useRef(false);
   
-  // Fetch HPD, 311, and Rolling Sales data for Unit Insights when co-op is detected
+  // Fetch all data for Unit Insights when co-op is detected
   useEffect(() => {
     if (isCoop && isValidBBL && !insightsFetchedRef.current) {
       hpdViolations.fetch(bbl);
       hpdComplaints.fetch(bbl);
       coopUnitRoster.fetch(bbl);
+      if (bin) {
+        dobJobFilings.fetch(bin);
+      }
       if (latitude !== undefined && longitude !== undefined) {
         threeOneOne.fetch(latitude, longitude);
       }
       insightsFetchedRef.current = true;
     }
-  }, [isCoop, isValidBBL, bbl, latitude, longitude]);
+  }, [isCoop, isValidBBL, bbl, bin, latitude, longitude]);
 
   // State for passing keyword filter to tabs from "View in tab"
   const [tabKeywordFilter, setTabKeywordFilter] = useState<string | undefined>();
@@ -320,18 +325,23 @@ export default function Results() {
                 />
               )}
 
-              {/* Unit Insights Card - Co-ops only (derived from HPD + 311 + Sales) */}
+              {/* Unit Insights Card - Co-ops only (derived from DOB Filings + HPD + 311 + Sales) */}
               {isCoop && (
                 <UnitInsightsCard
                   buildingBbl={bbl}
+                  bin={bin}
                   hpdViolations={hpdViolations.items}
                   hpdComplaints={hpdComplaints.items}
                   serviceRequests={threeOneOne.items}
                   salesUnits={coopUnitRoster.units}
+                  dobFilingsUnits={dobJobFilings.units}
+                  dobFilings={dobJobFilings.filings}
                   selectedUnit={coopUnitContext}
                   onUnitSelect={handleUnitInsightSelect}
-                  loading={hpdViolations.loading || hpdComplaints.loading || threeOneOne.loading || coopUnitRoster.loading}
+                  loading={hpdViolations.loading || hpdComplaints.loading || threeOneOne.loading || coopUnitRoster.loading || dobJobFilings.loading}
                   salesWarning={coopUnitRoster.warning}
+                  dobNowUrl={dobJobFilings.dobNowUrl}
+                  fallbackMode={dobJobFilings.fallbackMode}
                 />
               )}
 
