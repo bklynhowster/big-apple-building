@@ -176,6 +176,27 @@ const TEXT_EXTRACTION_FIELDS = [
   'scopeofwork',
   'filing_reason',
   'filingreason',
+  // DOB Violation text fields
+  'description',
+  'violation_description',
+  'violationdescription',
+  'violation_type_description',
+  'violation_category',
+  'violationcategory',
+  'remedy',
+  'isn_description',
+  'isndescription',
+  'device_number',
+  'devicenumber',
+  // ECB Violation text fields
+  'ecb_violation_description',
+  'ecbviolationdescription',
+  'infraction_description',
+  'infractiondescription',
+  'penality_imposed',
+  'standard_description',
+  'violation_details',
+  'violationdetails',
 ];
 
 /**
