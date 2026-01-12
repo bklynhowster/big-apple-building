@@ -29,3 +29,6 @@ verify_jwt = false
 
 [functions.condo-units]
 verify_jwt = false
+
+[functions.coop-unit-roster]
+verify_jwt = false
