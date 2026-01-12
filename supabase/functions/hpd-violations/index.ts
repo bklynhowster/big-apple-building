@@ -7,10 +7,127 @@ const corsHeaders = {
 };
 
 // NYC Open Data HPD Housing Maintenance Code Violations dataset
-const NYC_OPEN_DATA_BASE = 'https://data.cityofnewyork.us/resource/wvxf-dwi5.json';
+const DATASET_ID = 'wvxf-dwi5';
+const NYC_OPEN_DATA_BASE = `https://data.cityofnewyork.us/resource/${DATASET_ID}.json`;
 const NYC_OPEN_DATA_APP_TOKEN = Deno.env.get('NYC_OPEN_DATA_APP_TOKEN');
 
-// ============ Inline Shared Utilities ============
+// ============ Schema Guard ============
+
+// Candidate columns we'd like to use (in priority order for each purpose)
+const CANDIDATE_COLUMNS = {
+  id: ['violationid', 'violation_id', 'unique_key'],
+  bbl: ['bbl'],
+  boroBlockLot: ['boroid', 'boro_id', 'borough', 'block', 'lot'],
+  date: ['inspectiondate', 'inspection_date', 'novissueddate', 'nov_issued_date', 'approveddate', 'certifieddate'],
+  status: ['currentstatus', 'current_status', 'violationstatus', 'violation_status'],
+  statusDate: ['currentstatusdate', 'current_status_date', 'statusdate'],
+  category: ['class', 'violationclass', 'violation_class'],
+  description: ['novdescription', 'nov_description', 'ordernumber', 'order_number'],
+  location: ['apartment', 'apt', 'story', 'housenumber', 'house_number', 'streetname', 'street_name', 'postcode', 'zip'],
+};
+
+// Minimal safe columns if schema discovery fails
+const MINIMAL_SAFE_COLUMNS = ['violationid', 'unique_key'];
+
+// 24-hour schema cache
+const schemaCache = new Map<string, { columns: Set<string>; expiresAt: number }>();
+const SCHEMA_CACHE_TTL = 24 * 60 * 60 * 1000;
+
+interface SchemaInfo {
+  columns: Set<string>;
+  bblColumn: string | null;
+  boroColumn: string | null;
+  blockColumn: string | null;
+  lotColumn: string | null;
+  dateColumn: string | null;
+  idColumn: string | null;
+  statusColumn: string | null;
+  classColumn: string | null;
+  descriptionColumn: string | null;
+}
+
+async function discoverSchema(appToken: string): Promise<SchemaInfo> {
+  const cacheKey = `schema:${DATASET_ID}`;
+  const cached = schemaCache.get(cacheKey);
+  
+  if (cached && cached.expiresAt > Date.now()) {
+    return buildSchemaInfo(cached.columns);
+  }
+
+  try {
+    // Probe with $limit=1 to discover columns
+    const probeUrl = new URL(NYC_OPEN_DATA_BASE);
+    probeUrl.searchParams.set('$limit', '1');
+    
+    const response = await fetch(probeUrl.toString(), {
+      headers: {
+        'Accept': 'application/json',
+        'X-App-Token': appToken,
+      },
+    });
+
+    if (!response.ok) {
+      console.log(`Schema discovery failed with status ${response.status}, using minimal columns`);
+      return buildSchemaInfo(new Set(MINIMAL_SAFE_COLUMNS));
+    }
+
+    const data = await response.json();
+    
+    if (!Array.isArray(data) || data.length === 0) {
+      // Empty dataset - try metadata endpoint instead
+      const metaUrl = `https://data.cityofnewyork.us/api/views/${DATASET_ID}.json`;
+      const metaResponse = await fetch(metaUrl, {
+        headers: { 'X-App-Token': appToken },
+      });
+      
+      if (metaResponse.ok) {
+        const meta = await metaResponse.json();
+        if (meta.columns && Array.isArray(meta.columns)) {
+          const columns = new Set<string>(meta.columns.map((c: { fieldName: string }) => c.fieldName.toLowerCase()));
+          schemaCache.set(cacheKey, { columns, expiresAt: Date.now() + SCHEMA_CACHE_TTL });
+          console.log(`Schema discovered via metadata: ${Array.from(columns).join(', ')}`);
+          return buildSchemaInfo(columns);
+        }
+      }
+      
+      return buildSchemaInfo(new Set(MINIMAL_SAFE_COLUMNS));
+    }
+
+    // Extract column names from first row
+    const columns = new Set<string>(Object.keys(data[0]).map(k => k.toLowerCase()));
+    schemaCache.set(cacheKey, { columns, expiresAt: Date.now() + SCHEMA_CACHE_TTL });
+    console.log(`Schema discovered: ${Array.from(columns).slice(0, 20).join(', ')}${columns.size > 20 ? '...' : ''}`);
+    
+    return buildSchemaInfo(columns);
+  } catch (error) {
+    console.error('Schema discovery error:', error);
+    return buildSchemaInfo(new Set(MINIMAL_SAFE_COLUMNS));
+  }
+}
+
+function buildSchemaInfo(columns: Set<string>): SchemaInfo {
+  const findFirst = (candidates: string[]): string | null => {
+    for (const col of candidates) {
+      if (columns.has(col)) return col;
+    }
+    return null;
+  };
+
+  return {
+    columns,
+    bblColumn: findFirst(CANDIDATE_COLUMNS.bbl),
+    boroColumn: findFirst(['boroid', 'boro_id', 'borough']),
+    blockColumn: findFirst(['block']),
+    lotColumn: findFirst(['lot']),
+    dateColumn: findFirst(CANDIDATE_COLUMNS.date),
+    idColumn: findFirst(CANDIDATE_COLUMNS.id),
+    statusColumn: findFirst(CANDIDATE_COLUMNS.status),
+    classColumn: findFirst(CANDIDATE_COLUMNS.category),
+    descriptionColumn: findFirst(CANDIDATE_COLUMNS.description),
+  };
+}
+
+// ============ Shared Utilities ============
 
 function generateRequestId(): string {
   const timestamp = Date.now().toString(36);
@@ -48,7 +165,6 @@ function createErrorResponse(ctx: RequestContext, statusCode: number, error: str
   return new Response(JSON.stringify(body), { status: statusCode, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
 }
 
-// Simple in-memory rate limiter
 const rateLimitStore = new Map<string, { count: number; windowStart: number }>();
 function checkRateLimit(ip: string, maxRequests = 30, windowMs = 60000): { allowed: boolean; retryAfter?: number } {
   const now = Date.now();
@@ -68,24 +184,22 @@ function getClientIP(req: Request): string {
   return req.headers.get('x-forwarded-for')?.split(',')[0].trim() || req.headers.get('x-real-ip') || 'unknown';
 }
 
-// Simple in-memory cache
-const cache = new Map<string, { data: unknown; expiresAt: number }>();
-const CACHE_TTL = 10 * 60 * 1000; // 10 minutes
+const responseCache = new Map<string, { data: unknown; expiresAt: number }>();
+const RESPONSE_CACHE_TTL = 10 * 60 * 1000;
 
 function getCached<T>(key: string): T | null {
-  const entry = cache.get(key);
+  const entry = responseCache.get(key);
   if (!entry || entry.expiresAt < Date.now()) {
-    if (entry) cache.delete(key);
+    if (entry) responseCache.delete(key);
     return null;
   }
   return entry.data as T;
 }
 
 function setCache<T>(key: string, data: T): void {
-  cache.set(key, { data, expiresAt: Date.now() + CACHE_TTL });
+  responseCache.set(key, { data, expiresAt: Date.now() + RESPONSE_CACHE_TTL });
 }
 
-// Fetch with retry for 5xx only
 async function fetchWithRetry(url: string, options: RequestInit = {}): Promise<{ ok: boolean; status: number; data?: unknown; error?: string; retryAfter?: number }> {
   for (let attempt = 0; attempt <= 1; attempt++) {
     try {
@@ -113,7 +227,7 @@ async function fetchWithRetry(url: string, options: RequestInit = {}): Promise<{
   return { ok: false, status: 0, error: 'All retry attempts failed' };
 }
 
-// ============ End Shared Utilities ============
+// ============ Record Processing ============
 
 interface HPDViolationRecord {
   recordType: string;
@@ -134,6 +248,7 @@ interface ApiResponse {
   items: HPDViolationRecord[];
   nextOffset: number | null;
   requestId: string;
+  schemaInfo?: { filterMethod: string; dateColumn: string | null };
 }
 
 function validateBBL(bbl: string): boolean {
@@ -154,40 +269,81 @@ function parseDateToISO(dateStr: string | undefined | null): string | null {
   } catch { return dateStr; }
 }
 
-function normalizeViolation(raw: Record<string, unknown>): HPDViolationRecord {
-  const certifiedDate = parseDateToISO(raw.certifieddate as string);
-  const currentStatusDate = parseDateToISO(raw.currentstatusdate as string);
-  const currentStatus = (raw.currentstatus as string || '').toLowerCase();
+function normalizeViolation(raw: Record<string, unknown>, schema: SchemaInfo): HPDViolationRecord {
+  // Get status from confirmed columns
+  let statusValue = '';
+  if (schema.statusColumn && raw[schema.statusColumn]) {
+    statusValue = String(raw[schema.statusColumn]).toLowerCase();
+  }
   
   let status: 'open' | 'closed' | 'unknown' = 'unknown';
-  if (currentStatus.includes('close') || currentStatus.includes('dismissed') || currentStatus === 'violation closed') {
+  if (statusValue.includes('close') || statusValue.includes('dismissed')) {
     status = 'closed';
-  } else if (currentStatus.includes('open') || currentStatus === 'violation open' || !currentStatus) {
+  } else if (statusValue.includes('open') || !statusValue) {
     status = 'open';
   }
 
-  // Build a readable description from multiple fields
-  const novDescription = raw.novdescription as string || '';
-  const orderNumber = raw.ordernumber as string || '';
-  const apartment = raw.apartment as string || '';
-  
-  let description = novDescription;
-  if (orderNumber && !description.includes(orderNumber)) {
-    description = `${orderNumber}: ${description}`;
+  // Get description from confirmed columns
+  let description = '';
+  const descFields = ['novdescription', 'nov_description', 'ordernumber', 'order_number'];
+  for (const field of descFields) {
+    if (schema.columns.has(field) && raw[field]) {
+      const val = String(raw[field]);
+      if (!description) {
+        description = val;
+      } else if (!description.includes(val)) {
+        description = `${val}: ${description}`;
+      }
+    }
   }
-  if (apartment) {
-    description = `[Apt ${apartment}] ${description}`;
+  
+  // Add apartment if available
+  if (schema.columns.has('apartment') && raw.apartment) {
+    description = `[Apt ${raw.apartment}] ${description}`;
+  }
+
+  // Get violation class
+  let violationClass: string | null = null;
+  if (schema.classColumn && raw[schema.classColumn]) {
+    violationClass = String(raw[schema.classColumn]);
+  }
+
+  // Get record ID
+  let recordId = 'Unknown';
+  if (schema.idColumn && raw[schema.idColumn]) {
+    recordId = String(raw[schema.idColumn]);
+  }
+
+  // Get dates from confirmed columns
+  let issueDate: string | null = null;
+  const dateFields = ['inspectiondate', 'inspection_date', 'novissueddate', 'nov_issued_date'];
+  for (const field of dateFields) {
+    if (schema.columns.has(field) && raw[field]) {
+      issueDate = parseDateToISO(String(raw[field]));
+      break;
+    }
+  }
+
+  let resolvedDate: string | null = null;
+  if (status === 'closed') {
+    const statusDateFields = ['currentstatusdate', 'current_status_date', 'statusdate'];
+    for (const field of statusDateFields) {
+      if (schema.columns.has(field) && raw[field]) {
+        resolvedDate = parseDateToISO(String(raw[field]));
+        break;
+      }
+    }
   }
 
   return {
     recordType: 'HPD Violation',
-    recordId: raw.violationid as string || raw.violation_id as string || 'Unknown',
+    recordId,
     status,
-    issueDate: parseDateToISO(raw.inspectiondate as string) || parseDateToISO(raw.novissueddate as string),
-    resolvedDate: currentStatus.includes('close') ? currentStatusDate : null,
-    category: raw.class as string || null,
+    issueDate,
+    resolvedDate,
+    category: violationClass,
     description: description || null,
-    violationClass: raw.class as string || null,
+    violationClass,
     raw,
   };
 }
@@ -200,7 +356,11 @@ serve(async (req) => {
   const ctx = createRequestContext('hpd-violations');
 
   try {
-    // Rate limiting
+    if (!NYC_OPEN_DATA_APP_TOKEN) {
+      return createErrorResponse(ctx, 500, 'Configuration error', 'NYC_OPEN_DATA_APP_TOKEN is not configured', 
+        'Server is missing NYC Open Data token configuration.');
+    }
+
     const clientIP = getClientIP(req);
     const rateLimit = checkRateLimit(clientIP);
     if (!rateLimit.allowed) {
@@ -219,7 +379,6 @@ serve(async (req) => {
     const url = new URL(req.url);
     const params = url.searchParams;
 
-    // Extract BBL
     let bbl: string | null = null;
     for (const key of ['bbl', 'BBL', 'bblId', 'propertyBbl']) {
       const v = params.get(key);
@@ -237,11 +396,6 @@ serve(async (req) => {
       return createErrorResponse(ctx, 400, 'Invalid BBL', 'bbl must be exactly 10 digits', 'The property identifier (BBL) format is invalid.');
     }
 
-    // HPD uses boroid, block, lot separately
-    const boroId = bbl.charAt(0);
-    const block = parseInt(bbl.slice(1, 6), 10).toString();
-    const lot = parseInt(bbl.slice(6, 10), 10).toString();
-
     let limit = parseInt(params.get('limit') || '50', 10);
     limit = Math.min(Math.max(1, limit), 200);
     let offset = parseInt(params.get('offset') || '0', 10);
@@ -249,12 +403,11 @@ serve(async (req) => {
 
     const fromDate = params.get('fromDate');
     const toDate = params.get('toDate');
-    const status = params.get('status') || 'all';
-    const violationClass = params.get('class'); // A, B, C, I
+    const statusFilter = params.get('status') || 'all';
+    const violationClass = params.get('class');
     const keyword = params.get('q');
 
-    // Build cache key
-    const cacheKey = `hpd-violations:${bbl}:${limit}:${offset}:${status}:${violationClass || ''}:${fromDate || ''}:${toDate || ''}:${keyword || ''}`;
+    const cacheKey = `hpd-violations:${bbl}:${limit}:${offset}:${statusFilter}:${violationClass || ''}:${fromDate || ''}:${toDate || ''}:${keyword || ''}`;
     const cached = getCached<ApiResponse>(cacheKey);
     if (cached) {
       logRequest(ctx, 'Cache hit');
@@ -263,25 +416,71 @@ serve(async (req) => {
       });
     }
 
-    logRequest(ctx, 'Fetching from NYC Open Data HPD', { boroId, block, lot });
+    // Discover schema first
+    const schema = await discoverSchema(NYC_OPEN_DATA_APP_TOKEN);
+    
+    logRequest(ctx, 'Schema discovered', { 
+      bblColumn: schema.bblColumn,
+      boroColumn: schema.boroColumn,
+      blockColumn: schema.blockColumn,
+      lotColumn: schema.lotColumn,
+      dateColumn: schema.dateColumn,
+      idColumn: schema.idColumn,
+    });
 
-    // Build SoQL query - HPD uses boroid, block, lot
-    const whereConditions: string[] = [
-      `boroid='${boroId}'`,
-      `block='${block}'`,
-      `lot='${lot}'`,
-    ];
-    if (fromDate) whereConditions.push(`inspectiondate >= '${fromDate}'`);
-    if (toDate) whereConditions.push(`inspectiondate <= '${toDate}'`);
-    if (violationClass) whereConditions.push(`class='${violationClass}'`);
-    if (keyword) whereConditions.push(`upper(novdescription) like upper('%${keyword.replace(/'/g, "''")}%')`);
+    // Build WHERE clause - prefer BBL, fallback to boro/block/lot if BBL doesn't exist
+    let whereConditions: string[] = [];
+    let filterMethod = 'unknown';
+
+    if (schema.bblColumn) {
+      // BBL-first filtering (preferred)
+      whereConditions.push(`${schema.bblColumn}='${bbl}'`);
+      filterMethod = 'bbl';
+    } else if (schema.boroColumn && schema.blockColumn && schema.lotColumn) {
+      // Fallback to boro/block/lot
+      const boroId = bbl.charAt(0);
+      const block = parseInt(bbl.slice(1, 6), 10).toString();
+      const lot = parseInt(bbl.slice(6, 10), 10).toString();
+      
+      whereConditions.push(`${schema.boroColumn}='${boroId}'`);
+      whereConditions.push(`${schema.blockColumn}='${block}'`);
+      whereConditions.push(`${schema.lotColumn}='${lot}'`);
+      filterMethod = 'boro_block_lot';
+    } else {
+      return createErrorResponse(ctx, 400, 'Schema mismatch', 'Dataset does not have required filter columns (bbl or boroid/block/lot)',
+        'Unable to query this dataset—schema mismatch prevented.');
+    }
+
+    // Add optional filters using only confirmed columns
+    if (fromDate && schema.dateColumn) {
+      whereConditions.push(`${schema.dateColumn} >= '${fromDate}'`);
+    }
+    if (toDate && schema.dateColumn) {
+      whereConditions.push(`${schema.dateColumn} <= '${toDate}'`);
+    }
+    if (violationClass && schema.classColumn) {
+      whereConditions.push(`${schema.classColumn}='${violationClass}'`);
+    }
+    if (keyword && schema.descriptionColumn) {
+      whereConditions.push(`upper(${schema.descriptionColumn}) like upper('%${keyword.replace(/'/g, "''")}%')`);
+    }
 
     const whereClause = whereConditions.join(' AND ');
     const dataUrl = new URL(NYC_OPEN_DATA_BASE);
     dataUrl.searchParams.set('$where', whereClause);
     dataUrl.searchParams.set('$limit', String(limit + 1));
     dataUrl.searchParams.set('$offset', String(offset));
-    dataUrl.searchParams.set('$order', 'inspectiondate DESC');
+    
+    // Only add ORDER BY if we have a confirmed date column
+    if (schema.dateColumn) {
+      dataUrl.searchParams.set('$order', `${schema.dateColumn} DESC`);
+    }
+
+    logRequest(ctx, 'SoQL query built', { 
+      filterMethod,
+      whereClause,
+      orderBy: schema.dateColumn || 'none',
+    });
 
     const headers: Record<string, string> = { 'Accept': 'application/json' };
     if (NYC_OPEN_DATA_APP_TOKEN) headers['X-App-Token'] = NYC_OPEN_DATA_APP_TOKEN;
@@ -289,6 +488,13 @@ serve(async (req) => {
     const result = await fetchWithRetry(dataUrl.toString(), { headers });
 
     if (!result.ok) {
+      const upstreamStatus = result.status;
+      
+      // Return 400 for upstream 400s (schema mismatch, bad query)
+      if (upstreamStatus === 400) {
+        return createErrorResponse(ctx, 400, 'Invalid query', result.error || 'Upstream returned 400',
+          'Invalid query—schema mismatch prevented.', { service: 'NYC Open Data', status: 400 });
+      }
       if (result.status === 429) {
         return createErrorResponse(ctx, 429, 'Upstream rate limit', 'NYC Open Data rate limit exceeded', 
           'The NYC data service is busy. Please try again in a moment.', { service: 'NYC Open Data', status: 429 });
@@ -301,11 +507,11 @@ serve(async (req) => {
     const hasMore = rawData.length > limit;
     const dataToProcess = hasMore ? rawData.slice(0, limit) : rawData;
 
-    let items = dataToProcess.map(normalizeViolation);
+    let items = dataToProcess.map(row => normalizeViolation(row, schema));
     
-    // Filter by status if specified
-    if (status === 'open') items = items.filter(item => item.status === 'open');
-    else if (status === 'closed') items = items.filter(item => item.status === 'closed');
+    // Filter by status if specified (client-side since status values vary)
+    if (statusFilter === 'open') items = items.filter(item => item.status === 'open');
+    else if (statusFilter === 'closed') items = items.filter(item => item.status === 'closed');
 
     let totalApprox = items.length + offset;
     try {
@@ -325,10 +531,11 @@ serve(async (req) => {
       items,
       nextOffset: hasMore ? offset + limit : null,
       requestId: ctx.requestId,
+      schemaInfo: { filterMethod, dateColumn: schema.dateColumn },
     };
 
     setCache(cacheKey, response);
-    logRequest(ctx, 'Success', { itemCount: items.length, totalApprox });
+    logRequest(ctx, 'Success', { itemCount: items.length, totalApprox, filterMethod });
 
     return new Response(JSON.stringify(response), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },

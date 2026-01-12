@@ -6,11 +6,128 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-// NYC Open Data HPD Complaints and Problems dataset (ygpa-z7cr)
-// Using BBL-only filtering - no derived borough/block/lot
-const NYC_OPEN_DATA_BASE = 'https://data.cityofnewyork.us/resource/ygpa-z7cr.json';
+// NYC Open Data HPD Complaints and Problems dataset
+const DATASET_ID = 'ygpa-z7cr';
+const NYC_OPEN_DATA_BASE = `https://data.cityofnewyork.us/resource/${DATASET_ID}.json`;
 
-// ============ Inline Shared Utilities ============
+// ============ Schema Guard ============
+
+// Candidate columns we'd like to use (in priority order for each purpose)
+const CANDIDATE_COLUMNS = {
+  id: ['complaintid', 'complaint_id', 'problemid', 'problem_id', 'unique_key'],
+  bbl: ['bbl'],
+  date: ['receiveddate', 'received_date', 'statusdate', 'status_date'],
+  status: ['complaintstatus', 'complaint_status', 'problemstatus', 'problem_status', 'status', 'statusdescription'],
+  category: ['complainttype', 'complaint_type', 'majorcat', 'majorcategory'],
+  description: ['problemdescription', 'problem_description', 'minorcat', 'minorcategory', 'spacetype', 'space_type'],
+  location: ['housenumber', 'house_number', 'streetname', 'street_name', 'apartment', 'postcode', 'zip'],
+};
+
+// Minimal safe columns if schema discovery fails
+const MINIMAL_SAFE_COLUMNS = ['bbl', 'unique_key'];
+
+// 24-hour schema cache
+const schemaCache = new Map<string, { columns: Set<string>; expiresAt: number }>();
+const SCHEMA_CACHE_TTL = 24 * 60 * 60 * 1000;
+
+interface SchemaInfo {
+  columns: Set<string>;
+  bblColumn: string | null;
+  dateColumn: string | null;
+  idColumn: string | null;
+}
+
+async function discoverSchema(appToken: string): Promise<SchemaInfo> {
+  const cacheKey = `schema:${DATASET_ID}`;
+  const cached = schemaCache.get(cacheKey);
+  
+  if (cached && cached.expiresAt > Date.now()) {
+    return buildSchemaInfo(cached.columns);
+  }
+
+  try {
+    // Probe with $limit=1 to discover columns
+    const probeUrl = new URL(NYC_OPEN_DATA_BASE);
+    probeUrl.searchParams.set('$limit', '1');
+    
+    const response = await fetch(probeUrl.toString(), {
+      headers: {
+        'Accept': 'application/json',
+        'X-App-Token': appToken,
+      },
+    });
+
+    if (!response.ok) {
+      console.log(`Schema discovery failed with status ${response.status}, using minimal columns`);
+      return buildSchemaInfo(new Set(MINIMAL_SAFE_COLUMNS));
+    }
+
+    const data = await response.json();
+    
+    if (!Array.isArray(data) || data.length === 0) {
+      // Empty dataset - try metadata endpoint instead
+      const metaUrl = `https://data.cityofnewyork.us/api/views/${DATASET_ID}.json`;
+      const metaResponse = await fetch(metaUrl, {
+        headers: { 'X-App-Token': appToken },
+      });
+      
+      if (metaResponse.ok) {
+        const meta = await metaResponse.json();
+        if (meta.columns && Array.isArray(meta.columns)) {
+          const columns = new Set<string>(meta.columns.map((c: { fieldName: string }) => c.fieldName.toLowerCase()));
+          schemaCache.set(cacheKey, { columns, expiresAt: Date.now() + SCHEMA_CACHE_TTL });
+          console.log(`Schema discovered via metadata: ${Array.from(columns).join(', ')}`);
+          return buildSchemaInfo(columns);
+        }
+      }
+      
+      return buildSchemaInfo(new Set(MINIMAL_SAFE_COLUMNS));
+    }
+
+    // Extract column names from first row
+    const columns = new Set<string>(Object.keys(data[0]).map(k => k.toLowerCase()));
+    schemaCache.set(cacheKey, { columns, expiresAt: Date.now() + SCHEMA_CACHE_TTL });
+    console.log(`Schema discovered: ${Array.from(columns).slice(0, 20).join(', ')}${columns.size > 20 ? '...' : ''}`);
+    
+    return buildSchemaInfo(columns);
+  } catch (error) {
+    console.error('Schema discovery error:', error);
+    return buildSchemaInfo(new Set(MINIMAL_SAFE_COLUMNS));
+  }
+}
+
+function buildSchemaInfo(columns: Set<string>): SchemaInfo {
+  const findFirst = (candidates: string[]): string | null => {
+    for (const col of candidates) {
+      if (columns.has(col)) return col;
+    }
+    return null;
+  };
+
+  return {
+    columns,
+    bblColumn: findFirst(CANDIDATE_COLUMNS.bbl),
+    dateColumn: findFirst(CANDIDATE_COLUMNS.date),
+    idColumn: findFirst(CANDIDATE_COLUMNS.id),
+  };
+}
+
+function getConfirmedColumns(schema: SchemaInfo): string[] {
+  const confirmed: string[] = [];
+  
+  // Add all candidate columns that exist in schema
+  for (const candidates of Object.values(CANDIDATE_COLUMNS)) {
+    for (const col of candidates) {
+      if (schema.columns.has(col) && !confirmed.includes(col)) {
+        confirmed.push(col);
+      }
+    }
+  }
+  
+  return confirmed;
+}
+
+// ============ Shared Utilities ============
 
 function generateRequestId(): string {
   const timestamp = Date.now().toString(36);
@@ -67,20 +184,20 @@ function getClientIP(req: Request): string {
   return req.headers.get('x-forwarded-for')?.split(',')[0].trim() || req.headers.get('x-real-ip') || 'unknown';
 }
 
-const cache = new Map<string, { data: unknown; expiresAt: number }>();
-const CACHE_TTL = 10 * 60 * 1000;
+const responseCache = new Map<string, { data: unknown; expiresAt: number }>();
+const RESPONSE_CACHE_TTL = 10 * 60 * 1000;
 
 function getCached<T>(key: string): T | null {
-  const entry = cache.get(key);
+  const entry = responseCache.get(key);
   if (!entry || entry.expiresAt < Date.now()) {
-    if (entry) cache.delete(key);
+    if (entry) responseCache.delete(key);
     return null;
   }
   return entry.data as T;
 }
 
 function setCache<T>(key: string, data: T): void {
-  cache.set(key, { data, expiresAt: Date.now() + CACHE_TTL });
+  responseCache.set(key, { data, expiresAt: Date.now() + RESPONSE_CACHE_TTL });
 }
 
 async function fetchWithRetry(url: string, options: RequestInit = {}): Promise<{ ok: boolean; status: number; data?: unknown; error?: string }> {
@@ -106,7 +223,7 @@ async function fetchWithRetry(url: string, options: RequestInit = {}): Promise<{
   return { ok: false, status: 0, error: 'All retry attempts failed' };
 }
 
-// ============ End Shared Utilities ============
+// ============ Record Processing ============
 
 interface HPDComplaintRecord {
   recordType: string;
@@ -126,6 +243,7 @@ interface ApiResponse {
   items: HPDComplaintRecord[];
   nextOffset: number | null;
   requestId: string;
+  schemaInfo?: { dateColumn: string | null; idColumn: string | null };
 }
 
 function validateBBL(bbl: string): boolean {
@@ -140,37 +258,67 @@ function parseDateToISO(dateStr: string | undefined | null): string | null {
   } catch { return dateStr; }
 }
 
-function normalizeComplaint(raw: Record<string, unknown>): HPDComplaintRecord {
-  // Try multiple possible status fields
-  const status1 = (raw.complaintstatus as string || '').toLowerCase();
-  const status2 = (raw.problemstatus as string || '').toLowerCase();
-  const statusDesc = (raw.statusdescription as string || '').toLowerCase();
-  const statusAny = status1 || status2 || statusDesc;
+function normalizeComplaint(raw: Record<string, unknown>, schema: SchemaInfo): HPDComplaintRecord {
+  // Try multiple possible status fields from confirmed columns
+  const statusFields = ['complaintstatus', 'complaint_status', 'problemstatus', 'problem_status', 'status', 'statusdescription'];
+  let statusValue = '';
+  for (const field of statusFields) {
+    if (schema.columns.has(field) && raw[field]) {
+      statusValue = String(raw[field]).toLowerCase();
+      break;
+    }
+  }
   
   let status: 'open' | 'closed' | 'unknown' = 'unknown';
-  if (statusAny.includes('close')) {
+  if (statusValue.includes('close')) {
     status = 'closed';
-  } else if (statusAny.includes('open') || statusAny.includes('pending')) {
+  } else if (statusValue.includes('open') || statusValue.includes('pending')) {
     status = 'open';
   }
 
   // Build description from available fields
-  const problemDesc = raw.problemdescription as string || '';
-  const complaintType = raw.complainttype as string || '';
-  const spaceType = raw.spacetype as string || '';
-  
-  let description = problemDesc || complaintType || '';
-  if (spaceType && !description.includes(spaceType)) {
-    description = `[${spaceType}] ${description}`;
+  const descFields = ['problemdescription', 'problem_description', 'complainttype', 'complaint_type', 'minorcat', 'spacetype'];
+  let description = '';
+  for (const field of descFields) {
+    if (schema.columns.has(field) && raw[field]) {
+      const val = String(raw[field]);
+      if (!description) {
+        description = val;
+      } else if (!description.includes(val)) {
+        description = `${description} - ${val}`;
+      }
+    }
+  }
+
+  // Get category
+  const catFields = ['complainttype', 'complaint_type', 'majorcat', 'majorcategory'];
+  let category = '';
+  for (const field of catFields) {
+    if (schema.columns.has(field) && raw[field]) {
+      category = String(raw[field]);
+      break;
+    }
+  }
+
+  // Get record ID
+  let recordId = 'Unknown';
+  if (schema.idColumn && raw[schema.idColumn]) {
+    recordId = String(raw[schema.idColumn]);
+  }
+
+  // Get dates
+  let issueDate: string | null = null;
+  if (schema.dateColumn && raw[schema.dateColumn]) {
+    issueDate = parseDateToISO(String(raw[schema.dateColumn]));
   }
 
   return {
     recordType: 'HPD Complaint',
-    recordId: raw.complaintid as string || raw.problemid as string || raw.unique_key as string || 'Unknown',
+    recordId,
     status,
-    issueDate: parseDateToISO(raw.received_date as string) || parseDateToISO(raw.receiveddate as string),
-    resolvedDate: status === 'closed' ? parseDateToISO(raw.statusdate as string) : null,
-    category: complaintType || null,
+    issueDate,
+    resolvedDate: status === 'closed' ? issueDate : null,
+    category: category || null,
     description: description || null,
     raw,
   };
@@ -238,22 +386,41 @@ serve(async (req) => {
       });
     }
 
-    // BBL-ONLY FILTER - no borough/block/lot derivation
-    const whereClause = `bbl='${bbl}'`;
+    // Discover schema first
+    const schema = await discoverSchema(NYC_OPEN_DATA_APP_TOKEN);
+    const confirmedColumns = getConfirmedColumns(schema);
+    
+    logRequest(ctx, 'Schema discovered', { 
+      bblColumn: schema.bblColumn,
+      dateColumn: schema.dateColumn,
+      idColumn: schema.idColumn,
+      confirmedCount: confirmedColumns.length
+    });
+
+    // Validate that BBL column exists
+    if (!schema.bblColumn) {
+      return createErrorResponse(ctx, 400, 'Schema mismatch', 'Dataset does not have a bbl column',
+        'Unable to query this dataset - schema mismatch prevented.');
+    }
+
+    // Build SoQL query using ONLY confirmed columns
+    const whereClause = `${schema.bblColumn}='${bbl}'`;
     
     const dataUrl = new URL(NYC_OPEN_DATA_BASE);
     dataUrl.searchParams.set('$where', whereClause);
     dataUrl.searchParams.set('$limit', String(limit + 1));
     dataUrl.searchParams.set('$offset', String(offset));
-    // Use received_date for ordering (common HPD field name)
-    dataUrl.searchParams.set('$order', 'received_date DESC NULL LAST');
+    
+    // Only add ORDER BY if we have a confirmed date column
+    if (schema.dateColumn) {
+      dataUrl.searchParams.set('$order', `${schema.dateColumn} DESC NULL LAST`);
+    }
 
     const upstreamUrl = dataUrl.toString();
     
-    // DIAGNOSTIC: Log final SoQL and columns used
     logRequest(ctx, 'SoQL query built', { 
       whereClause,
-      columnsUsed: ['bbl', 'received_date'],
+      orderBy: schema.dateColumn || 'none',
       upstreamUrl
     });
 
@@ -269,9 +436,10 @@ serve(async (req) => {
     if (!result.ok) {
       const upstreamStatus = result.status;
       
+      // Return 400 for upstream 400s (schema mismatch, bad query)
       if (upstreamStatus === 400) {
-        return createErrorResponse(ctx, 400, 'Bad request', result.error || 'Upstream returned 400',
-          'Invalid query to NYC Open Data.', { service: 'NYC Open Data', status: 400 });
+        return createErrorResponse(ctx, 400, 'Invalid query', result.error || 'Upstream returned 400',
+          'Invalid query—schema mismatch prevented.', { service: 'NYC Open Data', status: 400 });
       }
       if (upstreamStatus === 403) {
         return createErrorResponse(ctx, 403, 'Access denied', result.error || 'Upstream returned 403',
@@ -290,7 +458,7 @@ serve(async (req) => {
     const hasMore = rawData.length > limit;
     const dataToProcess = hasMore ? rawData.slice(0, limit) : rawData;
 
-    const items = dataToProcess.map(normalizeComplaint);
+    const items = dataToProcess.map(row => normalizeComplaint(row, schema));
 
     let totalApprox = items.length + offset;
     try {
@@ -310,6 +478,7 @@ serve(async (req) => {
       items,
       nextOffset: hasMore ? offset + limit : null,
       requestId: ctx.requestId,
+      schemaInfo: { dateColumn: schema.dateColumn, idColumn: schema.idColumn },
     };
 
     setCache(cacheKey, response);
