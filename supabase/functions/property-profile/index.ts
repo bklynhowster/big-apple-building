@@ -198,71 +198,69 @@ async function fetchWithRetry(url: string, options: RequestInit = {}): Promise<{
 // ============ Property Type Classification ============
 
 type PropertyTypeLabel = 'Condo' | 'Co-op' | '1-2 Family' | '3+ Family' | 'Mixed-Use' | 'Commercial' | 'Other' | 'Unknown';
+type PropertyTenure = 'CONDO' | 'COOP' | 'RENTAL_OR_OTHER' | 'UNKNOWN';
 
 // Building class codes reference: https://www.nyc.gov/assets/finance/jump/hlpbldgcode.html
 const CONDO_CLASSES = ['R0', 'R1', 'R2', 'R3', 'R4', 'R5', 'R6', 'R7', 'R8', 'R9', 'RR', 'RS'];
-const COOP_INDICATOR_CLASSES = ['D0', 'D1', 'D2', 'D3', 'D4', 'D5', 'D6', 'D7', 'D8', 'D9']; // Elevator apartments often co-ops
+// Co-op building classes: C0-C9 are walkup apartments (commonly co-ops), D0-D9 are elevator apartments (very commonly co-ops)
+const COOP_CLASSES = ['C0', 'C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7', 'C8', 'C9', 'D0', 'D1', 'D2', 'D3', 'D4', 'D5', 'D6', 'D7', 'D8', 'D9'];
 const ONE_TWO_FAMILY_CLASSES = ['A0', 'A1', 'A2', 'A3', 'A4', 'A5', 'A6', 'A7', 'A8', 'A9', 'B1', 'B2', 'B3', 'B9'];
-const MULTI_FAMILY_CLASSES = ['C0', 'C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7', 'C8', 'C9'];
 const MIXED_USE_LAND_USES = ['04']; // Mixed residential/commercial
 const COMMERCIAL_LAND_USES = ['05', '06', '07', '08', '09', '10', '11'];
 
-function classifyPropertyType(
+interface PropertyClassification {
+  propertyTypeLabel: PropertyTypeLabel;
+  propertyTenure: PropertyTenure;
+}
+
+function classifyProperty(
   buildingClass: string | null,
   landUse: string | null,
   unitsRes: number | null,
   condoNo: string | number | null
-): PropertyTypeLabel {
+): PropertyClassification {
   const bc = (buildingClass || '').toUpperCase().trim();
   const lu = (landUse || '').trim();
 
   // Check for condo first (explicit condo class or condo number present)
   if (CONDO_CLASSES.some(c => bc.startsWith(c))) {
-    return 'Condo';
+    return { propertyTypeLabel: 'Condo', propertyTenure: 'CONDO' };
   }
   if (condoNo && String(condoNo).trim() !== '' && String(condoNo) !== '0') {
-    return 'Condo';
+    return { propertyTypeLabel: 'Condo', propertyTenure: 'CONDO' };
+  }
+
+  // Check for co-op (C0-C9 walkups or D0-D9 elevator buildings)
+  if (COOP_CLASSES.some(c => bc.startsWith(c))) {
+    return { propertyTypeLabel: 'Co-op', propertyTenure: 'COOP' };
   }
 
   // Check for commercial land use
   if (COMMERCIAL_LAND_USES.includes(lu)) {
-    return 'Commercial';
+    return { propertyTypeLabel: 'Commercial', propertyTenure: 'RENTAL_OR_OTHER' };
   }
 
   // Check for mixed-use
   if (MIXED_USE_LAND_USES.includes(lu)) {
-    return 'Mixed-Use';
+    return { propertyTypeLabel: 'Mixed-Use', propertyTenure: 'RENTAL_OR_OTHER' };
   }
 
-  // Check building class patterns
+  // Check building class patterns for 1-2 family
   if (ONE_TWO_FAMILY_CLASSES.some(c => bc.startsWith(c))) {
-    return '1-2 Family';
-  }
-
-  if (MULTI_FAMILY_CLASSES.some(c => bc.startsWith(c))) {
-    // Multi-family walkups - could be co-op or rental
-    if (unitsRes !== null && unitsRes >= 3) {
-      return '3+ Family';
-    }
-    return '3+ Family';
-  }
-
-  if (COOP_INDICATOR_CLASSES.some(c => bc.startsWith(c))) {
-    // Elevator apartments - commonly co-ops in NYC, but not always
-    return 'Co-op';
+    return { propertyTypeLabel: '1-2 Family', propertyTenure: 'RENTAL_OR_OTHER' };
   }
 
   // Fallback based on unit count
   if (unitsRes !== null) {
-    if (unitsRes <= 2) return '1-2 Family';
-    if (unitsRes >= 3) return '3+ Family';
+    if (unitsRes <= 2) return { propertyTypeLabel: '1-2 Family', propertyTenure: 'RENTAL_OR_OTHER' };
+    if (unitsRes >= 3) return { propertyTypeLabel: '3+ Family', propertyTenure: 'RENTAL_OR_OTHER' };
   }
 
   // Land use fallback
-  if (lu === '01') return '1-2 Family';
-  if (lu === '02' || lu === '03') return '3+ Family';
+  if (lu === '01') return { propertyTypeLabel: '1-2 Family', propertyTenure: 'RENTAL_OR_OTHER' };
+  if (lu === '02' || lu === '03') return { propertyTypeLabel: '3+ Family', propertyTenure: 'RENTAL_OR_OTHER' };
 
-  return 'Unknown';
+  return { propertyTypeLabel: 'Unknown', propertyTenure: 'UNKNOWN' };
 }
 
 // ============ Profile Processing ============
@@ -276,6 +274,7 @@ interface PropertyProfile {
   landUse: string | null;
   buildingClass: string | null;
   propertyTypeLabel: PropertyTypeLabel;
+  propertyTenure: PropertyTenure;
   residentialUnits: number | null;
   totalUnits: number | null;
   yearBuilt: number | null;
@@ -327,7 +326,7 @@ function normalizeProfile(raw: Record<string, unknown>, bbl: string, schema: Sch
     ? (typeof condoNoRaw === 'string' || typeof condoNoRaw === 'number' ? condoNoRaw : null) 
     : null;
 
-  const propertyTypeLabel = classifyPropertyType(buildingClass, landUse, unitsRes, condoNo);
+  const classification = classifyProperty(buildingClass, landUse, unitsRes, condoNo);
 
   const fieldsUsed = Object.entries(schema.columnMap)
     .filter(([_, col]) => col !== null)
@@ -341,7 +340,8 @@ function normalizeProfile(raw: Record<string, unknown>, bbl: string, schema: Sch
     address: getValue('address') as string | null,
     landUse,
     buildingClass,
-    propertyTypeLabel,
+    propertyTypeLabel: classification.propertyTypeLabel,
+    propertyTenure: classification.propertyTenure,
     residentialUnits: unitsRes,
     totalUnits: parseNumber(getValue('unitsTotal')),
     yearBuilt: parseNumber(getValue('yearBuilt')),
@@ -470,6 +470,7 @@ serve(async (req) => {
         landUse: null,
         buildingClass: null,
         propertyTypeLabel: 'Unknown',
+        propertyTenure: 'UNKNOWN',
         residentialUnits: null,
         totalUnits: null,
         yearBuilt: null,

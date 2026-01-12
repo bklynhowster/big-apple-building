@@ -4,7 +4,7 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { usePropertyProfile, PropertyTypeLabel } from '@/hooks/usePropertyProfile';
+import { usePropertyProfile, PropertyTypeLabel, PropertyTenure } from '@/hooks/usePropertyProfile';
 import { cn } from '@/lib/utils';
 
 interface PropertyProfileCardProps {
@@ -182,6 +182,8 @@ export function PropertyProfileCard({ bbl, unitLabel, parentAddress }: PropertyP
                   profile.residentialUnits !== null ||
                   profile.yearBuilt !== null;
 
+  const isCoop = profile.propertyTenure === 'COOP';
+
   return (
     <Card>
       <CardHeader className="pb-3">
@@ -283,6 +285,16 @@ export function PropertyProfileCard({ bbl, unitLabel, parentAddress }: PropertyP
             </div>
           </div>
         </div>
+
+        {/* Co-op disclaimer */}
+        {isCoop && (
+          <div className="flex items-start gap-2 p-3 mt-4 rounded-md bg-blue-50 dark:bg-blue-950/30 text-sm text-blue-800 dark:text-blue-200 border border-blue-200 dark:border-blue-800">
+            <Info className="h-4 w-4 mt-0.5 shrink-0" />
+            <p>
+              Co-op units do not have individual tax lots/BBLs. Most NYC regulatory records are issued at the building level.
+            </p>
+          </div>
+        )}
 
         {/* Data source note */}
         {hasData && (
