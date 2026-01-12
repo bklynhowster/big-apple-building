@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { Search, X, ChevronLeft, ChevronRight, Loader2, FileX, Download } from 'lucide-react';
+import { useState, useEffect, useMemo } from 'react';
+import { Search, X, ChevronLeft, ChevronRight, Loader2, FileX, Download, Info } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -25,6 +25,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import { usePermits, PermitsFilters, PermitRecord } from '@/hooks/usePermits';
 import { exportToCSV, PERMITS_COLUMNS } from '@/lib/csv-export';
 import { toast } from '@/hooks/use-toast';
@@ -34,6 +35,9 @@ import { ColumnSelector, useColumnVisibility, ColumnConfig } from './ColumnSelec
 import { QueriedIdentifier, DatasetCapability } from './QueriedIdentifier';
 import { QueryScope } from './ScopeSelector';
 import { BuildingLevelBanner } from './BuildingLevelBanner';
+import { useRecordUnitMentions } from '@/hooks/useRecordUnitMentions';
+import { UnitMentionBadges } from './UnitMentionBadges';
+import { UnitMentionFilter } from './UnitMentionFilter';
 
 interface PermitsTabProps {
   bbl: string;
@@ -46,6 +50,7 @@ interface PermitsTabProps {
 const COLUMN_CONFIGS: ColumnConfig[] = [
   { key: 'issueDate', label: 'Issue Date', defaultVisible: true },
   { key: 'status', label: 'Status', defaultVisible: true },
+  { key: 'mentions', label: 'Mentions', defaultVisible: true },
   { key: 'permitType', label: 'Type', defaultVisible: true },
   { key: 'workType', label: 'Work Type', defaultVisible: true },
   { key: 'description', label: 'Description', defaultVisible: true },
@@ -95,6 +100,11 @@ export function PermitsTab({ bbl, bin, scope = 'building', isCoop, coopUnitConte
   const { loading, error, data, filters, offset, fetchPermits, setFilters, applyFilters, goToNextPage, goToPrevPage, retry } = usePermits(bbl);
   const [localFilters, setLocalFilters] = useState<PermitsFilters>({ status: 'all', keyword: '' });
   
+  // Unit mention filter state
+  const [showMentionsOnly, setShowMentionsOnly] = useState(false);
+  const [selectedUnit, setSelectedUnit] = useState<string | null>(null);
+  const [showContextOnly, setShowContextOnly] = useState(false);
+  
   // Drawer state
   const [selectedRecord, setSelectedRecord] = useState<PermitRecord | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -106,6 +116,39 @@ export function PermitsTab({ bbl, bin, scope = 'building', isCoop, coopUnitConte
     if (bbl && bbl.length === 10) fetchPermits(bbl);
   }, [bbl, fetchPermits]);
 
+  // Transform items for unit mention extraction
+  const recordsForMentions = useMemo(() => {
+    const items = data?.items || [];
+    return items.map(item => ({
+      ...item,
+      raw: item.raw || item as unknown as Record<string, unknown>,
+    }));
+  }, [data?.items]);
+
+  // Extract unit mentions using the shared hook
+  const {
+    recordsWithMentions,
+    allMentionedUnits,
+    recordsWithMentionsCount,
+    filterByUnit,
+    filterToMentionsOnly,
+  } = useRecordUnitMentions(recordsForMentions, coopUnitContext);
+
+  // Apply unit mention filters
+  const filteredRecordsWithMentions = useMemo(() => {
+    let result = recordsWithMentions;
+    
+    if (showContextOnly && coopUnitContext) {
+      result = result.filter(rwm => rwm.matchesContext);
+    } else if (selectedUnit) {
+      result = filterByUnit(selectedUnit);
+    } else if (showMentionsOnly) {
+      result = filterToMentionsOnly();
+    }
+    
+    return result;
+  }, [recordsWithMentions, showMentionsOnly, selectedUnit, showContextOnly, coopUnitContext, filterByUnit, filterToMentionsOnly]);
+
   const handleFilterChange = (updates: Partial<PermitsFilters>) => {
     const newFilters = { ...localFilters, ...updates };
     setLocalFilters(newFilters);
@@ -116,6 +159,9 @@ export function PermitsTab({ bbl, bin, scope = 'building', isCoop, coopUnitConte
     const clearedFilters: PermitsFilters = { status: 'all', keyword: '', fromDate: undefined, toDate: undefined };
     setLocalFilters(clearedFilters);
     setFilters(clearedFilters);
+    setShowMentionsOnly(false);
+    setSelectedUnit(null);
+    setShowContextOnly(false);
   };
   
   const handleRowClick = (record: PermitRecord) => {
@@ -124,6 +170,7 @@ export function PermitsTab({ bbl, bin, scope = 'building', isCoop, coopUnitConte
   };
 
   const hasActiveFilters = localFilters.status !== 'all' || localFilters.keyword || localFilters.fromDate || localFilters.toDate;
+  const hasUnitFilters = showMentionsOnly || selectedUnit || showContextOnly;
 
   if (loading && !data) return <LoadingSkeleton />;
   if (error) return <div className="space-y-4"><ErrorBanner error={error} onRetry={retry} retrying={loading} /></div>;
@@ -131,7 +178,8 @@ export function PermitsTab({ bbl, bin, scope = 'building', isCoop, coopUnitConte
   // Dataset capability for Permits - BIN-based, building-level
   const datasetCapability: DatasetCapability = 'bin';
 
-  const items = data?.items || [];
+  const items = filteredRecordsWithMentions.map(rwm => ({ ...rwm.record, _mentions: rwm.mentions, _matchesContext: rwm.matchesContext }));
+  const totalItems = data?.items?.length || 0;
   const totalApprox = data?.totalApprox || 0;
   const hasNextPage = data?.nextOffset !== null;
   const hasPrevPage = offset > 0;
@@ -159,6 +207,17 @@ export function PermitsTab({ bbl, bin, scope = 'building', isCoop, coopUnitConte
         datasetCapability={datasetCapability}
         datasetName="DOB Permits (ipu4-2vj7)"
       />
+
+      {/* Unit mention disclaimer for co-ops */}
+      {isCoop && recordsWithMentionsCount > 0 && (
+        <Alert variant="default" className="border-primary/20 bg-primary/5">
+          <Info className="h-4 w-4" />
+          <AlertDescription className="text-sm">
+            <strong>{recordsWithMentionsCount}</strong> of {totalItems} permits mention specific unit(s). 
+            Unit mentions are inferred from permit text; not proof of unit-level enforcement.
+          </AlertDescription>
+        </Alert>
+      )}
       
       <div className="flex flex-col md:flex-row gap-4 p-4 bg-muted/50 rounded-lg">
         <div className="flex-1">
@@ -179,12 +238,31 @@ export function PermitsTab({ bbl, bin, scope = 'building', isCoop, coopUnitConte
           <Input type="date" value={localFilters.fromDate || ''} onChange={(e) => handleFilterChange({ fromDate: e.target.value || undefined })} className="w-36 bg-card" />
           <Input type="date" value={localFilters.toDate || ''} onChange={(e) => handleFilterChange({ toDate: e.target.value || undefined })} className="w-36 bg-card" />
           <Button onClick={applyFilters} disabled={loading}>{loading ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Apply'}</Button>
-          {hasActiveFilters && <Button variant="ghost" size="sm" onClick={handleClearFilters}><X className="h-4 w-4 mr-1" />Clear</Button>}
+          {(hasActiveFilters || hasUnitFilters) && <Button variant="ghost" size="sm" onClick={handleClearFilters}><X className="h-4 w-4 mr-1" />Clear</Button>}
         </div>
       </div>
 
+      {/* Unit mention filter (only for co-ops) */}
+      {isCoop && (
+        <UnitMentionFilter
+          allMentionedUnits={allMentionedUnits}
+          mentionCount={recordsWithMentionsCount}
+          totalCount={totalItems}
+          selectedUnit={selectedUnit}
+          showMentionsOnly={showMentionsOnly}
+          coopUnitContext={coopUnitContext}
+          showContextOnly={showContextOnly}
+          onUnitChange={setSelectedUnit}
+          onMentionsOnlyChange={setShowMentionsOnly}
+          onContextOnlyChange={setShowContextOnly}
+        />
+      )}
+
       <div className="flex items-center justify-between text-sm text-muted-foreground">
-        <div>Showing {items.length} of ~{totalApprox} permits{hasActiveFilters && <span className="ml-2 text-primary">(filtered)</span>}</div>
+        <div>
+          Showing {items.length} of ~{totalApprox} permits
+          {(hasActiveFilters || hasUnitFilters) && <span className="ml-2 text-primary">(filtered)</span>}
+        </div>
         <div className="flex items-center gap-2">
           {loading && <Loader2 className="h-4 w-4 animate-spin" />}
           <ColumnSelector columns={COLUMN_CONFIGS} visibleColumns={visibleColumns} onToggle={toggle} onReset={reset} />
@@ -196,8 +274,12 @@ export function PermitsTab({ bbl, bin, scope = 'building', isCoop, coopUnitConte
         <div className="flex flex-col items-center justify-center py-12 text-center border rounded-lg bg-muted/20">
           <FileX className="h-12 w-12 text-muted-foreground mb-4" />
           <p className="text-foreground font-medium mb-2">No permits found</p>
-          <p className="text-sm text-muted-foreground">No permits found for this property with the current filters.</p>
-          {hasActiveFilters && <Button variant="link" onClick={handleClearFilters} className="mt-2">Clear filters and try again</Button>}
+          <p className="text-sm text-muted-foreground">
+            {hasUnitFilters 
+              ? 'No permits match the current unit filter.'
+              : 'No permits found for this property with the current filters.'}
+          </p>
+          {(hasActiveFilters || hasUnitFilters) && <Button variant="link" onClick={handleClearFilters} className="mt-2">Clear filters and try again</Button>}
         </div>
       )}
 
@@ -208,6 +290,7 @@ export function PermitsTab({ bbl, bin, scope = 'building', isCoop, coopUnitConte
               <TableRow className="bg-muted/50">
                 {isVisible('issueDate') && <TableHead className="font-semibold">Issue Date</TableHead>}
                 {isVisible('status') && <TableHead className="font-semibold">Status</TableHead>}
+                {isCoop && isVisible('mentions') && <TableHead className="font-semibold">Mentions</TableHead>}
                 {isVisible('permitType') && <TableHead className="font-semibold">Type</TableHead>}
                 {isVisible('workType') && <TableHead className="font-semibold">Work Type</TableHead>}
                 {isVisible('description') && <TableHead className="font-semibold">Description</TableHead>}
@@ -218,33 +301,46 @@ export function PermitsTab({ bbl, bin, scope = 'building', isCoop, coopUnitConte
               </TableRow>
             </TableHeader>
             <TableBody>
-              {items.map((item, index) => (
-                <TableRow 
-                  key={`${item.recordId}-${index}`}
-                  className="cursor-pointer hover:bg-muted/50"
-                  onClick={() => handleRowClick(item)}
-                >
-                  {isVisible('issueDate') && <TableCell className="text-sm">{item.issueDate ? new Date(item.issueDate).toLocaleDateString() : '-'}</TableCell>}
-                  {isVisible('status') && <TableCell><StatusBadge status={item.status} /></TableCell>}
-                  {isVisible('permitType') && <TableCell className="text-sm font-medium">{item.permitType || item.category || '-'}</TableCell>}
-                  {isVisible('workType') && <TableCell className="text-sm">{item.workType || '-'}</TableCell>}
-                  {isVisible('description') && (
-                    <TableCell className="max-w-xs">
-                      {item.description ? (
-                        <TooltipProvider><Tooltip><TooltipTrigger asChild><span className="text-sm line-clamp-2 cursor-help">{item.description}</span></TooltipTrigger><TooltipContent className="max-w-md"><p>{item.description}</p>{item.applicantName && <p className="mt-1 text-xs text-muted-foreground">Applicant: {item.applicantName}</p>}{item.ownerName && <p className="text-xs text-muted-foreground">Owner: {item.ownerName}</p>}</TooltipContent></Tooltip></TooltipProvider>
-                      ) : <span className="text-muted-foreground">-</span>}
-                    </TableCell>
-                  )}
-                  {isVisible('expirationDate') && (
-                    <TableCell className="text-sm">
-                      {item.expirationDate ? <span className={new Date(item.expirationDate) < new Date() ? 'text-destructive' : ''}>{new Date(item.expirationDate).toLocaleDateString()}</span> : '-'}
-                    </TableCell>
-                  )}
-                  {isVisible('jobNumber') && <TableCell><span className="font-mono text-sm">{item.jobNumber || item.recordId}</span></TableCell>}
-                  {isVisible('applicantName') && <TableCell className="text-sm">{item.applicantName || '-'}</TableCell>}
-                  {isVisible('ownerName') && <TableCell className="text-sm">{item.ownerName || '-'}</TableCell>}
-                </TableRow>
-              ))}
+              {items.map((item, index) => {
+                const mentions = (item as any)._mentions || [];
+                const matchesContext = (item as any)._matchesContext || false;
+                
+                return (
+                  <TableRow 
+                    key={`${item.recordId}-${index}`}
+                    className={`cursor-pointer hover:bg-muted/50 ${matchesContext ? 'bg-primary/5 border-l-2 border-l-primary' : ''}`}
+                    onClick={() => handleRowClick(item)}
+                  >
+                    {isVisible('issueDate') && <TableCell className="text-sm">{item.issueDate ? new Date(item.issueDate).toLocaleDateString() : '-'}</TableCell>}
+                    {isVisible('status') && <TableCell><StatusBadge status={item.status} /></TableCell>}
+                    {isCoop && isVisible('mentions') && (
+                      <TableCell>
+                        <UnitMentionBadges 
+                          mentions={mentions}
+                          matchesContext={matchesContext}
+                        />
+                      </TableCell>
+                    )}
+                    {isVisible('permitType') && <TableCell className="text-sm font-medium">{item.permitType || item.category || '-'}</TableCell>}
+                    {isVisible('workType') && <TableCell className="text-sm">{item.workType || '-'}</TableCell>}
+                    {isVisible('description') && (
+                      <TableCell className="max-w-xs">
+                        {item.description ? (
+                          <TooltipProvider><Tooltip><TooltipTrigger asChild><span className="text-sm line-clamp-2 cursor-help">{item.description}</span></TooltipTrigger><TooltipContent className="max-w-md"><p>{item.description}</p>{item.applicantName && <p className="mt-1 text-xs text-muted-foreground">Applicant: {item.applicantName}</p>}{item.ownerName && <p className="text-xs text-muted-foreground">Owner: {item.ownerName}</p>}</TooltipContent></Tooltip></TooltipProvider>
+                        ) : <span className="text-muted-foreground">-</span>}
+                      </TableCell>
+                    )}
+                    {isVisible('expirationDate') && (
+                      <TableCell className="text-sm">
+                        {item.expirationDate ? <span className={new Date(item.expirationDate) < new Date() ? 'text-destructive' : ''}>{new Date(item.expirationDate).toLocaleDateString()}</span> : '-'}
+                      </TableCell>
+                    )}
+                    {isVisible('jobNumber') && <TableCell><span className="font-mono text-sm">{item.jobNumber || item.recordId}</span></TableCell>}
+                    {isVisible('applicantName') && <TableCell className="text-sm">{item.applicantName || '-'}</TableCell>}
+                    {isVisible('ownerName') && <TableCell className="text-sm">{item.ownerName || '-'}</TableCell>}
+                  </TableRow>
+                );
+              })}
             </TableBody>
           </Table>
         </div>
