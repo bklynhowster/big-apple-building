@@ -1,5 +1,6 @@
 import { Building2 } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import { SavedSearchesDropdown } from '@/components/SavedSearchesDropdown';
 
 export function Header() {
   return (
@@ -19,10 +20,11 @@ export function Header() {
               </p>
             </div>
           </Link>
-          <nav className="hidden md:flex items-center gap-6">
+          <nav className="flex items-center gap-4">
+            <SavedSearchesDropdown />
             <Link 
               to="/" 
-              className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
+              className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors hidden md:inline"
             >
               Search
             </Link>
@@ -30,7 +32,7 @@ export function Header() {
               href="https://www1.nyc.gov/site/buildings/index.page" 
               target="_blank" 
               rel="noopener noreferrer"
-              className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
+              className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors hidden md:inline"
             >
               NYC DOB
             </a>

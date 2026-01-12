@@ -1,5 +1,5 @@
-import { useMemo, useState, useCallback } from 'react';
-import { useLocation, Link } from 'react-router-dom';
+import { useMemo, useState, useCallback, useEffect } from 'react';
+import { useLocation, Link, useNavigate } from 'react-router-dom';
 import { ArrowLeft, AlertCircle } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
 import { Footer } from '@/components/layout/Footer';
@@ -14,20 +14,35 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 
+const VALID_TABS = ['summary', 'violations', 'ecb', 'safety', 'permits', 'all'] as const;
+type ValidTab = typeof VALID_TABS[number];
+
 function normalizeBBL(bbl: string | null): string {
   if (!bbl) return '';
   const padded = String(bbl).padStart(10, '0');
   return padded.length === 10 ? padded : '';
 }
 
+function isValidTab(tab: string | null): tab is ValidTab {
+  return tab !== null && VALID_TABS.includes(tab as ValidTab);
+}
+
 export default function Results() {
   const location = useLocation();
-  const [activeTab, setActiveTab] = useState('summary');
+  const navigate = useNavigate();
 
   // Read all params from URL
   const params = useMemo(() => {
     return new URLSearchParams(location.search);
   }, [location.search]);
+
+  // Initialize active tab from URL or default to 'summary'
+  const initialTab = useMemo(() => {
+    const tabParam = params.get('tab');
+    return isValidTab(tabParam) ? tabParam : 'summary';
+  }, [params]);
+
+  const [activeTab, setActiveTab] = useState<string>(initialTab);
 
   const bbl = useMemo(() => normalizeBBL(params.get('bbl')), [params]);
   const address = params.get('address') || '';
@@ -41,14 +56,34 @@ export default function Results() {
   // State for passing keyword filter to tabs from "View in tab"
   const [tabKeywordFilter, setTabKeywordFilter] = useState<string | undefined>();
 
+  // Sync tab changes to URL
   const handleTabChange = useCallback((tab: string, keyword?: string) => {
     setActiveTab(tab);
     setTabKeywordFilter(keyword);
-  }, []);
+    
+    // Update URL with new tab (without full navigation)
+    const newParams = new URLSearchParams(location.search);
+    if (tab === 'summary') {
+      newParams.delete('tab'); // Default tab, no need in URL
+    } else {
+      newParams.set('tab', tab);
+    }
+    const newUrl = `${location.pathname}?${newParams.toString()}`;
+    window.history.replaceState(null, '', newUrl);
+  }, [location.search, location.pathname]);
 
   const handleViewInTab = useCallback((tab: string, keyword?: string) => {
     handleTabChange(tab, keyword);
   }, [handleTabChange]);
+
+  // Sync from URL when it changes externally (e.g., back/forward navigation)
+  useEffect(() => {
+    const tabParam = params.get('tab');
+    const validTab = isValidTab(tabParam) ? tabParam : 'summary';
+    if (validTab !== activeTab) {
+      setActiveTab(validTab);
+    }
+  }, [params]);
 
   return (
     <div className="flex flex-col min-h-screen">

@@ -1,8 +1,9 @@
-import { Copy, ExternalLink, Check, MapPin, Building2 } from 'lucide-react';
+import { Copy, ExternalLink, Check, MapPin, Building2, Share2, Bookmark, BookmarkCheck } from 'lucide-react';
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { toast } from '@/hooks/use-toast';
+import { useSavedSearches } from '@/hooks/useSavedSearches';
 
 interface PropertyOverviewProps {
   bbl: string;
@@ -75,6 +76,9 @@ export function PropertyOverview({
 }: PropertyOverviewProps) {
   const { boroughCode, block, lot } = parseBBL(bbl);
   const derivedBorough = borough || BOROUGH_NAMES[boroughCode] || '';
+  const { saveSearch, isSearchSaved, deleteSearch, getSearchByBBL } = useSavedSearches();
+
+  const isSaved = isSearchSaved(bbl);
 
   // External links
   const bisUrl = bin
@@ -84,6 +88,47 @@ export function PropertyOverview({
   const dobNowUrl = 'https://a810-dobnow.nyc.gov/publish/Index.html';
   
   const acrisUrl = `https://a836-acris.nyc.gov/bblsearch/bblsearch.asp?borough=${boroughCode}&block=${block}&lot=${lot}`;
+
+  const handleSaveSearch = () => {
+    if (isSaved) {
+      const existing = getSearchByBBL(bbl);
+      if (existing) {
+        deleteSearch(existing.id);
+        toast({
+          title: 'Search removed',
+          description: 'Property removed from saved searches',
+        });
+      }
+    } else {
+      saveSearch({
+        bbl,
+        address: address || undefined,
+        borough: derivedBorough || undefined,
+        bin: bin || undefined,
+      });
+      toast({
+        title: 'Search saved',
+        description: 'Property added to saved searches',
+      });
+    }
+  };
+
+  const handleShare = async () => {
+    const url = window.location.href;
+    try {
+      await navigator.clipboard.writeText(url);
+      toast({
+        title: 'Link copied',
+        description: 'Results URL copied to clipboard',
+      });
+    } catch {
+      toast({
+        title: 'Failed to copy',
+        description: 'Please copy the URL manually',
+        variant: 'destructive',
+      });
+    }
+  };
 
   return (
     <Card className="border-border">
@@ -130,41 +175,75 @@ export function PropertyOverview({
               </div>
             </div>
 
-            {/* External Links */}
-            <div className="flex flex-wrap gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                className="gap-1.5 text-xs"
-                asChild
-              >
-                <a href={bisUrl} target="_blank" rel="noopener noreferrer">
-                  <ExternalLink className="h-3 w-3" />
-                  DOB BIS
-                </a>
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                className="gap-1.5 text-xs"
-                asChild
-              >
-                <a href={dobNowUrl} target="_blank" rel="noopener noreferrer">
-                  <ExternalLink className="h-3 w-3" />
-                  DOB NOW
-                </a>
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                className="gap-1.5 text-xs"
-                asChild
-              >
-                <a href={acrisUrl} target="_blank" rel="noopener noreferrer">
-                  <ExternalLink className="h-3 w-3" />
-                  ACRIS
-                </a>
-              </Button>
+            {/* Actions and External Links */}
+            <div className="flex flex-col gap-2">
+              {/* Save and Share */}
+              <div className="flex gap-2">
+                <Button
+                  variant={isSaved ? "secondary" : "outline"}
+                  size="sm"
+                  className="gap-1.5 text-xs"
+                  onClick={handleSaveSearch}
+                >
+                  {isSaved ? (
+                    <>
+                      <BookmarkCheck className="h-3 w-3" />
+                      Saved
+                    </>
+                  ) : (
+                    <>
+                      <Bookmark className="h-3 w-3" />
+                      Save
+                    </>
+                  )}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-1.5 text-xs"
+                  onClick={handleShare}
+                >
+                  <Share2 className="h-3 w-3" />
+                  Share
+                </Button>
+              </div>
+              
+              {/* External Links */}
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-1.5 text-xs"
+                  asChild
+                >
+                  <a href={bisUrl} target="_blank" rel="noopener noreferrer">
+                    <ExternalLink className="h-3 w-3" />
+                    DOB BIS
+                  </a>
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-1.5 text-xs"
+                  asChild
+                >
+                  <a href={dobNowUrl} target="_blank" rel="noopener noreferrer">
+                    <ExternalLink className="h-3 w-3" />
+                    DOB NOW
+                  </a>
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-1.5 text-xs"
+                  asChild
+                >
+                  <a href={acrisUrl} target="_blank" rel="noopener noreferrer">
+                    <ExternalLink className="h-3 w-3" />
+                    ACRIS
+                  </a>
+                </Button>
+              </div>
             </div>
           </div>
         </div>
