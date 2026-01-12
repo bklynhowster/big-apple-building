@@ -60,15 +60,18 @@ function DualCountCard({
   onTabChange,
   showDualCounts 
 }: DualCountCardProps) {
-  // Use building data for the border color since that's the primary view
-  const primaryData = buildingData || unitData;
-  const openCount = primaryData?.openCount || 0;
+  // When showing dual counts on unit page, unit is primary; otherwise building is primary
+  const unitOpenCount = unitData?.openCount || 0;
+  const buildingOpenCount = buildingData?.openCount || 0;
+  
+  // Use unit data for border color when in dual mode, otherwise use building
+  const primaryOpenCount = showDualCounts ? unitOpenCount : buildingOpenCount;
 
   return (
     <Card 
       className={cn(
         "cursor-pointer transition-all hover:shadow-md border-l-4",
-        getStatusColor(openCount)
+        getStatusColor(primaryOpenCount)
       )}
       onClick={() => onTabChange(tabKey)}
     >
@@ -92,53 +95,54 @@ function DualCountCard({
       </CardHeader>
       <CardContent className="space-y-3">
         {showDualCounts ? (
-          <>
-            {/* Dual counts view */}
-            <div className="grid grid-cols-2 gap-2">
-              <div className="bg-muted/30 rounded p-2 text-center">
-                <div className="flex items-center justify-center gap-1 text-xs text-muted-foreground mb-1">
-                  <Home className="h-3 w-3" />
-                  <span>Unit</span>
+          <div className="space-y-2">
+            {/* Unit count - PRIMARY, visually dominant */}
+            <div className="bg-primary/5 border border-primary/20 rounded-lg p-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Home className="h-4 w-4 text-primary" />
+                  <span className="text-sm font-medium text-foreground">Unit</span>
                 </div>
                 {isUnitCapable && unitData ? (
-                  <span className={cn("text-lg font-semibold", unitData.openCount > 0 ? 'text-destructive' : 'text-green-600')}>
+                  <span className={cn(
+                    "text-2xl font-bold",
+                    unitData.openCount > 0 ? 'text-destructive' : 'text-green-600'
+                  )}>
                     {unitData.openCount}
                   </span>
                 ) : (
-                  <span className="text-muted-foreground text-sm">—</span>
+                  <span className="text-muted-foreground">—</span>
                 )}
               </div>
-              <div className="bg-muted/30 rounded p-2 text-center">
-                <div className="flex items-center justify-center gap-1 text-xs text-muted-foreground mb-1">
-                  <Building2 className="h-3 w-3" />
-                  <span>Building</span>
-                </div>
-                {buildingData ? (
-                  <span className={cn("text-lg font-semibold", buildingData.openCount > 0 ? 'text-destructive' : 'text-green-600')}>
-                    {buildingData.openCount}
-                  </span>
-                ) : (
-                  <span className="text-muted-foreground text-sm">—</span>
-                )}
-              </div>
+              {!isUnitCapable && (
+                <p className="text-[10px] text-muted-foreground mt-1">
+                  Building-level dataset
+                </p>
+              )}
             </div>
             
-            <div className="flex items-center justify-between text-xs">
-              <span className="text-muted-foreground">Total (Building)</span>
-              <span className="font-medium">{buildingData?.totalCount || 0}</span>
+            {/* Building count - SECONDARY, muted */}
+            <div className="flex items-center justify-between px-2 py-1.5 text-muted-foreground">
+              <div className="flex items-center gap-2">
+                <Building2 className="h-3.5 w-3.5" />
+                <span className="text-xs">Building total</span>
+              </div>
+              <span className="text-sm font-medium">
+                {buildingData?.openCount || 0}
+              </span>
             </div>
-          </>
+          </div>
         ) : (
           <>
             {/* Single count view (building only) */}
             <div className="flex items-center justify-between">
               <span className="text-sm text-muted-foreground">Total</span>
-              <span className="font-semibold text-lg">{primaryData?.totalCount || 0}</span>
+              <span className="font-semibold text-lg">{buildingData?.totalCount || 0}</span>
             </div>
             <div className="flex items-center justify-between">
               <span className="text-sm text-muted-foreground">Open</span>
-              <span className={cn("px-2 py-0.5 rounded-full text-sm font-medium", getStatusBadgeColor(openCount))}>
-                {openCount}
+              <span className={cn("px-2 py-0.5 rounded-full text-sm font-medium", getStatusBadgeColor(buildingOpenCount))}>
+                {buildingOpenCount}
               </span>
             </div>
           </>
@@ -146,7 +150,7 @@ function DualCountCard({
         
         <div className="flex items-center justify-between">
           <span className="text-xs text-muted-foreground">Last Activity</span>
-          <span className="text-xs">{formatDate(primaryData?.lastActivityDate || null)}</span>
+          <span className="text-xs">{formatDate(buildingData?.lastActivityDate || null)}</span>
         </div>
         
         <button 

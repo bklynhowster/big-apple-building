@@ -3,6 +3,7 @@ import { useLocation, Link, useNavigate } from 'react-router-dom';
 import { ArrowLeft, AlertCircle, Building2, Home } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
 import { Footer } from '@/components/layout/Footer';
+import { ContextBanner, QueryScope } from '@/components/results/ContextBanner';
 import { PropertyOverview } from '@/components/results/PropertyOverview';
 import { PropertyProfileCard } from '@/components/results/PropertyProfileCard';
 import { CondoUnitsCard } from '@/components/results/CondoUnitsCard';
@@ -15,7 +16,6 @@ import { AllRecordsTab } from '@/components/results/AllRecordsTab';
 import { HPDTab } from '@/components/results/HPDTab';
 import { ThreeOneOneTab } from '@/components/results/ThreeOneOneTab';
 import { QueryDebugPanel } from '@/components/results/QueryDebugPanel';
-import { ScopeSelector, QueryScope } from '@/components/results/ScopeSelector';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -138,21 +138,30 @@ export default function Results() {
     }
   }, [params]);
 
+  // Update document title based on context
+  useEffect(() => {
+    const isCondoUnit = hasCondoUnits && isUnitLot;
+    if (isCondoUnit && currentUnitLabel && address) {
+      document.title = `${address} — Unit ${currentUnitLabel} | Property Search`;
+    } else if (address) {
+      document.title = `${address} | Property Search`;
+    } else if (bbl) {
+      document.title = `BBL ${bbl} | Property Search`;
+    } else {
+      document.title = 'Property Search';
+    }
+    
+    return () => {
+      document.title = 'Property Search';
+    };
+  }, [address, currentUnitLabel, hasCondoUnits, isUnitLot, bbl]);
+
   return (
     <div className="flex flex-col min-h-screen">
       <Header />
       
       <main className="flex-1 bg-muted/30">
         <div className="container mx-auto px-4 py-6">
-          {/* Back Navigation */}
-          <div className="mb-6">
-            <Link to="/">
-              <Button variant="ghost" size="sm" className="gap-2">
-                <ArrowLeft className="h-4 w-4" />
-                New Search
-              </Button>
-            </Link>
-          </div>
 
           {/* Missing/Invalid BBL State */}
           {!isValidBBL && (
@@ -174,89 +183,103 @@ export default function Results() {
               {/* Query Debug Panel - visible when ?debug=1 */}
               <QueryDebugPanel />
               
-              {/* Property Overview */}
-              <PropertyOverview
-                bbl={bbl}
+              {/* Context Banner - Primary navigation and scope control */}
+              <ContextBanner
                 address={address}
-                borough={borough}
-                bin={bin}
-                latitude={latitude}
-                longitude={longitude}
                 unitLabel={currentUnitLabel}
+                unitBbl={bbl}
                 billingBbl={billingBbl}
+                bin={bin}
+                borough={borough}
                 isCondoUnit={hasCondoUnits && isUnitLot}
+                scope={scope}
+                onScopeChange={setScope}
               />
 
               {/* Property Profile */}
               <PropertyProfileCard bbl={bbl} />
               
-              {/* Condo Units Discovery */}
-              <CondoUnitsCard 
-                bbl={bbl} 
-                onUnitLabelResolved={setCurrentUnitLabel}
-                onBillingBblResolved={handleBillingBblResolved}
-              />
+              {/* Condo Units Discovery - only show when NOT on a unit page */}
+              {!isUnitLot && (
+                <CondoUnitsCard 
+                  bbl={bbl} 
+                  onUnitLabelResolved={setCurrentUnitLabel}
+                  onBillingBblResolved={handleBillingBblResolved}
+                />
+              )}
               
-              {/* Scope Selector - show when condo units exist */}
-              <ScopeSelector
-                scope={scope}
-                onScopeChange={setScope}
-                unitBbl={isUnitLot ? bbl : null}
-                billingBbl={billingBbl}
-                isCondoUnit={hasCondoUnits && (isUnitLot || isBillingLot)}
-              />
+              {/* Hidden component to resolve billing BBL when on unit page */}
+              {isUnitLot && (
+                <CondoUnitsCard 
+                  bbl={bbl} 
+                  onUnitLabelResolved={setCurrentUnitLabel}
+                  onBillingBblResolved={handleBillingBblResolved}
+                  hidden
+                />
+              )}
 
               <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
-                <TabsList className="w-full justify-start bg-card border-b border-border rounded-none h-auto p-0 flex-wrap">
-                  <TabsTrigger 
-                    value="summary" 
-                    className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent py-3 px-6"
-                  >
-                    Summary
-                  </TabsTrigger>
-                  <TabsTrigger 
-                    value="violations" 
-                    className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent py-3 px-6"
-                  >
-                    Violations
-                  </TabsTrigger>
-                  <TabsTrigger 
-                    value="ecb" 
-                    className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent py-3 px-6"
-                  >
-                    ECB
-                  </TabsTrigger>
-                  <TabsTrigger 
-                    value="safety" 
-                    className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent py-3 px-6"
-                  >
-                    Safety
-                  </TabsTrigger>
-                  <TabsTrigger 
-                    value="permits" 
-                    className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent py-3 px-6"
-                  >
-                    Permits
-                  </TabsTrigger>
-                  <TabsTrigger 
-                    value="hpd" 
-                    className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent py-3 px-6"
-                  >
-                    HPD
-                  </TabsTrigger>
-                  <TabsTrigger 
-                    value="311" 
-                    className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent py-3 px-6"
-                  >
-                    311 Nearby
-                  </TabsTrigger>
-                  <TabsTrigger 
-                    value="all" 
-                    className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent py-3 px-6"
-                  >
-                    All Records
-                  </TabsTrigger>
-                </TabsList>
+                <div className="flex items-center justify-between bg-card border-b border-border">
+                  <TabsList className="justify-start bg-transparent rounded-none h-auto p-0 flex-wrap">
+                    <TabsTrigger 
+                      value="summary" 
+                      className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent py-3 px-6"
+                    >
+                      Summary
+                    </TabsTrigger>
+                    <TabsTrigger 
+                      value="violations" 
+                      className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent py-3 px-6"
+                    >
+                      Violations
+                    </TabsTrigger>
+                    <TabsTrigger 
+                      value="ecb" 
+                      className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent py-3 px-6"
+                    >
+                      ECB
+                    </TabsTrigger>
+                    <TabsTrigger 
+                      value="safety" 
+                      className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent py-3 px-6"
+                    >
+                      Safety
+                    </TabsTrigger>
+                    <TabsTrigger 
+                      value="permits" 
+                      className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent py-3 px-6"
+                    >
+                      Permits
+                    </TabsTrigger>
+                    <TabsTrigger 
+                      value="hpd" 
+                      className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent py-3 px-6"
+                    >
+                      HPD
+                    </TabsTrigger>
+                    <TabsTrigger 
+                      value="311" 
+                      className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent py-3 px-6"
+                    >
+                      311 Nearby
+                    </TabsTrigger>
+                    <TabsTrigger 
+                      value="all" 
+                      className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent py-3 px-6"
+                    >
+                      All Records
+                    </TabsTrigger>
+                  </TabsList>
+                  
+                  {/* Scope indicator badge for tabs */}
+                  {hasCondoUnits && isUnitLot && (
+                    <div className="px-4 py-2">
+                      <Badge variant={scope === 'unit' ? 'default' : 'secondary'} className="text-xs">
+                        {scope === 'unit' ? 'Unit view' : 'Building view'}
+                      </Badge>
+                    </div>
+                  )}
+                </div>
 
                 <div className="mt-6">
                   <TabsContent value="summary" className="mt-0">
