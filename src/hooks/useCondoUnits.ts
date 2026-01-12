@@ -7,6 +7,7 @@ export interface CondoUnit {
   block: string;
   lot: string;
   unitLabel: string | null;
+  unitLabelSource: string | null;
   raw: Record<string, unknown>;
 }
 

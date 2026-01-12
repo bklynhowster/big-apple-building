@@ -64,11 +64,13 @@ export default function Results() {
   // Context switching state for condos
   const [contextBbl, setContextBbl] = useState<string>(bbl);
   const [isUnitContext, setIsUnitContext] = useState<boolean>(false);
+  const [currentUnitLabel, setCurrentUnitLabel] = useState<string | null>(null);
   
   // Update context BBL when main BBL changes
   useEffect(() => {
     setContextBbl(bbl);
     setIsUnitContext(false);
+    setCurrentUnitLabel(null);
   }, [bbl]);
   
   // Handle context switch from condo units card
@@ -147,13 +149,18 @@ export default function Results() {
                 bin={bin}
                 latitude={latitude}
                 longitude={longitude}
+                unitLabel={currentUnitLabel}
               />
 
               {/* Property Profile */}
               <PropertyProfileCard bbl={bbl} />
               
               {/* Condo Units Discovery */}
-              <CondoUnitsCard bbl={bbl} onContextChange={handleContextChange} />
+              <CondoUnitsCard 
+                bbl={bbl} 
+                onContextChange={handleContextChange} 
+                onUnitLabelResolved={setCurrentUnitLabel}
+              />
               
               {/* Context Indicator - show when viewing unit vs building context */}
               {contextBbl !== bbl && (
