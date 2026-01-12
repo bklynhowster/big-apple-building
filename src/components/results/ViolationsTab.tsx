@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Search, X, ChevronLeft, ChevronRight, Loader2, AlertCircle, FileX, Download } from 'lucide-react';
+import { Search, X, ChevronLeft, ChevronRight, Loader2, FileX, Download } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -28,6 +28,7 @@ import {
 import { useViolations, ViolationsFilters, ViolationRecord } from '@/hooks/useViolations';
 import { exportToCSV, VIOLATIONS_COLUMNS } from '@/lib/csv-export';
 import { toast } from '@/hooks/use-toast';
+import { ErrorBanner } from '@/components/ui/error-banner';
 
 interface ViolationsTabProps {
   bbl: string;
@@ -94,6 +95,7 @@ export function ViolationsTab({ bbl }: ViolationsTabProps) {
     applyFilters,
     goToNextPage,
     goToPrevPage,
+    retry,
   } = useViolations(bbl);
 
   const [localFilters, setLocalFilters] = useState<ViolationsFilters>({
@@ -143,13 +145,12 @@ export function ViolationsTab({ bbl }: ViolationsTabProps) {
   // Error state
   if (error) {
     return (
-      <div className="flex flex-col items-center justify-center py-12 text-center">
-        <AlertCircle className="h-12 w-12 text-destructive mb-4" />
-        <p className="text-foreground font-medium mb-2">Failed to load violations</p>
-        <p className="text-sm text-muted-foreground mb-4">{error}</p>
-        <Button variant="outline" onClick={() => bbl && fetchViolations(bbl)}>
-          Try Again
-        </Button>
+      <div className="space-y-4">
+        <ErrorBanner 
+          error={error} 
+          onRetry={retry}
+          retrying={loading}
+        />
       </div>
     );
   }

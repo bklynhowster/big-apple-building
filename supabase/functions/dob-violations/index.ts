@@ -10,6 +10,112 @@ const corsHeaders = {
 const NYC_OPEN_DATA_BASE = 'https://data.cityofnewyork.us/resource/3h2n-5cm9.json';
 const NYC_OPEN_DATA_APP_TOKEN = Deno.env.get('NYC_OPEN_DATA_APP_TOKEN');
 
+// ============ Inline Shared Utilities ============
+
+// Generate unique request ID
+function generateRequestId(): string {
+  const timestamp = Date.now().toString(36);
+  const random = Math.random().toString(36).substring(2, 10);
+  return `${timestamp}-${random}`;
+}
+
+interface RequestContext {
+  requestId: string;
+  endpoint: string;
+  bbl?: string;
+  startTime: number;
+}
+
+function createRequestContext(endpoint: string, bbl?: string): RequestContext {
+  return { requestId: generateRequestId(), endpoint, bbl, startTime: Date.now() };
+}
+
+function logRequest(ctx: RequestContext, message: string, extra?: Record<string, unknown>) {
+  const duration = Date.now() - ctx.startTime;
+  console.log(JSON.stringify({ requestId: ctx.requestId, endpoint: ctx.endpoint, bbl: ctx.bbl, durationMs: duration, message, ...extra }));
+}
+
+interface StandardError {
+  error: string;
+  details: string;
+  userMessage: string;
+  requestId: string;
+  upstream?: { service: string; status: number };
+}
+
+function createErrorResponse(ctx: RequestContext, statusCode: number, error: string, details: string, userMessage: string, upstream?: { service: string; status: number }): Response {
+  const body: StandardError = { error, details, userMessage, requestId: ctx.requestId, ...(upstream && { upstream }) };
+  logRequest(ctx, `Error: ${error}`, { statusCode, upstreamStatus: upstream?.status });
+  return new Response(JSON.stringify(body), { status: statusCode, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+}
+
+// Simple in-memory rate limiter
+const rateLimitStore = new Map<string, { count: number; windowStart: number }>();
+function checkRateLimit(ip: string, maxRequests = 30, windowMs = 60000): { allowed: boolean; retryAfter?: number } {
+  const now = Date.now();
+  const entry = rateLimitStore.get(ip);
+  if (!entry || now - entry.windowStart >= windowMs) {
+    rateLimitStore.set(ip, { count: 1, windowStart: now });
+    return { allowed: true };
+  }
+  if (entry.count >= maxRequests) {
+    return { allowed: false, retryAfter: Math.ceil((entry.windowStart + windowMs - now) / 1000) };
+  }
+  entry.count++;
+  return { allowed: true };
+}
+
+function getClientIP(req: Request): string {
+  return req.headers.get('x-forwarded-for')?.split(',')[0].trim() || req.headers.get('x-real-ip') || 'unknown';
+}
+
+// Simple in-memory cache
+const cache = new Map<string, { data: unknown; expiresAt: number }>();
+const CACHE_TTL = 10 * 60 * 1000; // 10 minutes
+
+function getCached<T>(key: string): T | null {
+  const entry = cache.get(key);
+  if (!entry || entry.expiresAt < Date.now()) {
+    if (entry) cache.delete(key);
+    return null;
+  }
+  return entry.data as T;
+}
+
+function setCache<T>(key: string, data: T): void {
+  cache.set(key, { data, expiresAt: Date.now() + CACHE_TTL });
+}
+
+// Fetch with retry for 5xx only
+async function fetchWithRetry(url: string, options: RequestInit = {}): Promise<{ ok: boolean; status: number; data?: unknown; error?: string; retryAfter?: number }> {
+  for (let attempt = 0; attempt <= 1; attempt++) {
+    try {
+      const response = await fetch(url, options);
+      if (response.ok) {
+        return { ok: true, status: response.status, data: await response.json() };
+      }
+      if (response.status === 429) {
+        const retryAfter = parseInt(response.headers.get('retry-after') || '60', 10);
+        return { ok: false, status: 429, error: 'Rate limit exceeded', retryAfter };
+      }
+      if (response.status >= 500 && attempt < 1) {
+        await new Promise(r => setTimeout(r, 250));
+        continue;
+      }
+      return { ok: false, status: response.status, error: await response.text() };
+    } catch (error) {
+      if (attempt < 1) {
+        await new Promise(r => setTimeout(r, 250));
+        continue;
+      }
+      return { ok: false, status: 0, error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+  return { ok: false, status: 0, error: 'All retry attempts failed' };
+}
+
+// ============ End Shared Utilities ============
+
 interface ViolationRecord {
   recordType: string;
   recordId: string;
@@ -27,6 +133,7 @@ interface ApiResponse {
   totalApprox: number;
   items: ViolationRecord[];
   nextOffset: number | null;
+  requestId: string;
 }
 
 function validateBBL(bbl: string): boolean {
@@ -35,50 +142,35 @@ function validateBBL(bbl: string): boolean {
 
 function parseDateToISO(dateStr: string | undefined | null): string | null {
   if (!dateStr) return null;
-  // NYC Open Data dates can be in various formats
   try {
-    // Try parsing as ISO format first
-    if (dateStr.includes('T')) {
-      return new Date(dateStr).toISOString().split('T')[0];
-    }
-    // Try MM/DD/YYYY format
+    if (dateStr.includes('T')) return new Date(dateStr).toISOString().split('T')[0];
     const parts = dateStr.split('/');
     if (parts.length === 3) {
       const [month, day, year] = parts;
       return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
     }
-    // Try YYYYMMDD format
-    if (/^\d{8}$/.test(dateStr)) {
-      return `${dateStr.slice(0, 4)}-${dateStr.slice(4, 6)}-${dateStr.slice(6, 8)}`;
-    }
+    if (/^\d{8}$/.test(dateStr)) return `${dateStr.slice(0, 4)}-${dateStr.slice(4, 6)}-${dateStr.slice(6, 8)}`;
     return dateStr;
-  } catch {
-    return dateStr;
-  }
+  } catch { return dateStr; }
 }
 
 function normalizeViolation(raw: Record<string, unknown>): ViolationRecord {
   const dispositionDate = parseDateToISO(raw.disposition_date as string);
   const dispositionComments = (raw.disposition_comments as string || '').toLowerCase();
   
-  // Determine status based on disposition
   let status: 'open' | 'resolved' | 'unknown' = 'unknown';
   if (dispositionDate) {
-    // If there's a disposition date, it's likely resolved
-    if (dispositionComments.includes('dismissed') || 
-        dispositionComments.includes('complied') || 
-        dispositionComments.includes('resolved') ||
-        dispositionComments.includes('vacated') ||
+    if (dispositionComments.includes('dismissed') || dispositionComments.includes('complied') || 
+        dispositionComments.includes('resolved') || dispositionComments.includes('vacated') || 
         dispositionComments.includes('cured')) {
       status = 'resolved';
-    } else if (dispositionComments.includes('pending') || 
-               dispositionComments.includes('open')) {
+    } else if (dispositionComments.includes('pending') || dispositionComments.includes('open')) {
       status = 'open';
     } else {
-      status = 'resolved'; // Default to resolved if there's a disposition date
+      status = 'resolved';
     }
   } else {
-    status = 'open'; // No disposition date means likely open
+    status = 'open';
   }
 
   return {
@@ -94,162 +186,125 @@ function normalizeViolation(raw: Record<string, unknown>): ViolationRecord {
 }
 
 serve(async (req) => {
-  // Handle CORS preflight
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
 
+  const ctx = createRequestContext('dob-violations');
+
   try {
+    // Rate limiting
+    const clientIP = getClientIP(req);
+    const rateLimit = checkRateLimit(clientIP);
+    if (!rateLimit.allowed) {
+      logRequest(ctx, 'Rate limited', { ip: clientIP });
+      return new Response(JSON.stringify({
+        error: 'Rate limit exceeded',
+        details: `Too many requests. Please wait ${rateLimit.retryAfter} seconds.`,
+        userMessage: 'You\'re making too many requests. Please wait a moment and try again.',
+        requestId: ctx.requestId,
+      }), {
+        status: 429,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json', 'Retry-After': String(rateLimit.retryAfter) },
+      });
+    }
+
     const url = new URL(req.url);
     const params = url.searchParams;
 
-    // Extract and validate parameters (temporary: accept aliases for diagnostics)
-    const candidateKeys = ['bbl', 'BBL', 'bblId', 'propertyBbl'];
+    // Extract BBL
     let bbl: string | null = null;
-    for (const key of candidateKeys) {
+    for (const key of ['bbl', 'BBL', 'bblId', 'propertyBbl']) {
       const v = params.get(key);
-      if (v && v.trim()) {
-        bbl = v.trim();
-        break;
-      }
+      if (v?.trim()) { bbl = v.trim(); break; }
     }
 
     if (!bbl) {
-      return new Response(
-        JSON.stringify({
-          error: 'bbl parameter is required',
-          receivedQueryKeys: Array.from(params.keys()),
-          receivedQuery: Object.fromEntries(params.entries()),
-        }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return createErrorResponse(ctx, 400, 'Missing parameter', 'bbl parameter is required', 'Please provide a valid property identifier (BBL).');
     }
 
-    // Normalize BBL to 10 digits
-    bbl = bbl.toString().padStart(10, '0');
+    bbl = bbl.padStart(10, '0');
+    ctx.bbl = bbl;
 
     if (!validateBBL(bbl)) {
-      return new Response(
-        JSON.stringify({ error: 'bbl must be exactly 10 digits', received: bbl }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return createErrorResponse(ctx, 400, 'Invalid BBL', 'bbl must be exactly 10 digits', 'The property identifier (BBL) format is invalid.');
     }
 
-    // Parse BBL into components for the query
     const boro = bbl.charAt(0);
     const block = bbl.slice(1, 6);
     const lot = bbl.slice(6, 10);
 
-    // Parse pagination params
     let limit = parseInt(params.get('limit') || '50', 10);
-    limit = Math.min(Math.max(1, limit), 200); // Cap at 200
-
+    limit = Math.min(Math.max(1, limit), 200);
     let offset = parseInt(params.get('offset') || '0', 10);
     offset = Math.max(0, offset);
 
-    // Parse filter params
     const fromDate = params.get('fromDate');
     const toDate = params.get('toDate');
     const status = params.get('status') || 'all';
     const keyword = params.get('q');
 
-    console.log(`=== DOB Violations Request ===`);
-    console.log(`BBL received: ${bbl}`);
-    console.log(`Parsed: boro=${boro}, block=${block}, lot=${lot}`);
-
-    // Build SoQL query - the dataset uses separate boro, block, lot fields (not combined bbl)
-    const whereConditions: string[] = [];
-    
-    // Filter by boro, block, lot (without leading zeros for matching)
-    whereConditions.push(`boro='${boro}'`);
-    whereConditions.push(`block='${block.replace(/^0+/, '') || '0'}'`);
-    whereConditions.push(`lot='${lot.replace(/^0+/, '') || '0'}'`);
-
-    // Date filtering
-    if (fromDate) {
-      whereConditions.push(`issue_date >= '${fromDate}'`);
-    }
-    if (toDate) {
-      whereConditions.push(`issue_date <= '${toDate}'`);
+    // Build cache key
+    const cacheKey = `violations:${bbl}:${limit}:${offset}:${status}:${fromDate || ''}:${toDate || ''}:${keyword || ''}`;
+    const cached = getCached<ApiResponse>(cacheKey);
+    if (cached) {
+      logRequest(ctx, 'Cache hit');
+      return new Response(JSON.stringify({ ...cached, requestId: ctx.requestId }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
     }
 
-    // Keyword search on description
-    if (keyword) {
-      const escapedKeyword = keyword.replace(/'/g, "''");
-      whereConditions.push(`upper(description) like upper('%${escapedKeyword}%')`);
-    }
+    logRequest(ctx, 'Fetching from NYC Open Data', { boro, block, lot });
+
+    // Build SoQL query
+    const whereConditions: string[] = [
+      `boro='${boro}'`,
+      `block='${block.replace(/^0+/, '') || '0'}'`,
+      `lot='${lot.replace(/^0+/, '') || '0'}'`,
+    ];
+    if (fromDate) whereConditions.push(`issue_date >= '${fromDate}'`);
+    if (toDate) whereConditions.push(`issue_date <= '${toDate}'`);
+    if (keyword) whereConditions.push(`upper(description) like upper('%${keyword.replace(/'/g, "''")}%')`);
 
     const whereClause = whereConditions.join(' AND ');
-
-    // Build API URL for data
     const dataUrl = new URL(NYC_OPEN_DATA_BASE);
     dataUrl.searchParams.set('$where', whereClause);
-    dataUrl.searchParams.set('$limit', String(limit + 1)); // Fetch one extra to check for more
+    dataUrl.searchParams.set('$limit', String(limit + 1));
     dataUrl.searchParams.set('$offset', String(offset));
     dataUrl.searchParams.set('$order', 'issue_date DESC');
 
-    const headers: Record<string, string> = {
-      'Accept': 'application/json',
-    };
-    if (NYC_OPEN_DATA_APP_TOKEN) {
-      headers['X-App-Token'] = NYC_OPEN_DATA_APP_TOKEN;
+    const headers: Record<string, string> = { 'Accept': 'application/json' };
+    if (NYC_OPEN_DATA_APP_TOKEN) headers['X-App-Token'] = NYC_OPEN_DATA_APP_TOKEN;
+
+    const result = await fetchWithRetry(dataUrl.toString(), { headers });
+
+    if (!result.ok) {
+      if (result.status === 429) {
+        return createErrorResponse(ctx, 429, 'Upstream rate limit', 'NYC Open Data rate limit exceeded', 
+          'The NYC data service is busy. Please try again in a moment.', { service: 'NYC Open Data', status: 429 });
+      }
+      return createErrorResponse(ctx, 502, 'Upstream error', result.error || 'Unknown error',
+        'Unable to retrieve data from NYC Open Data. Please try again later.', { service: 'NYC Open Data', status: result.status });
     }
 
-    const finalQueryUrl = dataUrl.toString();
-    console.log(`SoQL query URL: ${finalQueryUrl}`);
-
-    // Fetch data
-    const dataResponse = await fetch(finalQueryUrl, { headers });
-    if (!dataResponse.ok) {
-      const errorText = await dataResponse.text();
-      console.error(`NYC Open Data API error: ${dataResponse.status} - ${errorText}`);
-      return new Response(
-        JSON.stringify({ 
-          error: 'Failed to fetch from NYC Open Data',
-          details: dataResponse.status === 429 ? 'Rate limit exceeded. Please try again later.' : errorText
-        }),
-        { status: 502, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    const rawData = await dataResponse.json() as Record<string, unknown>[];
-    console.log(`Received ${rawData.length} raw records from NYC Open Data`);
-
-    // Determine if there are more results
+    const rawData = result.data as Record<string, unknown>[];
     const hasMore = rawData.length > limit;
     const dataToProcess = hasMore ? rawData.slice(0, limit) : rawData;
 
-    // Normalize records
     let items = dataToProcess.map(normalizeViolation);
+    if (status === 'open') items = items.filter(item => item.status === 'open');
+    else if (status === 'resolved') items = items.filter(item => item.status === 'resolved');
 
-    // Apply status filter (client-side since API doesn't have direct status field)
-    if (status === 'open') {
-      items = items.filter(item => item.status === 'open');
-    } else if (status === 'resolved') {
-      items = items.filter(item => item.status === 'resolved');
-    }
-
-    // Get approximate count - try a count query
     let totalApprox = items.length + offset;
     try {
       const countUrl = new URL(NYC_OPEN_DATA_BASE);
       countUrl.searchParams.set('$select', 'count(*)');
       countUrl.searchParams.set('$where', whereClause);
-      
-      const countResponse = await fetch(countUrl.toString(), { headers });
-      if (countResponse.ok) {
-        const countData = await countResponse.json();
-        if (countData[0] && countData[0].count) {
-          totalApprox = parseInt(countData[0].count, 10);
-        }
+      const countResult = await fetchWithRetry(countUrl.toString(), { headers });
+      if (countResult.ok && Array.isArray(countResult.data) && countResult.data[0]?.count) {
+        totalApprox = parseInt(countResult.data[0].count, 10);
       }
-    } catch (countError) {
-      console.error('Error fetching count:', countError);
-      // Fall back to estimate
-      if (hasMore) {
-        totalApprox = offset + limit + 1; // At least one more page
-      }
-    }
+    } catch { /* Use estimate */ }
 
     const response: ApiResponse = {
       source: 'DOB Violations',
@@ -257,22 +312,19 @@ serve(async (req) => {
       totalApprox,
       items,
       nextOffset: hasMore ? offset + limit : null,
+      requestId: ctx.requestId,
     };
 
-    console.log(`Returning ${items.length} normalized records, total approx: ${totalApprox}`);
+    setCache(cacheKey, response);
+    logRequest(ctx, 'Success', { itemCount: items.length, totalApprox });
 
     return new Response(JSON.stringify(response), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
 
   } catch (error) {
-    console.error('Error in dob-violations function:', error);
-    return new Response(
-      JSON.stringify({ 
-        error: 'Internal server error',
-        details: error instanceof Error ? error.message : 'Unknown error'
-      }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return createErrorResponse(ctx, 500, 'Internal server error', 
+      error instanceof Error ? error.message : 'Unknown error',
+      'An unexpected error occurred. Please try again.');
   }
 });
