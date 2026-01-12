@@ -29,11 +29,14 @@ import { RecordDetailDrawer } from './RecordDetailDrawer';
 import { ColumnSelector, useColumnVisibility, ColumnConfig } from './ColumnSelector';
 import { QueriedIdentifier, DatasetCapability } from './QueriedIdentifier';
 import { QueryScope } from './ScopeSelector';
+import { BuildingLevelBanner } from './BuildingLevelBanner';
 
 interface SafetyTabProps {
   bbl: string;
   bin?: string;
   scope?: QueryScope;
+  isCoop?: boolean;
+  coopUnitContext?: string | null;
 }
 
 interface SafetyViolation {
@@ -87,7 +90,7 @@ function LoadingSkeleton() {
   );
 }
 
-export function SafetyTab({ bbl, bin, scope = 'building' }: SafetyTabProps) {
+export function SafetyTab({ bbl, bin, scope = 'building', isCoop, coopUnitContext }: SafetyTabProps) {
   const [status, setStatus] = useState<'open' | 'closed' | 'all'>('all');
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
@@ -143,6 +146,9 @@ export function SafetyTab({ bbl, bin, scope = 'building' }: SafetyTabProps) {
 
   return (
     <div className="space-y-4">
+      {/* Co-op building-level banner */}
+      {isCoop && <BuildingLevelBanner coopUnitContext={coopUnitContext} compact />}
+      
       {/* Queried Identifier */}
       <QueriedIdentifier
         bbl={bbl}

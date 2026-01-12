@@ -33,11 +33,14 @@ import { RecordDetailDrawer } from './RecordDetailDrawer';
 import { ColumnSelector, useColumnVisibility, ColumnConfig } from './ColumnSelector';
 import { QueriedIdentifier, DatasetCapability } from './QueriedIdentifier';
 import { QueryScope } from './ScopeSelector';
+import { BuildingLevelBanner } from './BuildingLevelBanner';
 
 interface PermitsTabProps {
   bbl: string;
   bin?: string;
   scope?: QueryScope;
+  isCoop?: boolean;
+  coopUnitContext?: string | null;
 }
 
 const COLUMN_CONFIGS: ColumnConfig[] = [
@@ -88,7 +91,7 @@ function LoadingSkeleton() {
   );
 }
 
-export function PermitsTab({ bbl, bin, scope = 'building' }: PermitsTabProps) {
+export function PermitsTab({ bbl, bin, scope = 'building', isCoop, coopUnitContext }: PermitsTabProps) {
   const { loading, error, data, filters, offset, fetchPermits, setFilters, applyFilters, goToNextPage, goToPrevPage, retry } = usePermits(bbl);
   const [localFilters, setLocalFilters] = useState<PermitsFilters>({ status: 'all', keyword: '' });
   
@@ -145,6 +148,9 @@ export function PermitsTab({ bbl, bin, scope = 'building' }: PermitsTabProps) {
 
   return (
     <div className="space-y-4">
+      {/* Co-op building-level banner */}
+      {isCoop && <BuildingLevelBanner coopUnitContext={coopUnitContext} compact />}
+      
       {/* Queried Identifier */}
       <QueriedIdentifier
         bbl={bbl}
