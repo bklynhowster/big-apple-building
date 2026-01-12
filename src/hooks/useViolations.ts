@@ -1,5 +1,4 @@
-import { useState, useCallback } from 'react';
-import { supabase } from '@/integrations/supabase/client';
+import { useState, useCallback, useRef } from 'react';
 
 export interface ViolationRecord {
   recordType: string;
@@ -31,6 +30,8 @@ export interface UseViolationsReturn {
   loading: boolean;
   error: string | null;
   data: ViolationsApiResponse | null;
+  items: ViolationRecord[];
+  blocked: boolean;
   filters: ViolationsFilters;
   offset: number;
   fetchViolations: (bbl: string) => Promise<void>;
@@ -43,7 +44,7 @@ export interface UseViolationsReturn {
 
 const DEFAULT_LIMIT = 50;
 
-export function useViolations(bbl: string | null): UseViolationsReturn {
+export function useViolations(bbl?: string | null): UseViolationsReturn {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<ViolationsApiResponse | null>(null);
@@ -57,13 +58,13 @@ export function useViolations(bbl: string | null): UseViolationsReturn {
   });
   const [offset, setOffset] = useState(0);
   const [currentBBL, setCurrentBBL] = useState<string | null>(null);
+  const loggedUrlsRef = useRef<Set<string>>(new Set());
+
+  const blocked = !bbl || bbl.length !== 10;
 
   const fetchViolations = useCallback(async (targetBBL: string, targetOffset = 0, targetFilters?: ViolationsFilters) => {
-    // Guard: require valid 10-digit BBL
-    if (!targetBBL || targetBBL.length !== 10) {
-      setError('Valid 10-digit BBL is required');
-      return;
-    }
+    // Hard gate: never fetch unless we have a valid 10-digit BBL
+    if (!targetBBL || targetBBL.length !== 10) return;
 
     setLoading(true);
     setError(null);
@@ -92,15 +93,15 @@ export function useViolations(bbl: string | null): UseViolationsReturn {
         queryParams.q = filtersToUse.keyword;
       }
 
-      const { data: responseData, error: fnError } = await supabase.functions.invoke('dob-violations', {
-        body: null,
-        headers: {},
-      });
-
-      // Since we can't pass query params via invoke easily, let's use fetch directly
       const baseUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/dob-violations`;
       const urlParams = new URLSearchParams(queryParams);
       const fullUrl = `${baseUrl}?${urlParams.toString()}`;
+
+      // Temporary diagnostics: log the actual request URL once per unique URL
+      if (!loggedUrlsRef.current.has(fullUrl)) {
+        console.log('[useViolations] fetching:', fullUrl);
+        loggedUrlsRef.current.add(fullUrl);
+      }
 
       const response = await fetch(fullUrl, {
         method: 'GET',
@@ -156,12 +157,19 @@ export function useViolations(bbl: string | null): UseViolationsReturn {
     setError(null);
   }, []);
 
+  const derivedLoading = blocked ? false : loading;
+  const derivedError = blocked ? null : error;
+  const derivedData = blocked ? null : data;
+  const derivedItems = blocked ? [] : (data?.items || []);
+
   return {
-    loading,
-    error,
-    data,
+    loading: derivedLoading,
+    error: derivedError,
+    data: derivedData,
+    items: derivedItems,
+    blocked,
     filters,
-    offset,
+    offset: blocked ? 0 : offset,
     fetchViolations,
     setFilters,
     applyFilters,

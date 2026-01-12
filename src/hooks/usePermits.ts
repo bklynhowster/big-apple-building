@@ -36,6 +36,8 @@ export interface UsePermitsReturn {
   loading: boolean;
   error: string | null;
   data: PermitsApiResponse | null;
+  items: PermitRecord[];
+  blocked: boolean;
   filters: PermitsFilters;
   offset: number;
   fetchPermits: (bbl: string) => Promise<void>;
@@ -48,7 +50,7 @@ export interface UsePermitsReturn {
 
 const DEFAULT_LIMIT = 50;
 
-export function usePermits(bbl: string | null): UsePermitsReturn {
+export function usePermits(bbl?: string | null): UsePermitsReturn {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<PermitsApiResponse | null>(null);
@@ -63,12 +65,11 @@ export function usePermits(bbl: string | null): UsePermitsReturn {
   const [offset, setOffset] = useState(0);
   const [currentBBL, setCurrentBBL] = useState<string | null>(null);
 
+  const blocked = !bbl || bbl.length !== 10;
+
   const fetchPermits = useCallback(async (targetBBL: string, targetOffset = 0, targetFilters?: PermitsFilters) => {
-    // Guard: require valid 10-digit BBL
-    if (!targetBBL || targetBBL.length !== 10) {
-      setError('Valid 10-digit BBL is required');
-      return;
-    }
+    // Hard gate: never fetch unless we have a valid 10-digit BBL
+    if (!targetBBL || targetBBL.length !== 10) return;
 
     setLoading(true);
     setError(null);
@@ -155,12 +156,19 @@ export function usePermits(bbl: string | null): UsePermitsReturn {
     setError(null);
   }, []);
 
+  const derivedLoading = blocked ? false : loading;
+  const derivedError = blocked ? null : error;
+  const derivedData = blocked ? null : data;
+  const derivedItems = blocked ? [] : (data?.items || []);
+
   return {
-    loading,
-    error,
-    data,
+    loading: derivedLoading,
+    error: derivedError,
+    data: derivedData,
+    items: derivedItems,
+    blocked,
     filters,
-    offset,
+    offset: blocked ? 0 : offset,
     fetchPermits,
     setFilters,
     applyFilters,

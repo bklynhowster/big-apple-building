@@ -103,11 +103,24 @@ serve(async (req) => {
     const url = new URL(req.url);
     const params = url.searchParams;
 
-    // Extract and validate parameters
-    let bbl = params.get('bbl');
+    // Extract and validate parameters (temporary: accept aliases for diagnostics)
+    const candidateKeys = ['bbl', 'BBL', 'bblId', 'propertyBbl'];
+    let bbl: string | null = null;
+    for (const key of candidateKeys) {
+      const v = params.get(key);
+      if (v && v.trim()) {
+        bbl = v.trim();
+        break;
+      }
+    }
+
     if (!bbl) {
       return new Response(
-        JSON.stringify({ error: 'bbl parameter is required' }),
+        JSON.stringify({
+          error: 'bbl parameter is required',
+          receivedQueryKeys: Array.from(params.keys()),
+          receivedQuery: Object.fromEntries(params.entries()),
+        }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }

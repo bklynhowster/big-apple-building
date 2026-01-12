@@ -218,12 +218,10 @@ export function ViolationsTab({ bbl }: ViolationsTabProps) {
         </div>
       </div>
 
-      {/* BBL Display */}
-      {bbl && (
-        <div className="text-xs text-muted-foreground font-mono bg-muted/30 px-2 py-1 rounded inline-block">
-          BBL: {bbl}
-        </div>
-      )}
+      {/* Debug line (temporary) */}
+      <div className="text-xs text-muted-foreground font-mono bg-muted/30 px-2 py-1 rounded inline-block">
+        BBL being queried: {bbl || '(missing)'}
+      </div>
 
       {/* Summary Line */}
       <div className="flex items-center justify-between text-sm text-muted-foreground">

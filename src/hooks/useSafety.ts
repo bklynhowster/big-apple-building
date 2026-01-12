@@ -32,6 +32,8 @@ interface UseSafetyResult {
   loading: boolean;
   error: string | null;
   data: SafetyResponse | null;
+  items: SafetyViolation[];
+  blocked: boolean;
   refetch: () => void;
 }
 
@@ -41,6 +43,7 @@ const CACHE_TTL = 10 * 60 * 1000; // 10 minutes
 
 export function useSafety(options: UseSafetyOptions): UseSafetyResult {
   const { bbl, limit = 50, offset = 0, fromDate, toDate, status = 'all' } = options;
+  const blocked = !bbl || bbl.length !== 10;
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<SafetyResponse | null>(null);
@@ -49,8 +52,8 @@ export function useSafety(options: UseSafetyOptions): UseSafetyResult {
   const cacheKey = `${bbl}-${limit}-${offset}-${fromDate || ''}-${toDate || ''}-${status}`;
 
   const fetchData = useCallback(async () => {
-    if (!bbl || bbl.length !== 10) {
-      setError('Valid 10-digit BBL is required');
+    if (blocked) {
+      setError(null);
       setLoading(false);
       return;
     }
@@ -112,7 +115,7 @@ export function useSafety(options: UseSafetyOptions): UseSafetyResult {
     } finally {
       setLoading(false);
     }
-  }, [bbl, limit, offset, fromDate, toDate, status, cacheKey]);
+  }, [bbl, limit, offset, fromDate, toDate, status, cacheKey, blocked]);
 
   useEffect(() => {
     fetchData();
@@ -124,7 +127,12 @@ export function useSafety(options: UseSafetyOptions): UseSafetyResult {
     };
   }, [fetchData]);
 
-  return { loading, error, data, refetch: fetchData };
+  const derivedLoading = blocked ? false : loading;
+  const derivedError = blocked ? null : error;
+  const derivedData = blocked ? null : data;
+  const derivedItems = blocked ? [] : (data?.items || []);
+
+  return { loading: derivedLoading, error: derivedError, data: derivedData, items: derivedItems, blocked, refetch: fetchData };
 }
 
 // Export cache clear function for when BBL changes
