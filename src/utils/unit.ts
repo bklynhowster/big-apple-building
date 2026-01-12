@@ -168,55 +168,95 @@ export function isLikelyUnitLabel(unit: string, hasStrongEvidence: boolean = fal
   const upperUnit = unit.toUpperCase();
 
   // Hard caps
-  if (upperUnit.length > 8) return false;
+  if (upperUnit.length > 8) {
+    debugLog('UnitValidate.reject', { unit: upperUnit, hasStrongEvidence, reason: 'too_long' });
+    return false;
+  }
 
   // Floor-only patterns
   for (const pattern of FLOOR_ONLY_PATTERNS) {
-    if (pattern.test(upperUnit)) return false;
+    if (pattern.test(upperUnit)) {
+      debugLog('UnitValidate.reject', { unit: upperUnit, hasStrongEvidence, reason: 'floor_only', pattern: String(pattern) });
+      return false;
+    }
   }
 
   // Job/permit number patterns
   for (const pattern of JOB_NUMBER_PATTERNS) {
-    if (pattern.test(upperUnit)) return false;
+    if (pattern.test(upperUnit)) {
+      debugLog('UnitValidate.reject', { unit: upperUnit, hasStrongEvidence, reason: 'job_number', pattern: String(pattern) });
+      return false;
+    }
   }
 
   // ZIP
-  if (/^\d{5}$/.test(upperUnit)) return false;
-
-  // Co-op rule: suppress numeric-only units unless strong evidence
-  // Floor numbers (1, 2, 12, etc.) are commonly misidentified as apartment units
-  if (/^[1-9]\d{0,2}$/.test(upperUnit)) {
-    if (!hasStrongEvidence) return false;
+  if (/^\d{5}$/.test(upperUnit)) {
+    debugLog('UnitValidate.reject', { unit: upperUnit, hasStrongEvidence, reason: 'zip' });
+    return false;
   }
 
-  // Always-allow: digits WITH letters (NYC unit core)
-  // Examples: 6G, 12B, 100A, 12AB - these are unambiguous apartment identifiers
-  if (/^[1-9]\d{0,2}[A-Z]{1,2}$/.test(upperUnit)) {
-    // Disallow common address-ish suffixes when they appear as the letter part.
-    if (/^\d{1,3}(ST|AVE|AV|RD|BLVD|PL|DR|CT|LN|WAY|TER|CIR)$/.test(upperUnit)) return false;
+  // Co-op rule: numeric-only units require strong evidence
+  if (/^[1-9]\d{0,2}$/.test(upperUnit)) {
+    if (!hasStrongEvidence) {
+      debugLog('UnitValidate.reject', { unit: upperUnit, hasStrongEvidence, reason: 'numeric_no_evidence', pattern: '/^[1-9]\\d{0,2}$/' });
+      return false;
+    }
+    debugLog('UnitValidate.accept', { unit: upperUnit, hasStrongEvidence, reason: 'numeric_with_evidence', pattern: '/^[1-9]\\d{0,2}$/' });
     return true;
   }
 
-  // Single-letter tokens are ambiguous: only allow with strong evidence AND allowlist.
+  // Always-allow: digits WITH letters (NYC unit core)
+  if (/^[1-9]\d{0,2}[A-Z]{1,2}$/.test(upperUnit)) {
+    // Disallow common address-ish suffixes when they appear as the letter part.
+    if (/^\d{1,3}(ST|AVE|AV|RD|BLVD|PL|DR|CT|LN|WAY|TER|CIR)$/.test(upperUnit)) {
+      debugLog('UnitValidate.reject', { unit: upperUnit, hasStrongEvidence, reason: 'address_suffix' });
+      return false;
+    }
+    debugLog('UnitValidate.accept', { unit: upperUnit, hasStrongEvidence, reason: 'digit_letter', pattern: '/^[1-9]\\d{0,2}[A-Z]{1,2}$/' });
+    return true;
+  }
+
+  // Single-letter tokens are ambiguous
   if (/^[A-Z]$/.test(upperUnit)) {
-    return isAllowedSingleLetterUnit(upperUnit, hasStrongEvidence);
+    const ok = isAllowedSingleLetterUnit(upperUnit, hasStrongEvidence);
+    debugLog(ok ? 'UnitValidate.accept' : 'UnitValidate.reject', {
+      unit: upperUnit,
+      hasStrongEvidence,
+      reason: ok ? 'single_letter_strong_allowlist' : (upperUnit === 'S' ? 'single_letter_S_rejected' : 'single_letter_no_evidence_or_disallowed'),
+    });
+    return ok;
   }
 
   // Pure alpha tokens are almost always narrative words.
   if (/^[A-Z]+$/.test(upperUnit)) {
-    if (PENTHOUSE_TOKENS.has(upperUnit)) return true;
+    const ok = PENTHOUSE_TOKENS.has(upperUnit);
+    debugLog(ok ? 'UnitValidate.accept' : 'UnitValidate.reject', {
+      unit: upperUnit,
+      hasStrongEvidence,
+      reason: ok ? 'special_token' : 'alpha_only_rejected',
+    });
+    return ok;
+  }
+
+  // STOPLIST (exact match only)
+  if (isStopword(upperUnit)) {
+    debugLog('UnitValidate.reject', { unit: upperUnit, hasStrongEvidence, reason: 'stopword' });
     return false;
   }
 
-  // STOPLIST (exact match only) — apply only after digit allowlist above.
-  if (isStopword(upperUnit)) return false;
-
-  // Additional allowed patterns (rare, but keep): letter+digits like A12
-  if (/^[A-Z]\d{1,3}$/.test(upperUnit)) return true;
+  // Additional allowed patterns: letter+digits like A12
+  if (/^[A-Z]\d{1,3}$/.test(upperUnit)) {
+    debugLog('UnitValidate.accept', { unit: upperUnit, hasStrongEvidence, reason: 'letter_digits' });
+    return true;
+  }
 
   // Penthouse variants we explicitly allow
-  if (/^PHH?$/.test(upperUnit)) return true;
+  if (/^PHH?$/.test(upperUnit)) {
+    debugLog('UnitValidate.accept', { unit: upperUnit, hasStrongEvidence, reason: 'ph_variant' });
+    return true;
+  }
 
+  debugLog('UnitValidate.reject', { unit: upperUnit, hasStrongEvidence, reason: 'no_rule_matched' });
   return false;
 }
 
@@ -684,13 +724,17 @@ const UNIT_EXTRACTION_PATTERNS: { pattern: RegExp; keyword: string }[] = [
  * Does NOT infer from patterns like "near apt" or contextual mentions.
  */
 function extractUnitFromText(
-  text: string | null | undefined, 
+  text: string | null | undefined,
   fieldName: string
 ): UnitExtractionResult | null {
   if (!text) return null;
-  
+
   const textStr = String(text);
-  
+
+  if (EXTRACTION_DEBUG) {
+    debugLog('UnitExtract.field', { fieldName, textPreview: textStr.slice(0, 120) });
+  }
+
   for (const { pattern, keyword } of UNIT_EXTRACTION_PATTERNS) {
     const match = textStr.match(pattern);
     if (match) {
@@ -698,34 +742,48 @@ function extractUnitFromText(
       const rawToken = match[1] ?? '';
       const rawUnit = rawToken || (keyword === 'PENTHOUSE' || keyword === 'PH' ? 'PH' : null);
       if (!rawUnit) continue;
-      
+
       const asReported = match[0].trim();
-      
+
       // Pattern matches have "strong evidence" - they come from explicit prefixes like APT, UNIT, #
       const hasStrongEvidence = ['APT', 'APARTMENT', 'UNIT', '#', 'RM', 'ROOM', 'STE', 'SUITE'].includes(keyword);
-      
+
+      if (EXTRACTION_DEBUG) {
+        debugLog('UnitExtract.candidate', { fieldName, keyword, asReported, rawUnit, hasStrongEvidence });
+      }
+
       // Normalize with strong evidence flag
       let normalized: string | null;
       if (keyword === 'PENTHOUSE' || keyword === 'PH') {
         const suffix = rawToken ? rawToken.toUpperCase() : '';
         normalized = `PH${suffix}`;
         // PH/PHH are always allowed via isAllowedSpecialToken, but still validate
-        if (!isLikelyUnitLabel(normalized, true)) continue;
+        if (!isLikelyUnitLabel(normalized, true)) {
+          if (EXTRACTION_DEBUG) debugLog('UnitExtract.reject', { fieldName, keyword, normalized, reason: 'ph_validation' });
+          continue;
+        }
       } else {
         normalized = normalizeUnit(rawUnit, false, hasStrongEvidence);
-        if (!normalized) continue;
+        if (!normalized) {
+          if (EXTRACTION_DEBUG) debugLog('UnitExtract.reject', { fieldName, keyword, rawUnit, reason: 'normalize_strict' });
+          continue;
+        }
       }
-      
+
       const matchIndex = match.index || 0;
       const snippetStart = Math.max(0, matchIndex - 30);
       const snippetEnd = Math.min(textStr.length, matchIndex + match[0].length + 30);
-      const snippet = (snippetStart > 0 ? '...' : '') + 
-                      textStr.slice(snippetStart, snippetEnd).trim() + 
+      const snippet = (snippetStart > 0 ? '...' : '') +
+                      textStr.slice(snippetStart, snippetEnd).trim() +
                       (snippetEnd < textStr.length ? '...' : '');
-      
+
       const unitType = determineUnitType(keyword, normalized);
       const { confidence, reason } = determineConfidence('pattern', keyword, normalized, fieldName, false);
-      
+
+      if (EXTRACTION_DEBUG) {
+        debugLog('UnitExtract.accept', { fieldName, keyword, normalized, unitType, confidence });
+      }
+
       return {
         normalizedUnit: normalized,
         asReported,
@@ -737,7 +795,7 @@ function extractUnitFromText(
       };
     }
   }
-  
+
   return null;
 }
 
@@ -769,9 +827,15 @@ export function hasValidBuildingId(record: Record<string, unknown> | null | unde
 // ============================================================================
 
 // Debug mode for extraction tracing
-const EXTRACTION_DEBUG = typeof window !== 'undefined' && 
-  window.location?.search?.includes('debug=1') && 
+const EXTRACTION_DEBUG = typeof window !== 'undefined' &&
+  window.location?.search?.includes('debug=1') &&
   (import.meta.env?.DEV ?? process.env.NODE_ENV === 'development');
+
+function debugLog(scope: string, payload: Record<string, unknown>): void {
+  if (!EXTRACTION_DEBUG) return;
+  // Keep logs compact + structured for grepping
+  console.log(`[${scope}]`, payload);
+}
 
 /**
  * Flatten a record's values to strings for extraction.
@@ -819,10 +883,14 @@ export function extractUnitFromRecordWithTrace(
   record: Record<string, unknown> | null | undefined
 ): UnitExtractionResult | null {
   if (!record) return null;
-  
+
+  if (EXTRACTION_DEBUG) {
+    debugLog('UnitExtract.start', { keys: Object.keys(record).slice(0, 25) });
+  }
+
   // Flatten record for easier access
   const flatRecord = flattenRecordToStrings(record);
-  
+
   // Build a case-insensitive lookup map for the record keys
   const lowerKeyMap = new Map<string, string>();
   for (const key of flatRecord.keys()) {
