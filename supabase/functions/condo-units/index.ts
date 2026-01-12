@@ -21,6 +21,8 @@ const RESPONSE_CACHE_TTL = 30 * 60 * 1000; // 30 minutes
 
 // -------- Types --------
 
+export type InputRole = 'billing' | 'unit' | 'unknown';
+
 export interface CondoUnit {
   unitBbl: string;
   borough: string;
@@ -32,6 +34,7 @@ export interface CondoUnit {
 
 export interface CondoUnitsListResponse {
   inputBbl: string;
+  inputRole: InputRole;
   billingBbl: string | null;
   inputIsUnitLot: boolean;
   isCondo: boolean;
@@ -51,6 +54,7 @@ interface CondoContext {
   condoKey: CondoKeyKind | null;
   billingBbl: string | null;
   inputIsUnitLot: boolean;
+  inputRole: InputRole;
 }
 
 // -------- Utilities --------
@@ -163,10 +167,7 @@ function looksLikeBillingLot(lot4: string): boolean {
   return Number.isFinite(lotNum) && lotNum >= 7501 && lotNum <= 7599;
 }
 
-function pickBestCondoKeyFromUnitsRow(
-  columns: Set<string>,
-  row: Record<string, unknown>
-): CondoKeyKind | null {
+function pickBestCondoKeyFromUnitsRow(columns: Set<string>, row: Record<string, unknown>): CondoKeyKind | null {
   // Prefer strongest keys present in the unit dataset itself.
   if (hasCol(columns, 'condo_key') && row['condo_key']) {
     return { kind: 'condo_key', column: 'condo_key', value: String(row['condo_key']) };
@@ -199,7 +200,8 @@ function pickBestCondoKeyFromUnitsRow(
   return null;
 }
 
-function billingBblFromUnitsRow(columns: Set<string>, row: Record<string, unknown>): string | null {
+function baseBblFromUnitsRow(columns: Set<string>, row: Record<string, unknown>): string | null {
+  // Note: condo_base_bbl is the base tax lot (not necessarily the billing lot).
   if (hasCol(columns, 'condo_base_bbl') && row['condo_base_bbl']) {
     const v = String(row['condo_base_bbl']).trim();
     return isValidBbl(v) ? v : null;
@@ -222,138 +224,254 @@ function billingBblFromUnitsRow(columns: Set<string>, row: Record<string, unknow
   return null;
 }
 
+async function lookupBillingBblFromComplex(
+  complexCols: Set<string>,
+  condoKey: CondoKeyKind | null,
+  appToken: string,
+  requestId: string
+): Promise<string | null> {
+  if (!condoKey) return null;
+
+  const billingCol = firstCol(complexCols, ['condo_billing_bbl']);
+  if (!billingCol) return null;
+
+  // Only query if the complex dataset has the corresponding key column.
+  if (!hasCol(complexCols, condoKey.column)) return null;
+
+  const q = new URLSearchParams();
+  q.set('$select', `${billingCol}`);
+  q.set('$where', `${condoKey.column}='${escapeSoqlLiteral(condoKey.value)}'`);
+  q.set('$limit', '1');
+
+  const { resp, url } = await soqlFetch(CONDO_COMPLEX_DATASET_ID, q, appToken);
+  console.log(
+    `[${requestId}] condo-context lookupBillingBblFromComplex dataset=${CONDO_COMPLEX_DATASET_ID} where=${condoKey.column}='${condoKey.value}' url=${url}`
+  );
+
+  if (!resp.ok) return null;
+  const rows = await resp.json();
+  const row = Array.isArray(rows) && rows[0] ? (rows[0] as Record<string, unknown>) : null;
+  if (!row) return null;
+
+  const billing = String(row[billingCol] || '').trim();
+  return isValidBbl(billing) ? billing : null;
+}
+
 async function resolveCondoContext(inputBbl: string, appToken: string, requestId: string): Promise<CondoContext> {
   const parsed = parseBbl(inputBbl);
-  if (!parsed) return { isCondo: false, condoKey: null, billingBbl: null, inputIsUnitLot: false };
-
-  const unitsCols = await discoverSchema(CONDO_UNITS_DATASET_ID, appToken);
-  const unitBblCol = hasCol(unitsCols, 'unit_bbl') ? 'unit_bbl' : null;
+  if (!parsed) {
+    return { isCondo: false, condoKey: null, billingBbl: null, inputIsUnitLot: false, inputRole: 'unknown' };
+  }
 
   const heuristics = {
     lotLooksLikeUnit: looksLikeUnitLot(parsed.lot),
     lotLooksLikeBilling: looksLikeBillingLot(parsed.lot),
   };
 
+  console.log(
+    `[${requestId}] condo-units datasets complex=${CONDO_COMPLEX_DATASET_ID} units=${CONDO_UNITS_DATASET_ID}`
+  );
+
+  const unitsCols = await discoverSchema(CONDO_UNITS_DATASET_ID, appToken);
+  const complexCols = await discoverSchema(CONDO_COMPLEX_DATASET_ID, appToken);
+
   // 1) If possible, treat as unit lookup first (strongest way to resolve condo key)
+  const unitBblCol = hasCol(unitsCols, 'unit_bbl') ? 'unit_bbl' : null;
   if (unitBblCol) {
     const selectCols = [
-      ...(['condo_key', 'condo_base_bbl_key', 'condo_number', 'condo_base_bbl', 'condo_base_boro', 'condo_base_block', 'condo_base_lot']
-        .filter((c) => hasCol(unitsCols, c))),
+      unitBblCol,
+      ...[
+        'condo_key',
+        'condo_base_bbl_key',
+        'condo_number',
+        'condo_base_bbl',
+        'condo_base_boro',
+        'condo_base_block',
+        'condo_base_lot',
+      ].filter((c) => hasCol(unitsCols, c)),
     ];
 
+    const where = `${unitBblCol}='${escapeSoqlLiteral(inputBbl)}'`;
     const q = new URLSearchParams();
-    q.set('$select', selectCols.join(',') || unitBblCol);
-    q.set('$where', `${unitBblCol}='${escapeSoqlLiteral(inputBbl)}'`);
+    q.set('$select', selectCols.join(','));
+    q.set('$where', where);
     q.set('$limit', '1');
 
     const { resp, url } = await soqlFetch(CONDO_UNITS_DATASET_ID, q, appToken);
+    console.log(`[${requestId}] condo-context dataset=${CONDO_UNITS_DATASET_ID} where=${where} url=${url}`);
+
     if (resp.ok) {
       const rows = await resp.json();
       if (Array.isArray(rows) && rows.length > 0) {
         const row = rows[0] as Record<string, unknown>;
-        const billingBbl = billingBblFromUnitsRow(unitsCols, row);
         const condoKey = pickBestCondoKeyFromUnitsRow(unitsCols, row);
 
-        console.log(`[${requestId}] resolveCondoContext: matched as unit lot via ${unitBblCol}; url=${url}`);
+        // Prefer billing BBL from condo complex dataset if available.
+        const billingBbl =
+          (await lookupBillingBblFromComplex(complexCols, condoKey, appToken, requestId)) || null;
+
         return {
           isCondo: true,
           condoKey,
           billingBbl,
           inputIsUnitLot: true,
+          inputRole: 'unit',
         };
       }
     }
   }
 
-  // 2) Treat as condo base / billing record (find any units pointing at this base)
+  // 2) Treat as billing/complex record: query condo complex dataset first.
+  const whereCandidates: { where: string; role: InputRole }[] = [];
+
+  if (hasCol(complexCols, 'condo_billing_bbl')) {
+    whereCandidates.push({
+      where: `condo_billing_bbl='${escapeSoqlLiteral(inputBbl)}'`,
+      role: 'billing',
+    });
+  }
+
+  if (hasCol(complexCols, 'condo_base_bbl')) {
+    // Some condo complexes may be keyed by base BBL.
+    whereCandidates.push({
+      where: `condo_base_bbl='${escapeSoqlLiteral(inputBbl)}'`,
+      role: heuristics.lotLooksLikeBilling ? 'billing' : 'unknown',
+    });
+  }
+
+  if (
+    hasCol(complexCols, 'condo_base_boro') &&
+    hasCol(complexCols, 'condo_base_block') &&
+    hasCol(complexCols, 'condo_base_lot')
+  ) {
+    // Socrata often stores numeric columns without leading zeros.
+    const boro = normalizeIntString(parsed.borough);
+    const block = String(parseInt(parsed.block, 10));
+    const lot = String(parseInt(parsed.lot, 10));
+
+    whereCandidates.push({
+      where: `condo_base_boro='${escapeSoqlLiteral(boro)}' AND condo_base_block='${escapeSoqlLiteral(block)}' AND condo_base_lot='${escapeSoqlLiteral(lot)}'`,
+      role: heuristics.lotLooksLikeBilling ? 'billing' : 'unknown',
+    });
+  }
+
+  for (const candidate of whereCandidates) {
+    const selectCols = [
+      ...[
+        'condo_billing_bbl',
+        'condo_key',
+        'condo_base_bbl_key',
+        'condo_number',
+        'condo_base_bbl',
+      ].filter((c) => hasCol(complexCols, c)),
+    ];
+
+    const q = new URLSearchParams();
+    q.set('$select', selectCols.join(',') || 'condo_billing_bbl');
+    q.set('$where', candidate.where);
+    q.set('$limit', '1');
+
+    const { resp, url } = await soqlFetch(CONDO_COMPLEX_DATASET_ID, q, appToken);
+    console.log(
+      `[${requestId}] condo-context dataset=${CONDO_COMPLEX_DATASET_ID} where=${candidate.where} url=${url}`
+    );
+
+    if (!resp.ok) continue;
+
+    const rows = await resp.json();
+    if (!Array.isArray(rows) || rows.length === 0) continue;
+
+    const row = rows[0] as Record<string, unknown>;
+
+    const billingRaw = hasCol(complexCols, 'condo_billing_bbl') ? String(row['condo_billing_bbl'] || '').trim() : '';
+    const billingBbl = isValidBbl(billingRaw)
+      ? billingRaw
+      : (heuristics.lotLooksLikeBilling ? inputBbl : null);
+
+    let condoKey: CondoKeyKind | null = null;
+    if (hasCol(complexCols, 'condo_key') && row['condo_key']) {
+      condoKey = { kind: 'condo_key', column: 'condo_key', value: String(row['condo_key']) };
+    } else if (hasCol(complexCols, 'condo_base_bbl_key') && row['condo_base_bbl_key']) {
+      condoKey = {
+        kind: 'condo_base_bbl_key',
+        column: 'condo_base_bbl_key',
+        value: String(row['condo_base_bbl_key']),
+      };
+    } else if (hasCol(complexCols, 'condo_number') && row['condo_number']) {
+      condoKey = { kind: 'condo_number', column: 'condo_number', value: String(row['condo_number']) };
+    } else if (hasCol(complexCols, 'condo_base_bbl') && row['condo_base_bbl']) {
+      condoKey = { kind: 'condo_base_bbl', column: 'condo_base_bbl', value: String(row['condo_base_bbl']) };
+    }
+
+    return {
+      isCondo: true,
+      condoKey,
+      billingBbl,
+      inputIsUnitLot: false,
+      inputRole: candidate.role,
+    };
+  }
+
+  // 3) Treat as base record by searching for units pointing at this base (supports non-75xx base BBL inputs).
   const baseWhereCandidates: string[] = [];
 
   if (hasCol(unitsCols, 'condo_base_bbl')) {
     baseWhereCandidates.push(`condo_base_bbl='${escapeSoqlLiteral(inputBbl)}'`);
   }
 
-  if (hasCol(unitsCols, 'condo_base_boro') && hasCol(unitsCols, 'condo_base_block') && hasCol(unitsCols, 'condo_base_lot')) {
+  if (
+    hasCol(unitsCols, 'condo_base_boro') &&
+    hasCol(unitsCols, 'condo_base_block') &&
+    hasCol(unitsCols, 'condo_base_lot')
+  ) {
     const boro = normalizeIntString(parsed.borough);
-    const block = normalizeIntString(parsed.block);
-    const lot = normalizeIntString(parsed.lot);
-    // Socrata often stores numeric columns without leading zeros.
+    const block = String(parseInt(parsed.block, 10));
+    const lot = String(parseInt(parsed.lot, 10));
     baseWhereCandidates.push(
-      `condo_base_boro='${escapeSoqlLiteral(boro)}' AND condo_base_block='${escapeSoqlLiteral(String(parseInt(block, 10)))}' AND condo_base_lot='${escapeSoqlLiteral(String(parseInt(lot, 10)))}'`
+      `condo_base_boro='${escapeSoqlLiteral(boro)}' AND condo_base_block='${escapeSoqlLiteral(block)}' AND condo_base_lot='${escapeSoqlLiteral(lot)}'`
     );
   }
 
   for (const where of baseWhereCandidates) {
     const count = await soqlCount(CONDO_UNITS_DATASET_ID, where, appToken);
-    if (count > 0) {
-      // Fetch a row to extract best key / billingBbl
-      const selectCols = [
-        ...(['condo_key', 'condo_base_bbl_key', 'condo_number', 'condo_base_bbl', 'condo_base_boro', 'condo_base_block', 'condo_base_lot']
-          .filter((c) => hasCol(unitsCols, c))),
-      ];
-      const q = new URLSearchParams();
-      q.set('$select', selectCols.join(','));
-      q.set('$where', where);
-      q.set('$limit', '1');
+    if (count <= 0) continue;
 
-      const { resp, url } = await soqlFetch(CONDO_UNITS_DATASET_ID, q, appToken);
-      const rows = resp.ok ? await resp.json() : [];
-      const row = Array.isArray(rows) && rows[0] ? (rows[0] as Record<string, unknown>) : {};
+    const q = new URLSearchParams();
+    q.set(
+      '$select',
+      [
+        ...[
+          'condo_key',
+          'condo_base_bbl_key',
+          'condo_number',
+          'condo_base_bbl',
+          'condo_base_boro',
+          'condo_base_block',
+          'condo_base_lot',
+        ].filter((c) => hasCol(unitsCols, c)),
+      ].join(',')
+    );
+    q.set('$where', where);
+    q.set('$limit', '1');
 
-      const condoKey = pickBestCondoKeyFromUnitsRow(unitsCols, row);
-      const billingBbl = billingBblFromUnitsRow(unitsCols, row) || inputBbl;
+    const { resp, url } = await soqlFetch(CONDO_UNITS_DATASET_ID, q, appToken);
+    console.log(`[${requestId}] condo-context dataset=${CONDO_UNITS_DATASET_ID} where=${where} url=${url}`);
 
-      console.log(`[${requestId}] resolveCondoContext: matched as base/billing via units dataset; where=${where}; url=${url}`);
-      return {
-        isCondo: true,
-        condoKey,
-        billingBbl,
-        inputIsUnitLot: false,
-      };
-    }
-  }
+    const rows = resp.ok ? await resp.json() : [];
+    const row = Array.isArray(rows) && rows[0] ? (rows[0] as Record<string, unknown>) : {};
 
-  // 3) As a last resort, consult condo complex dataset (p8u6-a6it) to confirm condo/billing context.
-  // This keeps us aligned with the requested DOF datasets even when the unit dataset doesn't match.
-  const complexCols = await discoverSchema(CONDO_COMPLEX_DATASET_ID, appToken);
-  if (complexCols.size > 0) {
-    // Find likely "billing bbl" / "bbl" column without guessing: discover then pick.
-    const billingBblCol = firstCol(complexCols, ['billing_bbl', 'billingbbl', 'condo_base_bbl', 'condo_bbl', 'bbl']);
-    const condoKeyCol = firstCol(complexCols, ['condo_key', 'condo_base_bbl_key', 'condo_number', 'condonumber', 'condo_no', 'condono']);
+    const condoKey = pickBestCondoKeyFromUnitsRow(unitsCols, row);
+    const billingBbl =
+      (await lookupBillingBblFromComplex(complexCols, condoKey, appToken, requestId)) ||
+      (heuristics.lotLooksLikeBilling ? inputBbl : null);
 
-    if (billingBblCol) {
-      const q = new URLSearchParams();
-      const selectCols = [billingBblCol, condoKeyCol].filter(Boolean) as string[];
-      q.set('$select', selectCols.join(',') || billingBblCol);
-      q.set('$where', `${billingBblCol}='${escapeSoqlLiteral(inputBbl)}'`);
-      q.set('$limit', '1');
-
-      const { resp, url } = await soqlFetch(CONDO_COMPLEX_DATASET_ID, q, appToken);
-      if (resp.ok) {
-        const rows = await resp.json();
-        if (Array.isArray(rows) && rows.length > 0) {
-          const row = rows[0] as Record<string, unknown>;
-          const billing = String(row[billingBblCol] || '').trim();
-          const billingBbl = isValidBbl(billing) ? billing : null;
-
-          let condoKey: CondoKeyKind | null = null;
-          if (condoKeyCol && row[condoKeyCol]) {
-            if (condoKeyCol === 'condo_key') condoKey = { kind: 'condo_key', column: condoKeyCol, value: String(row[condoKeyCol]) };
-            else if (condoKeyCol === 'condo_base_bbl_key') condoKey = { kind: 'condo_base_bbl_key', column: condoKeyCol, value: String(row[condoKeyCol]) };
-            else condoKey = { kind: 'condo_number', column: condoKeyCol, value: String(row[condoKeyCol]) };
-          }
-
-          console.log(`[${requestId}] resolveCondoContext: matched in condo complex dataset; url=${url}`);
-
-          // inputIsUnitLot best-effort from heuristic
-          return {
-            isCondo: true,
-            condoKey,
-            billingBbl: billingBbl || inputBbl,
-            inputIsUnitLot: heuristics.lotLooksLikeUnit && !heuristics.lotLooksLikeBilling,
-          };
-        }
-      }
-    }
+    return {
+      isCondo: true,
+      condoKey,
+      billingBbl,
+      inputIsUnitLot: false,
+      inputRole: 'billing',
+    };
   }
 
   // No evidence this is a condo in DTM datasets.
@@ -363,6 +481,7 @@ async function resolveCondoContext(inputBbl: string, appToken: string, requestId
     condoKey: null,
     billingBbl: null,
     inputIsUnitLot: false,
+    inputRole: 'unknown',
   };
 }
 
@@ -370,8 +489,7 @@ async function resolveCondoContext(inputBbl: string, appToken: string, requestId
 
 function buildUnitsWhereClause(
   unitsCols: Set<string>,
-  ctx: CondoContext,
-  requestId: string
+  ctx: CondoContext
 ): { where: string | null; reason: string } {
   // Prefer strongest key if it can be applied to the units dataset.
   if (ctx.condoKey && hasCol(unitsCols, ctx.condoKey.column)) {
@@ -393,12 +511,11 @@ function buildUnitsWhereClause(
     };
   }
 
-  // Fallback: condo_base_bbl is the most direct "billing bbl" linkage in the unit dataset.
+  // Fallback: condo_base_bbl is the most direct linkage in the unit dataset.
   if (ctx.billingBbl && hasCol(unitsCols, 'condo_base_bbl')) {
     return { where: `condo_base_bbl='${escapeSoqlLiteral(ctx.billingBbl)}'`, reason: 'condo_base_bbl' };
   }
 
-  console.log(`[${requestId}] buildUnitsWhereClause: unable to build where (missing columns)`);
   return { where: null, reason: 'missing_columns' };
 }
 
@@ -415,9 +532,10 @@ function normalizeUnitFromRow(unitsCols: Set<string>, row: Record<string, unknow
   const unitLabelCol = firstCol(unitsCols, ['unit_designation', 'unit_desig', 'unit', 'apt', 'apartment']);
 
   const labelRaw = unitLabelCol ? row[unitLabelCol] : null;
-  const unitLabel = labelRaw !== null && labelRaw !== undefined && String(labelRaw).trim() !== ''
-    ? String(labelRaw).trim()
-    : null;
+  const unitLabel =
+    labelRaw !== null && labelRaw !== undefined && String(labelRaw).trim() !== ''
+      ? String(labelRaw).trim()
+      : null;
 
   return {
     unitBbl,
@@ -439,7 +557,6 @@ Deno.serve(async (req) => {
   try {
     const url = new URL(req.url);
 
-    // Required by spec
     const bbl = (url.searchParams.get('bbl') || '').trim();
     const limitRaw = url.searchParams.get('limit');
     const offsetRaw = url.searchParams.get('offset');
@@ -451,10 +568,11 @@ Deno.serve(async (req) => {
       );
     }
 
-    const limit = Math.min(Math.max(parseInt(limitRaw || '200', 10) || 200, 1), 1000);
+    // Allow large condo enumerations (requested: limit=2000). Socrata can handle it, but keep a safety cap.
+    const limit = Math.min(Math.max(parseInt(limitRaw || '2000', 10) || 2000, 1), 5000);
     const offset = Math.max(parseInt(offsetRaw || '0', 10) || 0, 0);
 
-    const cacheKey = `condo-units:v2:${bbl}:${limit}:${offset}`;
+    const cacheKey = `condo-units:v3:${bbl}:${limit}:${offset}`;
     const cached = responseCache.get(cacheKey);
     if (cached && Date.now() - cached.timestamp < RESPONSE_CACHE_TTL) {
       return new Response(JSON.stringify(cached.data), {
@@ -470,6 +588,7 @@ Deno.serve(async (req) => {
     if (!ctx.isCondo) {
       const resp: CondoUnitsListResponse = {
         inputBbl: bbl,
+        inputRole: ctx.inputRole,
         billingBbl: null,
         inputIsUnitLot: false,
         isCondo: false,
@@ -483,12 +602,21 @@ Deno.serve(async (req) => {
       });
     }
 
-    const { where, reason } = buildUnitsWhereClause(unitsCols, ctx, requestId);
+    const { where, reason } = buildUnitsWhereClause(unitsCols, ctx);
+
+    // Strong debugging requirement (logs only): dataset ids + exact WHERE.
+    console.log(
+      `[${requestId}] enumerateCondoUnits dataset=${CONDO_UNITS_DATASET_ID} where=${where ?? 'null'} reason=${reason}`
+    );
+
     if (!where) {
-      // Condo confirmed but can't query units due to schema mismatch.
-      console.log(`[${requestId}] Condo confirmed but cannot build unit WHERE. unitsCols=${Array.from(unitsCols).join(',')}`);
+      console.log(
+        `[${requestId}] Condo confirmed but cannot build unit WHERE. unitsCols=${Array.from(unitsCols).join(',')}`
+      );
+
       const resp: CondoUnitsListResponse = {
         inputBbl: bbl,
+        inputRole: ctx.inputRole,
         billingBbl: ctx.billingBbl,
         inputIsUnitLot: ctx.inputIsUnitLot,
         isCondo: true,
@@ -496,6 +624,7 @@ Deno.serve(async (req) => {
         totalApprox: 0,
         requestId,
       };
+
       responseCache.set(cacheKey, { data: resp, timestamp: Date.now() });
       return new Response(JSON.stringify(resp), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -504,12 +633,9 @@ Deno.serve(async (req) => {
 
     const totalApprox = await soqlCount(CONDO_UNITS_DATASET_ID, where, appToken);
 
-    const selectCols = [
-      ...(['unit_bbl', 'unit_boro', 'unit_block', 'unit_lot', 'unit_designation'].filter((c) => hasCol(unitsCols, c))),
-    ];
-
     // Keep raw minimally large, but still provide a meaningful raw record.
-    // We include the full row from Socrata response (within the selected cols); this satisfies `raw`.
+    const selectCols = [...['unit_bbl', 'unit_boro', 'unit_block', 'unit_lot', 'unit_designation'].filter((c) => hasCol(unitsCols, c))];
+
     const q = new URLSearchParams();
     q.set('$select', selectCols.join(',') || 'unit_bbl');
     q.set('$where', where);
@@ -518,6 +644,7 @@ Deno.serve(async (req) => {
     q.set('$offset', String(offset));
 
     const { resp: unitsResp, url: unitsUrl } = await soqlFetch(CONDO_UNITS_DATASET_ID, q, appToken);
+
     if (!unitsResp.ok) {
       console.log(`[${requestId}] Units query failed: status=${unitsResp.status}; url=${unitsUrl}`);
       return new Response(
@@ -535,14 +662,19 @@ Deno.serve(async (req) => {
       }
     }
 
-    if (ctx.isCondo && totalApprox > 0 && units.length === 0) {
+    console.log(
+      `[${requestId}] enumerateCondoUnits result dataset=${CONDO_UNITS_DATASET_ID} where=${where} totalApprox=${totalApprox} returned=${units.length}`
+    );
+
+    if (totalApprox === 0) {
       console.log(
-        `[${requestId}] DTM returned zero rows for condo though count>0. where=${where}; reason=${reason}; unitsUrl=${unitsUrl}`
+        `[${requestId}] Condo context resolved but 0 unit lots returned from unit dataset. where=${where} reason=${reason}`
       );
     }
 
     const respBody: CondoUnitsListResponse = {
       inputBbl: bbl,
+      inputRole: ctx.inputRole,
       billingBbl: ctx.billingBbl,
       inputIsUnitLot: ctx.inputIsUnitLot,
       isCondo: true,
@@ -568,3 +700,4 @@ Deno.serve(async (req) => {
     );
   }
 });
+

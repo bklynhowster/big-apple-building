@@ -10,8 +10,11 @@ export interface CondoUnit {
   raw: Record<string, unknown>;
 }
 
+export type CondoUnitsInputRole = 'billing' | 'unit' | 'unknown';
+
 export interface CondoUnitsResponse {
   inputBbl: string;
+  inputRole: CondoUnitsInputRole;
   billingBbl: string | null;
   inputIsUnitLot: boolean;
   isCondo: boolean;
