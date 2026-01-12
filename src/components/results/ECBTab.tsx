@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Search, X, ChevronLeft, ChevronRight, Loader2, FileX, Download } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -26,6 +26,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import { useECB, ECBFilters, ECBRecord } from '@/hooks/useECB';
+import { useRecordUnitMentions } from '@/hooks/useRecordUnitMentions';
 import { exportToCSV, ECB_COLUMNS } from '@/lib/csv-export';
 import { toast } from '@/hooks/use-toast';
 import { ErrorBanner } from '@/components/ui/error-banner';
@@ -34,6 +35,9 @@ import { ColumnSelector, useColumnVisibility, ColumnConfig } from './ColumnSelec
 import { QueriedIdentifier, DatasetCapability } from './QueriedIdentifier';
 import { QueryScope } from './ScopeSelector';
 import { BuildingLevelBanner } from './BuildingLevelBanner';
+import { UnitMentionBadges } from './UnitMentionBadges';
+import { UnitMentionFilter } from './UnitMentionFilter';
+import { normalizeUnit } from '@/utils/unit';
 
 interface ECBTabProps {
   bbl: string;
@@ -46,6 +50,7 @@ interface ECBTabProps {
 const COLUMN_CONFIGS: ColumnConfig[] = [
   { key: 'issueDate', label: 'Issue Date', defaultVisible: true },
   { key: 'status', label: 'Status', defaultVisible: true },
+  { key: 'mentions', label: 'Mentions', defaultVisible: true },
   { key: 'severity', label: 'Severity', defaultVisible: true },
   { key: 'category', label: 'Category', defaultVisible: true },
   { key: 'description', label: 'Description', defaultVisible: true },
@@ -118,12 +123,48 @@ export function ECBTab({ bbl, bin, scope = 'building', isCoop, coopUnitContext }
   const { loading, error, data, filters, offset, fetchECB, setFilters, applyFilters, goToNextPage, goToPrevPage, retry } = useECB(bbl);
   const [localFilters, setLocalFilters] = useState<ECBFilters>({ status: 'all', keyword: '' });
   
+  // Unit mention filter state
+  const [showMentionsOnly, setShowMentionsOnly] = useState(false);
+  const [selectedMentionUnit, setSelectedMentionUnit] = useState<string | null>(null);
+  const [showContextOnly, setShowContextOnly] = useState(false);
+  
   // Drawer state
   const [selectedRecord, setSelectedRecord] = useState<ECBRecord | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   
   // Column visibility
   const { visibleColumns, toggle, reset, isVisible } = useColumnVisibility(COLUMN_CONFIGS);
+
+  const items = data?.items || [];
+  
+  // Extract unit mentions from records
+  const {
+    recordsWithMentions,
+    allMentionedUnits,
+    recordsWithMentionsCount,
+    filterByUnit,
+    filterToMentionsOnly,
+  } = useRecordUnitMentions(items, coopUnitContext);
+
+  // Apply unit mention filters
+  const filteredRecordsWithMentions = useMemo(() => {
+    let result = recordsWithMentions;
+    
+    if (showMentionsOnly) {
+      result = filterToMentionsOnly();
+    } else if (selectedMentionUnit) {
+      result = filterByUnit(selectedMentionUnit);
+    }
+    
+    if (showContextOnly && coopUnitContext) {
+      const normalizedContext = normalizeUnit(coopUnitContext);
+      result = result.filter(rwm => 
+        rwm.mentions.some(m => m.unit === normalizedContext)
+      );
+    }
+    
+    return result;
+  }, [recordsWithMentions, showMentionsOnly, selectedMentionUnit, showContextOnly, coopUnitContext, filterByUnit, filterToMentionsOnly]);
 
   useEffect(() => {
     if (bbl && bbl.length === 10) fetchECB(bbl);
@@ -139,6 +180,10 @@ export function ECBTab({ bbl, bin, scope = 'building', isCoop, coopUnitContext }
     const clearedFilters: ECBFilters = { status: 'all', keyword: '', fromDate: undefined, toDate: undefined };
     setLocalFilters(clearedFilters);
     setFilters(clearedFilters);
+    // Also clear unit filters
+    setShowMentionsOnly(false);
+    setSelectedMentionUnit(null);
+    setShowContextOnly(false);
   };
   
   const handleRowClick = (record: ECBRecord) => {
@@ -146,7 +191,7 @@ export function ECBTab({ bbl, bin, scope = 'building', isCoop, coopUnitContext }
     setDrawerOpen(true);
   };
 
-  const hasActiveFilters = localFilters.status !== 'all' || localFilters.keyword || localFilters.fromDate || localFilters.toDate;
+  const hasActiveFilters = localFilters.status !== 'all' || localFilters.keyword || localFilters.fromDate || localFilters.toDate || showMentionsOnly || selectedMentionUnit || showContextOnly;
 
   if (loading && !data) return <LoadingSkeleton />;
   if (error) return <div className="space-y-4"><ErrorBanner error={error} onRetry={retry} retrying={loading} /></div>;
@@ -154,7 +199,6 @@ export function ECBTab({ bbl, bin, scope = 'building', isCoop, coopUnitContext }
   // Dataset capability for ECB - BBL-based, building-level
   const datasetCapability: DatasetCapability = 'building-bbl';
 
-  const items = data?.items || [];
   const totalApprox = data?.totalApprox || 0;
   const hasNextPage = data?.nextOffset !== null;
   const hasPrevPage = offset > 0;
@@ -169,6 +213,9 @@ export function ECBTab({ bbl, bin, scope = 'building', isCoop, coopUnitContext }
     toast({ title: 'Export complete', description: `Exported ${items.length} ECB violations to CSV` });
   };
 
+  // Use filtered items for display
+  const displayItems = filteredRecordsWithMentions;
+
   return (
     <div className="space-y-4">
       {/* Co-op building-level banner */}
@@ -182,6 +229,22 @@ export function ECBTab({ bbl, bin, scope = 'building', isCoop, coopUnitContext }
         datasetCapability={datasetCapability}
         datasetName="ECB Violations (6bgk-3dad)"
       />
+      
+      {/* Unit Mention Filter (for co-ops or when mentions exist) */}
+      {(isCoop || recordsWithMentionsCount > 0) && items.length > 0 && (
+        <UnitMentionFilter
+          allMentionedUnits={allMentionedUnits}
+          mentionCount={recordsWithMentionsCount}
+          totalCount={items.length}
+          selectedUnit={selectedMentionUnit}
+          showMentionsOnly={showMentionsOnly}
+          coopUnitContext={coopUnitContext}
+          showContextOnly={showContextOnly}
+          onUnitChange={setSelectedMentionUnit}
+          onMentionsOnlyChange={setShowMentionsOnly}
+          onContextOnlyChange={setShowContextOnly}
+        />
+      )}
       
       <div className="flex flex-col md:flex-row gap-4 p-4 bg-muted/50 rounded-lg">
         <div className="flex-1">
@@ -207,7 +270,7 @@ export function ECBTab({ bbl, bin, scope = 'building', isCoop, coopUnitContext }
       </div>
 
       <div className="flex items-center justify-between text-sm text-muted-foreground">
-        <div>Showing {items.length} of ~{totalApprox} ECB summonses{hasActiveFilters && <span className="ml-2 text-primary">(filtered)</span>}</div>
+        <div>Showing {displayItems.length} of ~{totalApprox} ECB summonses{hasActiveFilters && <span className="ml-2 text-primary">(filtered)</span>}</div>
         <div className="flex items-center gap-2">
           {loading && <Loader2 className="h-4 w-4 animate-spin" />}
           <ColumnSelector columns={COLUMN_CONFIGS} visibleColumns={visibleColumns} onToggle={toggle} onReset={reset} />
@@ -215,22 +278,40 @@ export function ECBTab({ bbl, bin, scope = 'building', isCoop, coopUnitContext }
         </div>
       </div>
 
-      {items.length === 0 && !loading && (
+      {displayItems.length === 0 && !loading && (
         <div className="flex flex-col items-center justify-center py-12 text-center border rounded-lg bg-muted/20">
           <FileX className="h-12 w-12 text-muted-foreground mb-4" />
           <p className="text-foreground font-medium mb-2">No ECB summonses found</p>
-          <p className="text-sm text-muted-foreground">No ECB summonses found for this property with the current filters.</p>
+          <p className="text-sm text-muted-foreground">
+            {showMentionsOnly || selectedMentionUnit || showContextOnly
+              ? 'No ECB violations match the current unit filter.'
+              : 'No ECB summonses found for this property with the current filters.'}
+          </p>
           {hasActiveFilters && <Button variant="link" onClick={handleClearFilters} className="mt-2">Clear filters and try again</Button>}
         </div>
       )}
 
-      {items.length > 0 && (
+      {displayItems.length > 0 && (
         <div className="rounded-md border overflow-hidden">
           <Table>
             <TableHeader>
               <TableRow className="bg-muted/50">
                 {isVisible('issueDate') && <TableHead className="font-semibold">Issue Date</TableHead>}
                 {isVisible('status') && <TableHead className="font-semibold">Status</TableHead>}
+                {isVisible('mentions') && (
+                  <TableHead className="font-semibold">
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger className="flex items-center gap-1 cursor-help">
+                          Mentions
+                        </TooltipTrigger>
+                        <TooltipContent className="max-w-xs">
+                          <p>Units explicitly mentioned in this record's text. Does not imply unit-level enforcement.</p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  </TableHead>
+                )}
                 {isVisible('severity') && <TableHead className="font-semibold">Severity</TableHead>}
                 {isVisible('category') && <TableHead className="font-semibold">Category</TableHead>}
                 {isVisible('description') && <TableHead className="font-semibold">Description</TableHead>}
@@ -242,14 +323,26 @@ export function ECBTab({ bbl, bin, scope = 'building', isCoop, coopUnitContext }
               </TableRow>
             </TableHeader>
             <TableBody>
-              {items.map((item, index) => (
+              {displayItems.map(({ record: item, mentions, matchesContext }, index) => (
                 <TableRow 
                   key={`${item.recordId}-${index}`}
-                  className="cursor-pointer hover:bg-muted/50"
+                  className={`
+                    cursor-pointer hover:bg-muted/50
+                    ${matchesContext ? 'bg-primary/5 border-l-2 border-l-primary' : ''}
+                  `}
                   onClick={() => handleRowClick(item)}
                 >
                   {isVisible('issueDate') && <TableCell className="text-sm">{item.issueDate ? new Date(item.issueDate).toLocaleDateString() : '-'}</TableCell>}
                   {isVisible('status') && <TableCell><StatusBadge status={item.status} /></TableCell>}
+                  {isVisible('mentions') && (
+                    <TableCell>
+                      <UnitMentionBadges 
+                        mentions={mentions} 
+                        matchesContext={matchesContext}
+                        compact
+                      />
+                    </TableCell>
+                  )}
                   {isVisible('severity') && <TableCell><SeverityBadge severity={item.severity} /></TableCell>}
                   {isVisible('category') && <TableCell className="text-sm">{item.category || '-'}</TableCell>}
                   {isVisible('description') && (
@@ -271,7 +364,7 @@ export function ECBTab({ bbl, bin, scope = 'building', isCoop, coopUnitContext }
         </div>
       )}
 
-      {items.length > 0 && (
+      {displayItems.length > 0 && (
         <div className="flex items-center justify-between">
           <div className="text-sm text-muted-foreground">Page {currentPage}</div>
           <div className="flex items-center gap-2">
