@@ -197,45 +197,52 @@ export function runUnitExtractionTests(): TestResults {
   // Test isLikelyUnitLabel directly
   console.log('\n=== isLikelyUnitLabel Direct Tests ===');
   const labelTests = [
-    // Core valid units (no strong evidence required) - CRITICAL REGRESSION TESTS
-    { unit: '6M', expected: true, desc: 'digit+letter' },
-    { unit: '6G', expected: true, desc: 'digit+letter' },
-    { unit: '4J', expected: true, desc: 'digit+letter' },
-    { unit: '2H', expected: true, desc: 'digit+letter' },
-    { unit: '5K', expected: true, desc: 'digit+letter' },
-    { unit: '12B', expected: true, desc: 'double-digit+letter' },
-    { unit: '100A', expected: true, desc: 'triple-digit+letter' },
-    { unit: '12AA', expected: true, desc: 'digit+double-letter' },
-    { unit: '1', expected: true, desc: 'single digit' },
-    { unit: '12', expected: true, desc: 'double digit' },
-    { unit: '100', expected: true, desc: 'triple digit' },
+    // Core valid units: digit+letter combos (no strong evidence required)
+    { unit: '6M', hasStrong: false, expected: true, desc: 'digit+letter' },
+    { unit: '6G', hasStrong: false, expected: true, desc: 'digit+letter' },
+    { unit: '4J', hasStrong: false, expected: true, desc: 'digit+letter' },
+    { unit: '2H', hasStrong: false, expected: true, desc: 'digit+letter' },
+    { unit: '5K', hasStrong: false, expected: true, desc: 'digit+letter' },
+    { unit: '12B', hasStrong: false, expected: true, desc: 'double-digit+letter' },
+    { unit: '100A', hasStrong: false, expected: true, desc: 'triple-digit+letter' },
+    { unit: '12AA', hasStrong: false, expected: true, desc: 'digit+double-letter' },
+    
+    // Co-op rule: numeric-only units require strong evidence (to avoid floor numbers)
+    { unit: '1', hasStrong: false, expected: false, desc: 'single digit (no evidence → reject)' },
+    { unit: '12', hasStrong: false, expected: false, desc: 'double digit (no evidence → reject)' },
+    { unit: '100', hasStrong: false, expected: false, desc: 'triple digit (no evidence → reject)' },
+    { unit: '1', hasStrong: true, expected: true, desc: 'single digit (with strong evidence)' },
+    { unit: '12', hasStrong: true, expected: true, desc: 'double digit (with strong evidence)' },
+    { unit: '100', hasStrong: true, expected: true, desc: 'triple digit (with strong evidence)' },
+    
     // Penthouse/special
-    { unit: 'PH', expected: true, desc: 'penthouse' },
-    { unit: 'PHH', expected: true, desc: 'penthouse high' },
-    { unit: 'TH', expected: true, desc: 'townhouse' },
-    { unit: 'GF', expected: true, desc: 'ground floor' },
+    { unit: 'PH', hasStrong: false, expected: true, desc: 'penthouse' },
+    { unit: 'PHH', hasStrong: false, expected: true, desc: 'penthouse high' },
+    { unit: 'TH', hasStrong: false, expected: true, desc: 'townhouse' },
+    { unit: 'GF', hasStrong: false, expected: true, desc: 'ground floor' },
     // Letter+digits
-    { unit: 'A1', expected: true, desc: 'letter+digit' },
-    { unit: 'A12', expected: true, desc: 'letter+digits' },
+    { unit: 'A1', hasStrong: false, expected: true, desc: 'letter+digit' },
+    { unit: 'A12', hasStrong: false, expected: true, desc: 'letter+digits' },
     // FALSE POSITIVES - MUST REJECT
-    { unit: 'ONLY', expected: false, desc: 'stopword' },
-    { unit: 'IF', expected: false, desc: 'stopword' },
-    { unit: 'AH', expected: false, desc: 'stopword' },
-    { unit: 'S', expected: false, desc: 'single letter without evidence' },
-    { unit: 'BROOKLYN', expected: false, desc: 'borough name' },
-    { unit: '1200', expected: false, desc: '4+ digit number' },
-    { unit: 'B00123456', expected: false, desc: 'job number' },
-    { unit: '11201', expected: false, desc: 'ZIP code' },
+    { unit: 'ONLY', hasStrong: false, expected: false, desc: 'stopword' },
+    { unit: 'IF', hasStrong: false, expected: false, desc: 'stopword' },
+    { unit: 'AH', hasStrong: false, expected: false, desc: 'stopword' },
+    { unit: 'S', hasStrong: false, expected: false, desc: 'single letter without evidence' },
+    { unit: 'S', hasStrong: true, expected: false, desc: 'S always rejected' },
+    { unit: 'BROOKLYN', hasStrong: false, expected: false, desc: 'borough name' },
+    { unit: '1200', hasStrong: false, expected: false, desc: '4+ digit number' },
+    { unit: 'B00123456', hasStrong: false, expected: false, desc: 'job number' },
+    { unit: '11201', hasStrong: false, expected: false, desc: 'ZIP code' },
   ];
   
-  for (const { unit, expected, desc } of labelTests) {
-    const result = isLikelyUnitLabel(unit);
+  for (const { unit, hasStrong, expected, desc } of labelTests) {
+    const result = isLikelyUnitLabel(unit, hasStrong);
     if (result === expected) {
       passed++;
-      console.log(`✓ isLikelyUnitLabel("${unit}") = ${result} (${desc})`);
+      console.log(`✓ isLikelyUnitLabel("${unit}", ${hasStrong}) = ${result} (${desc})`);
     } else {
       failed++;
-      const error = `✗ isLikelyUnitLabel("${unit}"): expected ${expected}, got ${result} (${desc})`;
+      const error = `✗ isLikelyUnitLabel("${unit}", ${hasStrong}): expected ${expected}, got ${result} (${desc})`;
       errors.push(error);
       console.error(error);
     }
