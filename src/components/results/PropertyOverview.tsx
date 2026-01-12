@@ -12,6 +12,7 @@ interface PropertyOverviewProps {
   bin?: string;
   latitude?: number;
   longitude?: number;
+  unitLabel?: string | null;
 }
 
 // Extract block and lot from BBL
@@ -73,6 +74,7 @@ export function PropertyOverview({
   bin,
   latitude,
   longitude,
+  unitLabel,
 }: PropertyOverviewProps) {
   const { boroughCode, block, lot } = parseBBL(bbl);
   const derivedBorough = borough || BOROUGH_NAMES[boroughCode] || '';
@@ -140,7 +142,12 @@ export function PropertyOverview({
               {address && (
                 <div className="flex items-center gap-2">
                   <Building2 className="h-5 w-5 text-muted-foreground" />
-                  <h1 className="text-xl font-semibold text-foreground">{address}</h1>
+                  <h1 className="text-xl font-semibold text-foreground">
+                    {address}
+                    {unitLabel && (
+                      <span className="text-primary ml-2">— Unit {unitLabel}</span>
+                    )}
+                  </h1>
                   <CopyButton value={address} label="Address" />
                 </div>
               )}

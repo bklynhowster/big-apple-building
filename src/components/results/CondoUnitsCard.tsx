@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Building2, Home, Search, ArrowLeft, AlertCircle } from 'lucide-react';
+import { Building2, Home, Search, ArrowLeft, AlertCircle, Info } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -16,11 +16,18 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 import { useCondoUnits } from '@/hooks/useCondoUnits';
 
 interface CondoUnitsCardProps {
   bbl: string;
   onContextChange?: (contextBbl: string, isUnit: boolean) => void;
+  onUnitLabelResolved?: (unitLabel: string | null) => void;
 }
 
 function LoadingSkeleton() {
@@ -61,7 +68,7 @@ function formatLot(lot: string): string {
   return lot;
 }
 
-export function CondoUnitsCard({ bbl }: CondoUnitsCardProps) {
+export function CondoUnitsCard({ bbl, onUnitLabelResolved }: CondoUnitsCardProps) {
   const navigate = useNavigate();
   const { loading, loadingMore, error, data, fetchFirstPage, fetchNextPage, retry } = useCondoUnits();
   const [searchQuery, setSearchQuery] = useState('');
@@ -72,6 +79,20 @@ export function CondoUnitsCard({ bbl }: CondoUnitsCardProps) {
     const n = Number(lot);
     return Number.isFinite(n) && n >= 7501 && n <= 7599;
   }, [bbl]);
+
+  // Find current unit's label when input is a unit BBL
+  useEffect(() => {
+    if (!data || !onUnitLabelResolved) return;
+
+    if (data.inputRole === 'unit' && data.units.length > 0) {
+      const currentUnit = data.units.find((u) => u.unitBbl === data.inputBbl);
+      if (currentUnit) {
+        onUnitLabelResolved(currentUnit.unitLabel);
+        return;
+      }
+    }
+    onUnitLabelResolved(null);
+  }, [data, onUnitLabelResolved]);
 
   useEffect(() => {
     if (bbl && bbl.length === 10) {
@@ -230,13 +251,36 @@ export function CondoUnitsCard({ bbl }: CondoUnitsCardProps) {
                 ) : (
                   filteredUnits.map((unit) => {
                     const isCurrent = Boolean(currentUnitBbl && unit.unitBbl === currentUnitBbl);
-                    const label = unit.unitLabel || `Lot ${formatLot(unit.lot)}`;
+                    const displayLabel = unit.unitLabel || `Lot ${formatLot(unit.lot)}`;
+                    const labelSource = unit.unitLabelSource || 'unknown';
+                    const isLotFallback = !unit.unitLabel || labelSource === 'fallback.lot';
 
                     return (
                       <TableRow key={unit.unitBbl} className={isCurrent ? 'bg-muted/40' : undefined}>
                         <TableCell className="text-sm">
                           <div className="flex items-center gap-2">
-                            <span>{label}</span>
+                            <TooltipProvider>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <span className="cursor-help flex items-center gap-1">
+                                    <span className={isLotFallback ? 'text-muted-foreground' : undefined}>
+                                      {displayLabel}
+                                    </span>
+                                    {!isLotFallback && (
+                                      <Info className="h-3 w-3 text-muted-foreground/60" />
+                                    )}
+                                  </span>
+                                </TooltipTrigger>
+                                <TooltipContent side="top" className="max-w-xs">
+                                  <p className="text-xs">
+                                    <strong>Source:</strong> {labelSource}
+                                  </p>
+                                  <p className="text-xs text-muted-foreground">
+                                    Lot: {formatLot(unit.lot)}
+                                  </p>
+                                </TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
                             {isCurrent && (
                               <Badge variant="secondary" className="text-[10px]">
                                 Current
@@ -245,7 +289,7 @@ export function CondoUnitsCard({ bbl }: CondoUnitsCardProps) {
                           </div>
                         </TableCell>
                         <TableCell className="font-mono text-sm">{unit.unitBbl}</TableCell>
-                        <TableCell className="text-sm">{formatLot(unit.lot)}</TableCell>
+                        <TableCell className="text-sm text-muted-foreground">{formatLot(unit.lot)}</TableCell>
                         <TableCell className="text-right">
                           <Button
                             variant="ghost"

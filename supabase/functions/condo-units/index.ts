@@ -39,6 +39,7 @@ export interface CondoUnit {
   block: string;
   lot: string;
   unitLabel: string | null;
+  unitLabelSource: string | null;
   raw: Record<string, unknown>;
 }
 
@@ -562,7 +563,47 @@ function buildUnitsWhereClause(
   return { where: null, reason: 'missing_columns' };
 }
 
-function normalizeUnitFromRow(unitsCols: Set<string>, row: Record<string, unknown>): CondoUnit | null {
+// Extended unit label candidates in priority order.
+// These are schema-safe candidates - we only use columns that exist in the dataset.
+const UNIT_LABEL_CANDIDATES = [
+  'unit_designation',
+  'unit_desig',
+  'unitdesig',
+  'unit_id',
+  'unit_number',
+  'unit_label',
+  'unitlabel',
+  'unit',
+  'apt_no',
+  'apt',
+  'apartment',
+];
+
+function extractUnitLabel(
+  cols: Set<string>,
+  row: Record<string, unknown>,
+  datasetName: string
+): { label: string | null; source: string | null } {
+  for (const candidate of UNIT_LABEL_CANDIDATES) {
+    if (!hasCol(cols, candidate)) continue;
+
+    const rawVal = row[candidate];
+    if (rawVal === null || rawVal === undefined) continue;
+
+    const trimmed = String(rawVal).trim();
+    if (trimmed === '') continue;
+
+    return { label: trimmed, source: `${datasetName}.${candidate}` };
+  }
+
+  return { label: null, source: null };
+}
+
+function normalizeUnitFromRow(
+  unitsCols: Set<string>,
+  row: Record<string, unknown>,
+  datasetName: string
+): CondoUnit | null {
   const unitBblCol = getUnitBblColumn(unitsCols);
   if (!unitBblCol) return null;
 
@@ -572,20 +613,15 @@ function normalizeUnitFromRow(unitsCols: Set<string>, row: Record<string, unknow
   const parsed = parseBbl(unitBbl);
   if (!parsed) return null;
 
-  const unitLabelCol = firstCol(unitsCols, ['unit_designation', 'unit_desig', 'unit', 'apt', 'apartment']);
-
-  const labelRaw = unitLabelCol ? row[unitLabelCol] : null;
-  const unitLabel =
-    labelRaw !== null && labelRaw !== undefined && String(labelRaw).trim() !== ''
-      ? String(labelRaw).trim()
-      : null;
+  const { label, source } = extractUnitLabel(unitsCols, row, datasetName);
 
   return {
     unitBbl,
     borough: parsed.borough,
     block: String(parseInt(parsed.block, 10)),
     lot: String(parseInt(parsed.lot, 10)),
-    unitLabel,
+    unitLabel: label,
+    unitLabelSource: source,
     raw: row,
   };
 }
@@ -648,18 +684,19 @@ async function enumerateUnitsByBlockLotFallback(args: {
 
   const totalApprox = await soqlCount(datasetId, where, args.appToken);
 
-  const labelCol = firstCol(cols, ['unit', 'apt', 'apartment', 'unit_designation', 'unit_desig']);
+  // Build select cols including all possible label candidates
+  const selectCols = new Set<string>();
+  if (bblCol) selectCols.add(bblCol);
+  if (boroCol) selectCols.add(boroCol);
+  if (blockCol) selectCols.add(blockCol);
+  if (lotCol) selectCols.add(lotCol);
 
-  const selectCols = [
-    ...(bblCol ? [bblCol] : []),
-    ...(boroCol ? [boroCol] : []),
-    ...(blockCol ? [blockCol] : []),
-    ...(lotCol ? [lotCol] : []),
-    ...(labelCol ? [labelCol] : []),
-  ].filter(Boolean);
+  for (const candidate of UNIT_LABEL_CANDIDATES) {
+    if (hasCol(cols, candidate)) selectCols.add(candidate);
+  }
 
   const q = new URLSearchParams();
-  q.set('$select', Array.from(new Set(selectCols)).join(','));
+  q.set('$select', Array.from(selectCols).join(','));
   q.set('$where', where);
   q.set('$order', `${lotCol}`);
   q.set('$limit', String(args.limit));
@@ -687,11 +724,11 @@ async function enumerateUnitsByBlockLotFallback(args: {
 
       if (!isValidBbl(unitBbl)) continue;
 
-      const unitLabelRaw = labelCol ? row[labelCol] : null;
-      const unitLabel =
-        unitLabelRaw !== null && unitLabelRaw !== undefined && String(unitLabelRaw).trim() !== ''
-          ? String(unitLabelRaw).trim()
-          : `Lot ${String(parseInt(lot, 10))}`;
+      const { label, source } = extractUnitLabel(cols, row, `taxLot(${datasetId})`);
+
+      // Fallback to "Lot XXXX" if no label found
+      const unitLabel = label || `Lot ${String(parseInt(lot, 10))}`;
+      const unitLabelSource = source || 'fallback.lot';
 
       units.push({
         unitBbl,
@@ -699,6 +736,7 @@ async function enumerateUnitsByBlockLotFallback(args: {
         block,
         lot: String(parseInt(lot, 10)),
         unitLabel,
+        unitLabelSource,
         raw: row,
       });
     }
@@ -791,7 +829,7 @@ Deno.serve(async (req) => {
           const rows = await unitsResp.json();
           if (Array.isArray(rows)) {
             for (const r of rows) {
-              const unit = normalizeUnitFromRow(unitsCols, r as Record<string, unknown>);
+              const unit = normalizeUnitFromRow(unitsCols, r as Record<string, unknown>, `condoUnits(${CONDO_UNITS_DATASET_ID})`);
               if (unit) pass1Units.push(unit);
             }
           }
