@@ -29,8 +29,11 @@ const BOROUGHS: { value: Borough; label: string }[] = [
   { value: 'STATEN ISLAND', label: 'Staten Island' },
 ];
 
+// Sentinel value for "no street type selected" - Radix Select doesn't allow empty string values
+const STREET_TYPE_NONE = '__NONE__';
+
 const STREET_TYPES = [
-  { value: '', label: '(Auto-detect / None)' },
+  { value: STREET_TYPE_NONE, label: '(Auto-detect / None)' },
   { value: 'St', label: 'Street (St)' },
   { value: 'Ave', label: 'Avenue (Ave)' },
   { value: 'Rd', label: 'Road (Rd)' },
@@ -44,6 +47,16 @@ const STREET_TYPES = [
   { value: 'Way', label: 'Way' },
   { value: 'Hwy', label: 'Highway (Hwy)' },
 ];
+
+// Helper to convert UI street type value to request value
+function getRequestStreetType(uiValue: string): string {
+  return uiValue === STREET_TYPE_NONE ? '' : uiValue;
+}
+
+// Helper to convert request/state value to UI value for Select
+function getUIStreetType(stateValue: string): string {
+  return stateValue || STREET_TYPE_NONE;
+}
 
 // Suggestion structure from geocode API
 interface StreetSuggestion {
@@ -118,7 +131,7 @@ export function SearchForm() {
   // Address search state
   const [houseNumber, setHouseNumber] = useState('');
   const [streetName, setStreetName] = useState('');
-  const [streetType, setStreetType] = useState('');
+  const [streetType, setStreetType] = useState(STREET_TYPE_NONE); // Use sentinel as default
   const [borough, setBorough] = useState<Borough | ''>('');
   
   // BBL search state
@@ -130,7 +143,11 @@ export function SearchForm() {
   const handleSuggestionClick = (suggestion: StreetSuggestion) => {
     setStreetName(suggestion.streetName);
     if (suggestion.streetType) {
+      // Set the actual street type value (not the sentinel)
       setStreetType(suggestion.streetType);
+    } else {
+      // Reset to sentinel for "no selection"
+      setStreetType(STREET_TYPE_NONE);
     }
     if (suggestion.borough) {
       const matchingBorough = BOROUGHS.find(
@@ -151,12 +168,15 @@ export function SearchForm() {
     setAddressError(null);
     setShowDetails(false);
     
+    // Convert UI street type to request value (sentinel -> empty string)
+    const requestStreetType = getRequestStreetType(streetType);
+    
     // Auto-detect suffix if streetType not explicitly set
     let finalStreetName = streetName.trim();
-    let finalStreetType = streetType; // Empty string if not selected (no more "None")
+    let finalStreetType = requestStreetType;
     
     // If no street type selected, try to extract from street name
-    if (!streetType) {
+    if (!requestStreetType) {
       const extracted = extractSuffix(streetName);
       if (extracted.type) {
         finalStreetName = extracted.name;
