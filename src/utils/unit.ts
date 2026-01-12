@@ -54,6 +54,37 @@ const JUNK_VALUES = new Set([
   'BSMT', 'ROOFDECK', 'TERRACE', 'GARAGE', 'STORE', 'STOREFRONT', 'COMMERCIAL'
 ]);
 
+/**
+ * STOPLIST: Common English words and abbreviations that appear in 311/HPD complaint
+ * narratives but are NOT valid unit identifiers. Case-insensitive.
+ */
+const UNIT_STOPLIST = new Set([
+  // Common English words
+  'ONLY', 'IF', 'AND', 'OR', 'BUT', 'NOT', 'YES', 'NO', 'THE', 'A', 'AN',
+  'IN', 'ON', 'AT', 'BY', 'TO', 'FOR', 'OF', 'FROM', 'WITH', 'WITHOUT',
+  'INTO', 'OUT', 'UP', 'DOWN', 'LEFT', 'RIGHT', 'FRONT', 'REAR', 'SIDE',
+  'AS', 'IS', 'IT', 'BE', 'SO', 'WE', 'ME', 'HE', 'OK', 'AM', 'PM',
+  'HAS', 'HAD', 'WAS', 'ARE', 'CAN', 'DID', 'DO', 'HER', 'HIM', 'HIS',
+  'ITS', 'MY', 'OUR', 'THAT', 'THEM', 'THEY', 'THIS', 'WHO', 'WILL',
+  'BEEN', 'HAVE', 'WERE', 'WHAT', 'WHEN', 'WHERE', 'WHICH', 'YOUR',
+  // NYC-specific stopwords
+  'NYC', 'BK', 'MN', 'BX', 'QN', 'SI', 'NY', 'NJ',
+  // Building/location terms (standalone)
+  'APT', 'UNIT', 'FL', 'FLOOR', 'RM', 'ROOM', 'STE', 'SUITE',
+  // Street suffixes
+  'ST', 'AVE', 'RD', 'BLVD', 'PL', 'DR', 'CT', 'LN', 'WAY', 'TER', 'CIR',
+  // Unknown/placeholder values
+  'UNK', 'TBD', 'NA', 'N/A', 'NEED', 'NEW', 'OLD', 'SEE', 'PER', 'USE',
+  // Common complaint terms that get extracted
+  'AH', 'OH', 'UH', 'RE', 'CC', 'CO', 'VS', 'IE', 'EG',
+  // Status words
+  'OPEN', 'CLOSED', 'PENDING', 'DONE', 'FAIL', 'PASS', 'GOOD', 'BAD',
+  // Single letter commonly misextracted
+  'S', 'X', 'Y', 'Z', 'I', 'O', 'U', 'E', 'Q', 'W', 'V', 'T', 'P', 'K', 'M', 'L',
+  // Ordinals that are NOT units
+  'ND', 'RD', 'TH',
+]);
+
 // Prefixes to strip from unit values
 const STRIP_PREFIXES = [
   'APARTMENT', 'APT\\.?', 'UNIT', 'SUITE', 'STE\\.?', 'ROOM', 'RM\\.?', 
@@ -83,8 +114,23 @@ const ADDRESS_SUBSTRINGS = [
   'BROOKLYN', 'MANHATTAN', 'BRONX', 'QUEENS', 'STATEN'
 ];
 
-// Well-known penthouse/special unit tokens
-const PENTHOUSE_TOKENS = new Set(['PH', 'PENTHOUSE', 'PHS', 'PHN', 'PHE', 'PHW']);
+// Well-known penthouse/special unit tokens (ALLOWED even if pure alpha)
+const PENTHOUSE_TOKENS = new Set(['PH', 'PHH', 'PHS', 'PHN', 'PHE', 'PHW', 'TH', 'GF', 'LH', 'RH', 'BS']);
+
+/**
+ * Check if a token is in the STOPLIST (case-insensitive).
+ * Exported for diagnostics/testing.
+ */
+export function isStopword(token: string): boolean {
+  return UNIT_STOPLIST.has(token.toUpperCase());
+}
+
+/**
+ * Check if a token is a valid penthouse/special designation.
+ */
+function isAllowedSpecialToken(token: string): boolean {
+  return PENTHOUSE_TOKENS.has(token.toUpperCase());
+}
 
 // ============================================================================
 // VALIDATION
@@ -97,11 +143,20 @@ const PENTHOUSE_TOKENS = new Set(['PH', 'PENTHOUSE', 'PHS', 'PHN', 'PHE', 'PHW']
  * TIGHTENED: Supports short co-op units (2H, PH, G, S) while preventing
  * false positives from addresses, job numbers, and floor-only references.
  */
-export function isLikelyUnitLabel(unit: string): boolean {
+export function isLikelyUnitLabel(unit: string, hasStrongEvidence: boolean = false): boolean {
   if (!unit) return false;
   
-  // Rule: Reject if length < 1 or > 8 (increased from 6 for units like "LOBBY1")
-  if (unit.length < 1 || unit.length > 8) return false;
+  const upperUnit = unit.toUpperCase();
+  
+  // Rule: Reject if in STOPLIST (common English words)
+  if (isStopword(upperUnit)) return false;
+  
+  // Rule: Reject if length < 2 (single characters are rarely valid units)
+  // Exception: Allow single letters ONLY with strong evidence (explicit APT/UNIT prefix)
+  if (unit.length < 2 && !hasStrongEvidence) return false;
+  
+  // Rule: Reject if length > 8
+  if (unit.length > 8) return false;
   
   // Rule: Reject floor-only patterns
   for (const pattern of FLOOR_ONLY_PATTERNS) {
@@ -113,30 +168,35 @@ export function isLikelyUnitLabel(unit: string): boolean {
     if (pattern.test(unit)) return false;
   }
   
-  // Rule: Reject if only digits and length >= 4 (e.g., 1200 are house numbers, but 325 might be valid)
-  // Relaxed from >= 3 to >= 4 to allow units like "325" in large buildings
+  // Rule: Reject if only digits and length >= 4 (e.g., 1200 are house numbers)
   if (/^\d+$/.test(unit) && unit.length >= 4) return false;
   
   // Rule: Reject if it looks like a ZIP code (exactly 5 digits)
   if (/^\d{5}$/.test(unit)) return false;
   
-  // Allowed patterns for co-op units (EXPANDED for better coverage)
+  // Rule: Reject purely alphabetic tokens UNLESS they are known special tokens (PH, TH, GF, etc.)
+  // This eliminates false positives like "ONLY", "IF", "AH"
+  if (/^[A-Z]+$/.test(upperUnit)) {
+    if (!isAllowedSpecialToken(upperUnit)) {
+      return false;
+    }
+  }
+  
+  // Allowed patterns for NYC co-op/condo units
   const allowedPatterns = [
-    /^\d{1,3}[A-Z]$/,              // 2G, 6M, 12B, 100A (number + single letter) - EXPANDED to 3 digits
-    /^\d{1,3}[A-Z]{2}$/,           // 12AB, 2GH, 100AB (number + two letters) - EXPANDED
-    /^(PH|TH|LH|RH|BS|GF|PHS?|PHN|PHE|PHW)\d{0,2}[A-Z]?$/, // PH, PH2, PH2A, TH, GF, PHS, PHN, PHE, PHW
-    /^[A-Z]{1,2}\d{1,3}$/,         // A1, B12, AB1, A123 (letter + number) - EXPANDED
-    /^[A-Z]$/,                     // Single letter units: A, B, G, S
-    /^\d{1,3}$/,                   // Short numeric: 1, 12, 100 (up to 3 digits) - EXPANDED
-    /^[A-Z]\d[A-Z]?$/,             // A2, A2B pattern
-    /^[A-Z]{2,4}$/,                // Two-four letter units like PH, PHW, REAR, etc. - EXPANDED
-    /^\d+[A-Z]\d?$/,               // 6M1, 12A2 patterns
+    /^\d{1,3}[A-Z]$/,              // 2G, 6M, 12B, 100A (number + single letter)
+    /^\d{1,3}[A-Z]{2}$/,           // 12AB, 2GH, 100AB (number + two letters)
+    /^(PH|PHH|TH|LH|RH|BS|GF|PHS|PHN|PHE|PHW)\d{0,2}[A-Z]?$/, // PH, PH2, PH2A, TH, GF, etc.
+    /^[A-Z]\d{1,3}$/,              // A1, B12, A123 (letter + number)
+    /^[A-Z]{2}\d{1,3}$/,           // AB1, AB12 (two letters + number)
+    /^\d{1,3}$/,                   // Short numeric: 1, 12, 100 (up to 3 digits)
+    /^[A-Z]\d[A-Z]$/,              // A2B pattern
+    /^\d+[A-Z]\d$/,                // 6M1, 12A2 patterns
     /^[A-Z]{1,2}\d{1,2}[A-Z]$/,    // A1B, AB12C patterns
     /^\d{1,2}[A-Z]\d{1,2}$/,       // 1A2 patterns
-    /^(RM|STE|APT)\d+[A-Z]?$/,     // RM1, STE2A patterns (in case prefix not stripped)
   ];
   
-  return allowedPatterns.some(pattern => pattern.test(unit));
+  return allowedPatterns.some(pattern => pattern.test(upperUnit));
 }
 
 /**
@@ -146,7 +206,12 @@ export function isLikelyUnitLabel(unit: string): boolean {
 export function isLikelyUnitLabelRelaxed(unit: string): boolean {
   if (!unit) return false;
   
-  // Allow lengths up to 8 for relaxed mode
+  const upperUnit = unit.toUpperCase();
+  
+  // Still reject STOPLIST words even in relaxed mode
+  if (isStopword(upperUnit)) return false;
+  
+  // Relaxed minimum length: 1 (but will fail other checks)
   if (unit.length < 1 || unit.length > 8) return false;
   
   // Still reject floor-only patterns
@@ -159,13 +224,22 @@ export function isLikelyUnitLabelRelaxed(unit: string): boolean {
     if (pattern.test(unit)) return false;
   }
   
-  // Reject if only digits and length >= 4 (relaxed from 3)
+  // Reject if only digits and length >= 4
   if (/^\d+$/.test(unit) && unit.length >= 4) return false;
   
-  // Allow any alphanumeric pattern with at least one letter or short numeric
-  if (/^[A-Z0-9]+$/.test(unit)) {
-    // Must have at least one letter OR be a short number (1-3 digits)
-    if (/[A-Z]/.test(unit) || unit.length <= 3) return true;
+  // Reject purely alphabetic tokens UNLESS allowed special tokens
+  if (/^[A-Z]+$/.test(upperUnit)) {
+    if (!isAllowedSpecialToken(upperUnit)) {
+      return false;
+    }
+  }
+  
+  // Allow any alphanumeric pattern with at least one digit, or special tokens
+  if (/^[A-Z0-9]+$/.test(upperUnit)) {
+    // Must have at least one digit OR be an allowed special token OR short number
+    if (/\d/.test(upperUnit) || isAllowedSpecialToken(upperUnit) || (upperUnit.length <= 3 && /^\d+$/.test(upperUnit))) {
+      return true;
+    }
   }
   
   return false;
@@ -194,8 +268,16 @@ function containsAddressSubstring(raw: string): boolean {
  * - Converts separators (12-B → 12B, 12 B → 12B)
  * - Removes punctuation except letters/numbers
  * - Returns null for junk values or address-like values
+ * 
+ * @param raw The raw unit string to normalize
+ * @param relaxed Use relaxed validation (default false)
+ * @param hasStrongEvidence Token was extracted with explicit APT/UNIT prefix evidence
  */
-export function normalizeUnit(raw: string | null | undefined, relaxed: boolean = false): string | null {
+export function normalizeUnit(
+  raw: string | null | undefined, 
+  relaxed: boolean = false,
+  hasStrongEvidence: boolean = false
+): string | null {
   if (raw == null) return null;
   
   // Trim and uppercase
@@ -203,6 +285,9 @@ export function normalizeUnit(raw: string | null | undefined, relaxed: boolean =
   
   // Check junk values early
   if (JUNK_VALUES.has(value)) return null;
+  
+  // Check STOPLIST early (even before prefix stripping)
+  if (isStopword(value)) return null;
   
   // Reject if contains address-like substrings (before stripping prefixes)
   if (containsAddressSubstring(value)) return null;
@@ -221,12 +306,18 @@ export function normalizeUnit(raw: string | null | undefined, relaxed: boolean =
   // Final junk check after normalization
   if (!value || JUNK_VALUES.has(value)) return null;
   
+  // Check STOPLIST again after normalization
+  if (isStopword(value)) return null;
+  
   // Additional validation: must contain at least one letter or digit
   if (!/[A-Z0-9]/.test(value)) return null;
   
-  // Validate against unit label patterns - use relaxed mode if specified
-  const validator = relaxed ? isLikelyUnitLabelRelaxed : isLikelyUnitLabel;
-  if (!validator(value)) return null;
+  // Validate against unit label patterns
+  if (relaxed) {
+    if (!isLikelyUnitLabelRelaxed(value)) return null;
+  } else {
+    if (!isLikelyUnitLabel(value, hasStrongEvidence)) return null;
+  }
   
   return value;
 }
@@ -541,14 +632,18 @@ function extractUnitFromText(
       
       const asReported = match[0].trim();
       
-      // Normalize
+      // Pattern matches have "strong evidence" - they come from explicit prefixes like APT, UNIT, #
+      const hasStrongEvidence = ['APT', 'APARTMENT', 'UNIT', '#', 'RM', 'ROOM', 'STE', 'SUITE'].includes(keyword);
+      
+      // Normalize with strong evidence flag
       let normalized: string | null;
       if (keyword === 'PENTHOUSE' || keyword === 'PH') {
         const suffix = rawToken ? rawToken.toUpperCase() : '';
         normalized = `PH${suffix}`;
-        if (!isLikelyUnitLabel(normalized)) continue;
+        // PH/PHH are always allowed via isAllowedSpecialToken, but still validate
+        if (!isLikelyUnitLabel(normalized, true)) continue;
       } else {
-        normalized = normalizeUnit(rawUnit);
+        normalized = normalizeUnit(rawUnit, false, hasStrongEvidence);
         if (!normalized) continue;
       }
       
@@ -666,6 +761,7 @@ export function extractUnitFromRecordWithTrace(
   }
   
   // First pass: Check direct apartment fields in priority order (case-insensitive)
+  // Direct apartment fields are "strong evidence" - explicit unit/apt fields
   for (const field of UNIT_FIELDS) {
     const actualKey = lowerKeyMap.get(field.toLowerCase());
     if (!actualKey) continue;
@@ -673,10 +769,11 @@ export function extractUnitFromRecordWithTrace(
     const value = flatRecord.get(actualKey);
     if (value != null && value !== '') {
       const rawValue = value;
-      // Try strict normalization first, then relaxed
-      let normalized = normalizeUnit(rawValue, false);
+      // Direct fields have strong evidence - allow single-letter units like "A", "B"
+      let normalized = normalizeUnit(rawValue, false, true); // strong evidence = true
       if (!normalized) {
-        normalized = normalizeUnit(rawValue, true);
+        // Try relaxed as fallback
+        normalized = normalizeUnit(rawValue, true, true);
       }
       
       if (normalized) {
