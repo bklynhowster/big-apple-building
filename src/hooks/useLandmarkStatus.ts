@@ -1,58 +1,61 @@
 import { useEffect, useState } from "react";
 
 export interface LandmarkStatus {
+  isLoading: boolean;
   isLandmarked: boolean | null;   // null = unknown
-  landmarkName: string | null;
-  landmarkType: string | null;
-  source: string | null;
-  loading: boolean;
-  error: string | null;
+  source: "LPC" | "N/A" | "error";
+  designation?: string;           // optional text like "Individual Landmark" if available
+  error?: string;
 }
 
 export function useLandmarkStatus(params: {
-  bbl?: string;
-  bin?: string;
-  lat?: number;
-  lon?: number;
+  bbl?: string | number;
+  bin?: string | number;
 }): LandmarkStatus {
   const [state, setState] = useState<LandmarkStatus>({
+    isLoading: false,
     isLandmarked: null,
-    landmarkName: null,
-    landmarkType: null,
-    source: null,
-    loading: false,
-    error: null,
+    source: "N/A",
   });
 
   useEffect(() => {
-    const { bbl, bin, lat, lon } = params;
-    const hasAnyKey = Boolean(bbl || bin || (lat && lon));
-    if (!hasAnyKey) return;
+    const { bbl, bin } = params;
+    const hasBbl = bbl !== undefined && bbl !== null && bbl !== "";
+    const hasBin = bin !== undefined && bin !== null && bin !== "";
+    
+    if (!hasBbl && !hasBin) return;
 
     let cancelled = false;
 
     async function run() {
-      setState(s => ({ ...s, loading: true, error: null }));
+      setState(s => ({ ...s, isLoading: true, error: undefined }));
 
       try {
-        // STUB — safe, no-op request
+        // TODO: Implement actual landmark lookup here
+        // Options:
+        // 1. Call NYC LPC API directly via edge function
+        // 2. Query NYC Open Data Landmarks dataset
+        // 3. Use a cached landmarks table in Supabase
+        //
+        // For now, return "unknown" status to avoid build breaks
+        
         if (cancelled) return;
 
+        // STUB: Always return unknown status
         setState({
+          isLoading: false,
           isLandmarked: null,
-          landmarkName: null,
-          landmarkType: null,
-          source: null,
-          loading: false,
-          error: null,
+          source: "N/A",
         });
-      } catch (e: any) {
+      } catch (e: unknown) {
         if (cancelled) return;
-        setState(s => ({
-          ...s,
-          loading: false,
-          error: e?.message ?? "Failed to check landmark status",
-        }));
+        const message = e instanceof Error ? e.message : "Failed to check landmark status";
+        setState({
+          isLoading: false,
+          isLandmarked: null,
+          source: "error",
+          error: message,
+        });
       }
     }
 
@@ -61,7 +64,7 @@ export function useLandmarkStatus(params: {
     return () => {
       cancelled = true;
     };
-  }, [params.bbl, params.bin, params.lat, params.lon]);
+  }, [params.bbl, params.bin]);
 
   return state;
 }
