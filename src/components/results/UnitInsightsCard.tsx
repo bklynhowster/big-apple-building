@@ -1097,6 +1097,7 @@ export function UnitInsightsCard({
   selectedUnit,
   onUnitSelect,
   onClearUnitFilter,
+  loadingStates,
   loading = false,
   salesWarning,
   filingsWarning,
@@ -1107,14 +1108,24 @@ export function UnitInsightsCard({
   const [evidenceStats, setEvidenceStats] = useState<CombinedUnitStats | null>(null);
 
   // Use the new progressive loading hook
-  const defaultLoadingStates = {
-    filings: loading || false,
-    permits: loading || false,
-    hpd: loading || false,
-    threeOneOne: loading || false,
-    violations: loading || false,
-    ecb: loading || false,
-  };
+  // Map the prop interface to the hook's expected interface
+  const hookLoadingStates = loadingStates 
+    ? {
+        filingsLoading: loadingStates.filings,
+        permitsLoading: loadingStates.permits,
+        hpdLoading: loadingStates.hpd,
+        threeOneOneLoading: loadingStates.threeOneOne,
+        violationsLoading: loadingStates.violations,
+        ecbLoading: loadingStates.ecb,
+      }
+    : {
+        filingsLoading: loading,
+        permitsLoading: loading,
+        hpdLoading: loading,
+        threeOneOneLoading: loading,
+        violationsLoading: loading,
+        ecbLoading: loading,
+      };
   
   const { 
     stats: combinedStats, 
@@ -1136,7 +1147,7 @@ export function UnitInsightsCard({
       dobViolations,
       ecbViolations,
     },
-    loadingStates || defaultLoadingStates
+    hookLoadingStates
   );
 
   const hasData = combinedStats.length > 0;
