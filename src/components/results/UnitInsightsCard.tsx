@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Eye, Info, Users, AlertTriangle, Phone, FileText, ExternalLink, ChevronDown, ChevronUp, X } from 'lucide-react';
+import { Eye, Info, Users, AlertTriangle, Phone, FileText, ExternalLink, ChevronDown, ChevronUp, X, Shield } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -15,6 +15,8 @@ import type { HPDComplaintRecord, HPDViolationRecord } from '@/hooks/useHPD';
 import type { ServiceRequestRecord } from '@/hooks/use311';
 import type { UnitRosterEntry } from '@/hooks/useCoopUnitRoster';
 import type { UnitFromFilings, FilingReference, JobFilingRecord } from '@/hooks/useDobJobFilings';
+import type { ViolationRecord } from '@/hooks/useViolations';
+import type { ECBRecord } from '@/hooks/useECB';
 
 interface UnitInsightsCardProps {
   buildingBbl: string;
@@ -25,6 +27,8 @@ interface UnitInsightsCardProps {
   salesUnits: UnitRosterEntry[];
   dobFilingsUnits: UnitFromFilings[];
   dobFilings: JobFilingRecord[];
+  dobViolations: ViolationRecord[];
+  ecbViolations: ECBRecord[];
   selectedUnit: string | null;
   onUnitSelect: (unit: string) => void;
   onClearUnitFilter?: () => void;
@@ -36,21 +40,34 @@ interface UnitInsightsCardProps {
   fallbackMode?: boolean;
 }
 
+interface ViolationMentionRef {
+  type: 'dob-violation' | 'ecb';
+  id: string;
+  label: string;
+  status: string;
+  issueDate: string | null;
+  description: string | null;
+}
+
 interface CombinedUnitStats {
   unit: string;
   hpdCount: number;
   threeOneOneCount: number;
   salesCount: number;
   filingsCount: number;
+  dobViolationsCount: number;
+  ecbViolationsCount: number;
   totalCount: number;
   lastActivity: Date | null;
   filingRefs: FilingReference[];
   // Provenance: source identifiers for traceability
   sourceRefs: {
-    type: 'dob' | 'hpd' | '311' | 'sales';
+    type: 'dob' | 'hpd' | '311' | 'sales' | 'dob-violation' | 'ecb';
     id: string;
     label: string;
   }[];
+  // Violation-specific references for the new section
+  violationRefs: ViolationMentionRef[];
 }
 
 /**
@@ -96,7 +113,9 @@ function combineUnitStats(
   dobFilingsUnits: UnitFromFilings[],
   hpdViolations: HPDViolationRecord[],
   hpdComplaints: HPDComplaintRecord[],
-  serviceRequests: ServiceRequestRecord[]
+  serviceRequests: ServiceRequestRecord[],
+  dobViolations: ViolationRecord[],
+  ecbViolations: ECBRecord[]
 ): CombinedUnitStats[] {
   const unitMap = new Map<string, CombinedUnitStats>();
 
@@ -110,10 +129,13 @@ function combineUnitStats(
         threeOneOneCount: 0,
         salesCount: 0,
         filingsCount: 0,
+        dobViolationsCount: 0,
+        ecbViolationsCount: 0,
         totalCount: 0,
         lastActivity: null,
         filingRefs: [],
         sourceRefs: [],
+        violationRefs: [],
       };
       unitMap.set(unit, entry);
     }
@@ -238,11 +260,85 @@ function combineUnitStats(
     }
   }
 
+  // Process DOB Violations that mention units
+  for (const record of dobViolations) {
+    const unit = extractUnitFromRecord(record.raw);
+    if (unit) {
+      const entry = getOrCreate(unit);
+      entry.dobViolationsCount += 1;
+      entry.totalCount += 1;
+      
+      // Update last activity
+      if (record.issueDate) {
+        const issueDate = new Date(record.issueDate);
+        if (!isNaN(issueDate.getTime()) && (!entry.lastActivity || issueDate > entry.lastActivity)) {
+          entry.lastActivity = issueDate;
+        }
+      }
+      
+      // Add source reference (limit to 5)
+      if (entry.sourceRefs.filter(r => r.type === 'dob-violation').length < 5) {
+        entry.sourceRefs.push({
+          type: 'dob-violation',
+          id: record.recordId,
+          label: `DOB Vio #${record.recordId}`,
+        });
+      }
+      
+      // Add to violation refs for the new section
+      entry.violationRefs.push({
+        type: 'dob-violation',
+        id: record.recordId,
+        label: `DOB Violation #${record.recordId}`,
+        status: record.status,
+        issueDate: record.issueDate,
+        description: record.description,
+      });
+    }
+  }
+
+  // Process ECB Violations that mention units
+  for (const record of ecbViolations) {
+    const unit = extractUnitFromRecord(record.raw);
+    if (unit) {
+      const entry = getOrCreate(unit);
+      entry.ecbViolationsCount += 1;
+      entry.totalCount += 1;
+      
+      // Update last activity
+      if (record.issueDate) {
+        const issueDate = new Date(record.issueDate);
+        if (!isNaN(issueDate.getTime()) && (!entry.lastActivity || issueDate > entry.lastActivity)) {
+          entry.lastActivity = issueDate;
+        }
+      }
+      
+      // Add source reference (limit to 5)
+      if (entry.sourceRefs.filter(r => r.type === 'ecb').length < 5) {
+        entry.sourceRefs.push({
+          type: 'ecb',
+          id: record.recordId,
+          label: `ECB #${record.recordId}`,
+        });
+      }
+      
+      // Add to violation refs for the new section
+      entry.violationRefs.push({
+        type: 'ecb',
+        id: record.recordId,
+        label: `ECB Violation #${record.recordId}`,
+        status: record.status,
+        issueDate: record.issueDate,
+        description: record.description,
+      });
+    }
+  }
+
   // CRITICAL: Only include units that have at least one traceable source record
   // Sales data alone is NOT sufficient (it doesn't indicate complaints or filings)
   const filteredStats = Array.from(unitMap.values()).filter(stat => {
-    // Must have at least one source reference (DOB, HPD, or 311)
-    const hasTraceableSource = stat.filingsCount > 0 || stat.hpdCount > 0 || stat.threeOneOneCount > 0;
+    // Must have at least one source reference (DOB filings, HPD, 311, DOB Violations, or ECB)
+    const hasTraceableSource = stat.filingsCount > 0 || stat.hpdCount > 0 || stat.threeOneOneCount > 0 || stat.dobViolationsCount > 0 || stat.ecbViolationsCount > 0;
     return hasTraceableSource;
   });
 
@@ -272,7 +368,7 @@ function formatDate(date: Date | null): string {
 
 // Expandable source references component
 interface SourceRef {
-  type: 'dob' | 'hpd' | '311' | 'sales';
+  type: 'dob' | 'hpd' | '311' | 'sales' | 'dob-violation' | 'ecb';
   id: string;
   label: string;
 }
@@ -318,7 +414,136 @@ function ExpandableRefs({ refs }: { refs: SourceRef[] }) {
   );
 }
 
-// Evidence Drawer Component
+// Violations Mentioning Units Section Component
+interface ViolationsMentioningUnitsSectionProps {
+  combinedStats: CombinedUnitStats[];
+  selectedUnit: string | null;
+  onUnitSelect: (unit: string) => void;
+}
+
+function ViolationsMentioningUnitsSection({
+  combinedStats,
+  selectedUnit,
+  onUnitSelect,
+}: ViolationsMentioningUnitsSectionProps) {
+  const [isOpen, setIsOpen] = useState(true);
+  
+  // Filter to only units with violation references
+  const unitsWithViolations = combinedStats.filter(s => s.violationRefs.length > 0);
+  
+  if (unitsWithViolations.length === 0) return null;
+  
+  // Total counts
+  const totalDobViolations = unitsWithViolations.reduce((sum, s) => sum + s.dobViolationsCount, 0);
+  const totalEcbViolations = unitsWithViolations.reduce((sum, s) => sum + s.ecbViolationsCount, 0);
+  
+  return (
+    <Collapsible open={isOpen} onOpenChange={setIsOpen} className="mt-6">
+      <CollapsibleTrigger asChild>
+        <Button variant="ghost" className="w-full justify-between p-3 h-auto border border-red-200 dark:border-red-800 bg-red-50/50 dark:bg-red-950/20 rounded-lg">
+          <div className="flex items-center gap-2">
+            <Shield className="h-4 w-4 text-red-600 dark:text-red-400" />
+            <span className="font-medium text-foreground">Violations Mentioning Units (Inferred)</span>
+            <Badge variant="secondary" className="text-xs">
+              {totalDobViolations + totalEcbViolations} violation{totalDobViolations + totalEcbViolations !== 1 ? 's' : ''}
+            </Badge>
+          </div>
+          {isOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+        </Button>
+      </CollapsibleTrigger>
+      <CollapsibleContent className="mt-2 space-y-3">
+        {/* Critical disclaimer */}
+        <Alert className="border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-950/30">
+          <AlertTriangle className="h-4 w-4 text-red-600 dark:text-red-400" />
+          <AlertDescription className="text-sm text-red-800 dark:text-red-200">
+            <strong>Building-level violations.</strong> Violations are issued at the building level. 
+            Unit references are inferred from violation text and do not imply unit-level enforcement or responsibility.
+          </AlertDescription>
+        </Alert>
+        
+        {/* Filter active indicator */}
+        {selectedUnit && (
+          <p className="text-xs text-muted-foreground px-1">
+            Showing building violations that mention: <strong>{selectedUnit}</strong>
+          </p>
+        )}
+        
+        {/* Unit-by-unit violation breakdown */}
+        <div className="space-y-2">
+          {unitsWithViolations
+            .filter(stat => !selectedUnit || stat.unit === selectedUnit)
+            .map(stat => (
+              <div 
+                key={stat.unit} 
+                className={`border rounded-lg p-3 bg-card ${
+                  selectedUnit === stat.unit ? 'border-primary ring-1 ring-primary/20' : 'border-border'
+                }`}
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    <Badge variant="outline" className="font-mono">
+                      {stat.unit}
+                    </Badge>
+                    <span className="text-xs text-muted-foreground">
+                      {stat.violationRefs.length} violation{stat.violationRefs.length !== 1 ? 's' : ''} mentioning this unit
+                    </span>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant={selectedUnit === stat.unit ? 'secondary' : 'outline'}
+                    onClick={() => onUnitSelect(stat.unit)}
+                    className="h-6 px-2 text-xs"
+                  >
+                    {selectedUnit === stat.unit ? 'Viewing' : 'Filter'}
+                  </Button>
+                </div>
+                
+                {/* Violation pills */}
+                <div className="flex flex-wrap gap-1.5">
+                  {stat.violationRefs.slice(0, 8).map((vio, idx) => (
+                    <TooltipProvider key={`${vio.type}-${vio.id}-${idx}`}>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span 
+                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-mono cursor-help ${
+                              vio.type === 'dob-violation' 
+                                ? 'bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300' 
+                                : 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300'
+                            }`}
+                          >
+                            {vio.type === 'dob-violation' ? 'DOB' : 'ECB'} #{vio.id.length > 10 ? vio.id.slice(-10) : vio.id}
+                            {vio.status === 'open' && (
+                              <span className="w-1.5 h-1.5 rounded-full bg-red-500" title="Open" />
+                            )}
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent side="top" className="max-w-xs">
+                          <div className="text-xs space-y-1">
+                            <p><strong>{vio.label}</strong></p>
+                            <p>Status: {vio.status}</p>
+                            {vio.issueDate && <p>Issued: {vio.issueDate}</p>}
+                            {vio.description && <p className="line-clamp-2">{vio.description}</p>}
+                            <p className="text-muted-foreground italic">Mentions unit in record text</p>
+                          </div>
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  ))}
+                  {stat.violationRefs.length > 8 && (
+                    <span className="text-xs text-muted-foreground px-1">
+                      +{stat.violationRefs.length - 8} more
+                    </span>
+                  )}
+                </div>
+              </div>
+            ))}
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
+  );
+}
+
+
 interface EvidenceDrawerProps {
   open: boolean;
   onClose: () => void;
@@ -550,6 +775,8 @@ export function UnitInsightsCard({
   salesUnits,
   dobFilingsUnits,
   dobFilings,
+  dobViolations,
+  ecbViolations,
   selectedUnit,
   onUnitSelect,
   onClearUnitFilter,
@@ -576,9 +803,11 @@ export function UnitInsightsCard({
       dobFilingsUnits,
       hpdViolations,
       hpdComplaints,
-      serviceRequests
+      serviceRequests,
+      dobViolations,
+      ecbViolations
     );
-  }, [hpdViolations, hpdComplaints, serviceRequests, salesUnits, dobFilingsUnits]);
+  }, [hpdViolations, hpdComplaints, serviceRequests, salesUnits, dobFilingsUnits, dobViolations, ecbViolations]);
 
   const hasData = combinedStats.length > 0;
   const hasFilingsData = dobFilingsUnits.length > 0;
@@ -878,6 +1107,15 @@ export function UnitInsightsCard({
               </Table>
               </div>
             </div>
+          )}
+
+          {/* Violations Mentioning Units Section - Only show if there are violations that mention units */}
+          {hasData && combinedStats.some(s => s.violationRefs.length > 0) && (
+            <ViolationsMentioningUnitsSection
+              combinedStats={combinedStats}
+              selectedUnit={selectedUnit}
+              onUnitSelect={onUnitSelect}
+            />
           )}
         </CardContent>
       </Card>

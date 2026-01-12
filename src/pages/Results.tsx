@@ -28,6 +28,8 @@ import { useHPDViolations, useHPDComplaints } from '@/hooks/useHPD';
 import { use311 } from '@/hooks/use311';
 import { useCoopUnitRoster } from '@/hooks/useCoopUnitRoster';
 import { useDobJobFilings } from '@/hooks/useDobJobFilings';
+import { useViolations } from '@/hooks/useViolations';
+import { useECB } from '@/hooks/useECB';
 
 const VALID_TABS = ['summary', 'violations', 'ecb', 'safety', 'permits', 'hpd', '311', 'all'] as const;
 type ValidTab = typeof VALID_TABS[number];
@@ -74,12 +76,14 @@ export default function Results() {
   const { profile } = usePropertyProfile(isValidBBL ? bbl : null);
   const isCoop = profile?.propertyTenure === 'COOP';
 
-  // Pre-fetch HPD, 311, Rolling Sales, and DOB Filings for Unit Insights (co-ops only)
+  // Pre-fetch HPD, 311, Rolling Sales, DOB Filings, DOB Violations, and ECB for Unit Insights (co-ops only)
   const hpdViolations = useHPDViolations(isCoop && isValidBBL ? bbl : null);
   const hpdComplaints = useHPDComplaints(isCoop && isValidBBL ? bbl : null);
   const threeOneOne = use311(isCoop ? latitude : undefined, isCoop ? longitude : undefined);
   const coopUnitRoster = useCoopUnitRoster();
   const dobJobFilings = useDobJobFilings();
+  const dobViolationsHook = useViolations(isCoop && isValidBBL ? bbl : null);
+  const ecbHook = useECB(isCoop && isValidBBL ? bbl : null);
   
   // Track if we've fetched data for insights
   const insightsFetchedRef = useRef(false);
@@ -92,6 +96,8 @@ export default function Results() {
     hpdViolations.fetch(bbl);
     hpdComplaints.fetch(bbl);
     coopUnitRoster.fetch(bbl);
+    dobViolationsHook.fetchViolations(bbl);
+    ecbHook.fetchECB(bbl);
     if (bin) {
       dobJobFilings.fetch(bin);
     }
@@ -326,7 +332,7 @@ export default function Results() {
                 />
               )}
 
-              {/* Mentioned Units Card - Co-ops only (derived from DOB Filings + HPD + 311 + Sales) */}
+              {/* Mentioned Units Card - Co-ops only (derived from DOB Filings + HPD + 311 + Sales + Violations) */}
               {isCoop && (
                 <UnitInsightsCard
                   buildingBbl={bbl}
@@ -337,10 +343,12 @@ export default function Results() {
                   salesUnits={coopUnitRoster.units}
                   dobFilingsUnits={dobJobFilings.units}
                   dobFilings={dobJobFilings.filings}
+                  dobViolations={dobViolationsHook.items}
+                  ecbViolations={ecbHook.items}
                   selectedUnit={coopUnitContext}
                   onUnitSelect={handleUnitInsightSelect}
                   onClearUnitFilter={() => handleCoopUnitContextChange(null)}
-                  loading={hpdViolations.loading || hpdComplaints.loading || threeOneOne.loading || coopUnitRoster.loading || dobJobFilings.loading}
+                  loading={hpdViolations.loading || hpdComplaints.loading || threeOneOne.loading || coopUnitRoster.loading || dobJobFilings.loading || dobViolationsHook.loading || ecbHook.loading}
                   rosterError={coopUnitRoster.error}
                   salesWarning={coopUnitRoster.warning}
                   dobNowUrl={dobJobFilings.dobNowUrl}
