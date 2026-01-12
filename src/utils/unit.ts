@@ -138,65 +138,62 @@ function isAllowedSpecialToken(token: string): boolean {
 
 /**
  * Check if a normalized unit string looks like a valid apartment/unit label.
- * Rejects address-like values and validates against known unit patterns.
- * 
- * TIGHTENED: Supports short co-op units (2H, PH, G, S) while preventing
- * false positives from addresses, job numbers, and floor-only references.
+ *
+ * Key rules (NYC-oriented):
+ * - Always allow digit-leading units like 6, 6M, 12B, 100A (no strong-evidence gating)
+ * - Only gate ambiguous tokens (single-letter or alpha-only)
+ * - STOPLIST is exact-match on the final normalized token only
  */
 export function isLikelyUnitLabel(unit: string, hasStrongEvidence: boolean = false): boolean {
   if (!unit) return false;
-  
+
   const upperUnit = unit.toUpperCase();
-  
-  // Rule: Reject if in STOPLIST (common English words)
-  if (isStopword(upperUnit)) return false;
-  
-  // Rule: Reject if length < 2 (single characters are rarely valid units)
-  // Exception: Allow single letters ONLY with strong evidence (explicit APT/UNIT prefix)
-  if (unit.length < 2 && !hasStrongEvidence) return false;
-  
-  // Rule: Reject if length > 8
-  if (unit.length > 8) return false;
-  
-  // Rule: Reject floor-only patterns
+
+  // Hard caps
+  if (upperUnit.length > 8) return false;
+
+  // Floor-only patterns
   for (const pattern of FLOOR_ONLY_PATTERNS) {
-    if (pattern.test(unit)) return false;
+    if (pattern.test(upperUnit)) return false;
   }
-  
-  // Rule: Reject job/permit number patterns
+
+  // Job/permit number patterns
   for (const pattern of JOB_NUMBER_PATTERNS) {
-    if (pattern.test(unit)) return false;
+    if (pattern.test(upperUnit)) return false;
   }
-  
-  // Rule: Reject if only digits and length >= 4 (e.g., 1200 are house numbers)
-  if (/^\d+$/.test(unit) && unit.length >= 4) return false;
-  
-  // Rule: Reject if it looks like a ZIP code (exactly 5 digits)
-  if (/^\d{5}$/.test(unit)) return false;
-  
-  // Rule: Reject purely alphabetic tokens UNLESS they are known special tokens (PH, TH, GF, etc.)
-  // This eliminates false positives like "ONLY", "IF", "AH"
+
+  // ZIP
+  if (/^\d{5}$/.test(upperUnit)) return false;
+
+  // Always-allow: digits with optional 0-2 letters (NYC unit core)
+  // Examples: 6, 6G, 12B, 100A, 12AB
+  if (/^[1-9]\d{0,2}[A-Z]{0,2}$/.test(upperUnit)) {
+    // Disallow common address-ish suffixes when they appear as the letter part.
+    if (/^\d{1,3}(ST|AVE|AV|RD|BLVD|PL|DR|CT|LN|WAY|TER|CIR)$/.test(upperUnit)) return false;
+    return true;
+  }
+
+  // Single-letter tokens are ambiguous: only allow with strong evidence AND allowlist.
+  if (/^[A-Z]$/.test(upperUnit)) {
+    return isAllowedSingleLetterUnit(upperUnit, hasStrongEvidence);
+  }
+
+  // Pure alpha tokens are almost always narrative words.
   if (/^[A-Z]+$/.test(upperUnit)) {
-    if (!isAllowedSpecialToken(upperUnit)) {
-      return false;
-    }
+    if (PENTHOUSE_TOKENS.has(upperUnit)) return true;
+    return false;
   }
-  
-  // Allowed patterns for NYC co-op/condo units
-  const allowedPatterns = [
-    /^\d{1,3}[A-Z]$/,              // 2G, 6M, 12B, 100A (number + single letter)
-    /^\d{1,3}[A-Z]{2}$/,           // 12AB, 2GH, 100AB (number + two letters)
-    /^(PH|PHH|TH|LH|RH|BS|GF|PHS|PHN|PHE|PHW)\d{0,2}[A-Z]?$/, // PH, PH2, PH2A, TH, GF, etc.
-    /^[A-Z]\d{1,3}$/,              // A1, B12, A123 (letter + number)
-    /^[A-Z]{2}\d{1,3}$/,           // AB1, AB12 (two letters + number)
-    /^\d{1,3}$/,                   // Short numeric: 1, 12, 100 (up to 3 digits)
-    /^[A-Z]\d[A-Z]$/,              // A2B pattern
-    /^\d+[A-Z]\d$/,                // 6M1, 12A2 patterns
-    /^[A-Z]{1,2}\d{1,2}[A-Z]$/,    // A1B, AB12C patterns
-    /^\d{1,2}[A-Z]\d{1,2}$/,       // 1A2 patterns
-  ];
-  
-  return allowedPatterns.some(pattern => pattern.test(upperUnit));
+
+  // STOPLIST (exact match only) — apply only after digit allowlist above.
+  if (isStopword(upperUnit)) return false;
+
+  // Additional allowed patterns (rare, but keep): letter+digits like A12
+  if (/^[A-Z]\d{1,3}$/.test(upperUnit)) return true;
+
+  // Penthouse variants we explicitly allow
+  if (/^PHH?$/.test(upperUnit)) return true;
+
+  return false;
 }
 
 /**
@@ -765,35 +762,28 @@ export function extractUnitFromRecordWithTrace(
   for (const field of UNIT_FIELDS) {
     const actualKey = lowerKeyMap.get(field.toLowerCase());
     if (!actualKey) continue;
-    
+
     const value = flatRecord.get(actualKey);
     if (value != null && value !== '') {
       const rawValue = value;
-      // Direct fields have strong evidence - allow single-letter units like "A", "B"
-      let normalized = normalizeUnit(rawValue, false, true); // strong evidence = true
+      let normalized = normalizeUnit(rawValue, false, true); // strong evidence
       if (!normalized) {
-        // Try relaxed as fallback
         normalized = normalizeUnit(rawValue, true, true);
       }
-      
+
       if (normalized) {
         const unitType = determineUnitTypeFromField(field, normalized);
-        const { confidence, reason } = determineConfidence(
-          'direct',
-          field,
-          normalized,
-          field
-        );
-        
+        const { confidence, reason } = determineConfidence('direct', field, normalized, field);
+
         if (EXTRACTION_DEBUG) {
           console.log(`[UnitExtract] Direct field "${actualKey}" -> "${normalized}" (from "${rawValue}")`);
         }
-        
+
         return {
           normalizedUnit: normalized,
           asReported: rawValue.trim().toUpperCase(),
           sourceField: field,
-          snippet: null, // Direct field, no snippet needed
+          snippet: null,
           unitType,
           confidence,
           confidenceReason: reason,
@@ -803,18 +793,66 @@ export function extractUnitFromRecordWithTrace(
       }
     }
   }
-  
+
+  // 1b) Heuristic structured-field fallback: if a dataset uses an unlisted key like
+  // "apartment_no" or "aptno", still treat it as strong evidence.
+  for (const [key, value] of flatRecord.entries()) {
+    const k = key.toLowerCase();
+    if (
+      UNIT_FIELDS.some(f => f.toLowerCase() === k) ||
+      TEXT_EXTRACTION_FIELDS.some(f => f.toLowerCase() === k)
+    ) {
+      continue;
+    }
+
+    // Only consider plausible structured keys
+    const looksLikeUnitKey =
+      k === 'apartment_no' ||
+      k === 'apartmentno' ||
+      k === 'aptno' ||
+      k === 'apt_no' ||
+      k === 'unit_no' ||
+      (k.includes('apartment') && !k.includes('address')) ||
+      (k.includes('apt') && !k.includes('address')) ||
+      (k.includes('unit') && !k.includes('address'));
+
+    if (!looksLikeUnitKey) continue;
+    if (!value || value.length > 25) continue;
+
+    const normalized = normalizeUnit(value, false, true);
+    if (normalized) {
+      const unitType = determineUnitTypeFromField(key, normalized);
+      const { confidence, reason } = determineConfidence('direct', key, normalized, key);
+
+      if (EXTRACTION_DEBUG) {
+        console.log(`[UnitExtract] Heuristic field "${key}" -> "${normalized}" (from "${value}")`);
+      }
+
+      return {
+        normalizedUnit: normalized,
+        asReported: value.trim().toUpperCase(),
+        sourceField: key,
+        snippet: null,
+        unitType,
+        confidence,
+        confidenceReason: reason,
+      };
+    }
+  }
+
   // Second pass: Pattern-based extraction from free-text fields (case-insensitive)
   for (const field of TEXT_EXTRACTION_FIELDS) {
     const actualKey = lowerKeyMap.get(field.toLowerCase());
     if (!actualKey) continue;
-    
+
     const value = flatRecord.get(actualKey);
     if (value != null && value !== '') {
       const extracted = extractUnitFromText(value, field);
       if (extracted) {
         if (EXTRACTION_DEBUG) {
-          console.log(`[UnitExtract] Pattern match in "${actualKey}" -> "${extracted.normalizedUnit}" (snippet: "${extracted.snippet?.slice(0, 50)}...")`);
+          console.log(
+            `[UnitExtract] Pattern match in "${actualKey}" -> "${extracted.normalizedUnit}" (snippet: "${extracted.snippet?.slice(0, 50)}...")`
+          );
         }
         return extracted;
       }
