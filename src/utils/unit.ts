@@ -502,13 +502,18 @@ function determineConfidence(
  * without an explicit unit identifier.
  */
 const UNIT_EXTRACTION_PATTERNS: { pattern: RegExp; keyword: string }[] = [
-  { pattern: /\bAPT\.?\s+([A-Z0-9]{1,6})\b/i, keyword: 'APT' },
-  { pattern: /\bAPARTMENT\s+([A-Z0-9]{1,6})\b/i, keyword: 'APARTMENT' },
-  { pattern: /\bUNIT\s+([A-Z0-9]{1,6})\b/i, keyword: 'UNIT' },
-  { pattern: /\b#\s*([A-Z0-9]{1,6})\b/, keyword: '#' },
+  // Allow optional whitespace so we match "APT6G", "APT.6G", "APT 6G", "[Apt 6G]" etc.
+  { pattern: /\bAPT\.?\s*([A-Z0-9]{1,8})\b/i, keyword: 'APT' },
+  { pattern: /\bAPARTMENT\s*([A-Z0-9]{1,8})\b/i, keyword: 'APARTMENT' },
+  { pattern: /\bUNIT\s*([A-Z0-9]{1,8})\b/i, keyword: 'UNIT' },
+  { pattern: /\bRM\.?\s*([A-Z0-9]{1,8})\b/i, keyword: 'RM' },
+  { pattern: /\bROOM\s*([A-Z0-9]{1,8})\b/i, keyword: 'ROOM' },
+  { pattern: /\bSTE\.?\s*([A-Z0-9]{1,8})\b/i, keyword: 'STE' },
+  { pattern: /\bSUITE\s*([A-Z0-9]{1,8})\b/i, keyword: 'SUITE' },
+  { pattern: /\b#\s*([A-Z0-9]{1,8})\b/i, keyword: '#' },
   // Penthouse patterns
-  { pattern: /\bPENTHOUSE\s+([A-Z0-9]{1,3})?\b/i, keyword: 'PENTHOUSE' },
-  { pattern: /\bPH\s*([A-Z0-9]{1,3})?\b/i, keyword: 'PH' },
+  { pattern: /\bPENTHOUSE\s*([A-Z0-9]{0,3})\b/i, keyword: 'PENTHOUSE' },
+  { pattern: /\bPH\s*([A-Z0-9]{0,3})\b/i, keyword: 'PH' },
 ];
 
 /**
@@ -529,18 +534,17 @@ function extractUnitFromText(
   for (const { pattern, keyword } of UNIT_EXTRACTION_PATTERNS) {
     const match = textStr.match(pattern);
     if (match) {
-      // For penthouse patterns, unit value might be empty (just "PH")
-      const rawUnit = match[1] || (keyword === 'PENTHOUSE' ? 'PH' : keyword === 'PH' ? 'PH' : null);
+      // For PH/PENTHOUSE, unit value might be empty (just "PH")
+      const rawToken = match[1] ?? '';
+      const rawUnit = rawToken || (keyword === 'PENTHOUSE' || keyword === 'PH' ? 'PH' : null);
       if (!rawUnit) continue;
       
-      // Build the as-reported value
       const asReported = match[0].trim();
       
-      // Handle PH/PENTHOUSE specially
+      // Normalize
       let normalized: string | null;
       if (keyword === 'PENTHOUSE' || keyword === 'PH') {
-        // Normalize to PH + optional suffix
-        const suffix = match[1] ? match[1].toUpperCase() : '';
+        const suffix = rawToken ? rawToken.toUpperCase() : '';
         normalized = `PH${suffix}`;
         if (!isLikelyUnitLabel(normalized)) continue;
       } else {
@@ -548,7 +552,6 @@ function extractUnitFromText(
         if (!normalized) continue;
       }
       
-      // Extract snippet (surrounding context)
       const matchIndex = match.index || 0;
       const snippetStart = Math.max(0, matchIndex - 30);
       const snippetEnd = Math.min(textStr.length, matchIndex + match[0].length + 30);
@@ -556,17 +559,8 @@ function extractUnitFromText(
                       textStr.slice(snippetStart, snippetEnd).trim() + 
                       (snippetEnd < textStr.length ? '...' : '');
       
-      // Determine unit type
       const unitType = determineUnitType(keyword, normalized);
-      
-      // Determine confidence
-      const { confidence, reason } = determineConfidence(
-        'pattern', 
-        keyword, 
-        normalized, 
-        fieldName,
-        false // No adjacent context check for simple pattern match
-      );
+      const { confidence, reason } = determineConfidence('pattern', keyword, normalized, fieldName, false);
       
       return {
         normalizedUnit: normalized,

@@ -89,10 +89,9 @@ interface CachedResult {
 }
 
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
-const CACHE_KEY_PREFIX = 'unit_mentions_cache_';
-
-// Debug mode - use import.meta.env for Vite projects
-const DEBUG_MODE = import.meta.env?.DEV ?? (typeof process !== 'undefined' && process.env?.NODE_ENV === 'development');
+// Cache versioning to prevent "stuck at zero" after deployments
+const UNIT_MENTIONS_CACHE_VERSION = 3;
+const CACHE_KEY_PREFIX = `unit_mentions_cache_v${UNIT_MENTIONS_CACHE_VERSION}_`;
 
 // Debug stats collector
 interface DebugStats {
@@ -183,13 +182,13 @@ export function clearUnitMentionsCache(bbl?: string): void {
     logDebug(`Cleared cache for BBL ${bbl}`);
   } else {
     // Clear all unit mentions caches
-    for (let i = localStorage.length - 1; i >= 0; i--) {
-      const key = localStorage.key(i);
-      if (key?.startsWith(CACHE_KEY_PREFIX)) {
-        localStorage.removeItem(key);
+      for (let i = localStorage.length - 1; i >= 0; i--) {
+        const key = localStorage.key(i);
+        if (key?.startsWith('unit_mentions_cache_') || key?.startsWith(CACHE_KEY_PREFIX)) {
+          localStorage.removeItem(key);
+        }
       }
-    }
-    logDebug('Cleared all unit mentions caches');
+      logDebug('Cleared all unit mentions caches');
   }
 }
 
