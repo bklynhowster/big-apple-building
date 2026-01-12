@@ -326,7 +326,7 @@ export default function Results() {
                 />
               )}
 
-              {/* Unit Insights Card - Co-ops only (derived from DOB Filings + HPD + 311 + Sales) */}
+              {/* Mentioned Units Card - Co-ops only (derived from DOB Filings + HPD + 311 + Sales) */}
               {isCoop && (
                 <UnitInsightsCard
                   buildingBbl={bbl}
@@ -339,6 +339,7 @@ export default function Results() {
                   dobFilings={dobJobFilings.filings}
                   selectedUnit={coopUnitContext}
                   onUnitSelect={handleUnitInsightSelect}
+                  onClearUnitFilter={() => handleCoopUnitContextChange(null)}
                   loading={hpdViolations.loading || hpdComplaints.loading || threeOneOne.loading || coopUnitRoster.loading || dobJobFilings.loading}
                   rosterError={coopUnitRoster.error}
                   salesWarning={coopUnitRoster.warning}
