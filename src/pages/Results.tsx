@@ -197,7 +197,11 @@ export default function Results() {
               />
 
               {/* Property Profile */}
-              <PropertyProfileCard bbl={bbl} />
+              <PropertyProfileCard 
+                bbl={bbl} 
+                unitLabel={currentUnitLabel}
+                parentAddress={address}
+              />
               
               {/* Condo Units Discovery - only show when NOT on a unit page */}
               {!isUnitLot && (

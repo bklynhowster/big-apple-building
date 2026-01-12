@@ -1,4 +1,4 @@
-import { Building2, Home, Calendar, Maximize2, Layers, Users, MapPin, AlertCircle, Loader2, HelpCircle } from 'lucide-react';
+import { Building2, Home, Calendar, Maximize2, Layers, Users, MapPin, AlertCircle, Loader2, HelpCircle, Info } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -9,6 +9,8 @@ import { cn } from '@/lib/utils';
 
 interface PropertyProfileCardProps {
   bbl: string;
+  unitLabel?: string | null;
+  parentAddress?: string;
 }
 
 // Color mapping for property types
@@ -74,8 +76,12 @@ function formatSqFt(sqft: number | null): string {
   return `${sqft.toLocaleString()} sq ft`;
 }
 
-export function PropertyProfileCard({ bbl }: PropertyProfileCardProps) {
+export function PropertyProfileCard({ bbl, unitLabel, parentAddress }: PropertyProfileCardProps) {
   const { loading, error, profile, retry } = usePropertyProfile(bbl);
+
+  // Determine if this is a unit page
+  const lotNumber = parseInt(bbl.slice(6), 10);
+  const isUnitLot = lotNumber >= 1001 && lotNumber <= 6999;
 
   if (loading) {
     return <LoadingSkeleton />;
@@ -101,6 +107,76 @@ export function PropertyProfileCard({ bbl }: PropertyProfileCardProps) {
     return null;
   }
 
+  // UNIT PAGE - Simplified display
+  if (isUnitLot) {
+    const displayUnitLabel = unitLabel || (lotNumber - 1000).toString();
+    
+    return (
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base flex items-center gap-2">
+            <Home className="h-4 w-4 text-muted-foreground" />
+            Unit Profile
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex flex-col gap-4">
+            {/* Unit Identity */}
+            <div className="flex items-center gap-4">
+              <div className={cn(
+                "flex items-center justify-center h-14 w-14 rounded-lg",
+                PROPERTY_TYPE_COLORS['Condo']
+              )}>
+                <Home className="h-6 w-6" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className={cn(
+                    "text-lg font-semibold px-3 py-1 rounded-full",
+                    PROPERTY_TYPE_COLORS['Condo']
+                  )}>
+                    Unit {displayUnitLabel}
+                  </span>
+                </div>
+                {parentAddress && (
+                  <span className="text-sm text-muted-foreground mt-1 block">
+                    <Building2 className="h-3.5 w-3.5 inline mr-1" />
+                    {parentAddress}
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Unit Details - Limited */}
+            <div className="grid grid-cols-2 gap-4 pt-2">
+              {/* Unit BBL */}
+              <div className="space-y-1">
+                <div className="text-sm text-muted-foreground">Unit BBL</div>
+                <div className="font-mono font-medium">{bbl}</div>
+              </div>
+              
+              {/* Property Type */}
+              <div className="space-y-1">
+                <div className="text-sm text-muted-foreground">Property Type</div>
+                <div className="font-medium">Condominium Unit</div>
+              </div>
+            </div>
+
+            {/* Note about structural attributes */}
+            <div className="flex items-start gap-2 p-3 rounded-md bg-muted/50 text-sm text-muted-foreground">
+              <Info className="h-4 w-4 mt-0.5 shrink-0" />
+              <p>
+                Unit-level structural attributes (year built, floors, area) are not applicable. 
+                These are properties of the building, not individual units.
+              </p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  // BUILDING PAGE - Full display
   const hasData = profile.propertyTypeLabel !== 'Unknown' || 
                   profile.buildingClass || 
                   profile.residentialUnits !== null ||
