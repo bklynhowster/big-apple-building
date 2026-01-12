@@ -87,8 +87,14 @@ function combineUnitStats(
     }
   }
 
+  // Apply building consistency filter:
+  // Only include units that appear in at least 2 records total OR appear in HPD at least once
+  const filteredStats = Array.from(unitMap.values()).filter(stat => {
+    return stat.hpdCount >= 1 || stat.totalCount >= 2;
+  });
+
   // Sort by total count descending
-  return Array.from(unitMap.values()).sort((a, b) => {
+  return filteredStats.sort((a, b) => {
     if (b.totalCount !== a.totalCount) return b.totalCount - a.totalCount;
     return a.unit.localeCompare(b.unit, undefined, { numeric: true });
   });
@@ -159,8 +165,7 @@ export function UnitInsightsCard({
           )}
         </div>
         <CardDescription className="text-sm text-muted-foreground">
-          These are building-level records that explicitly mention a unit. 
-          <span className="font-medium text-amber-700 dark:text-amber-300"> Unit references are inferred from HPD and 311 data.</span>
+          Units are inferred from HPD/311 apartment fields and validated to exclude addresses.
         </CardDescription>
       </CardHeader>
 
@@ -178,9 +183,9 @@ export function UnitInsightsCard({
         {!hasData && (
           <div className="flex flex-col items-center justify-center py-8 text-center">
             <AlertTriangle className="h-10 w-10 text-muted-foreground mb-3" />
-            <p className="text-foreground font-medium mb-1">No unit-referenced records found</p>
+            <p className="text-foreground font-medium mb-1">No reliable unit references found</p>
             <p className="text-sm text-muted-foreground max-w-md">
-              No HPD or 311 records explicitly mention specific apartments. 
+              No reliable unit references found in HPD/311 for this building.
               All records are building-wide.
             </p>
           </div>
