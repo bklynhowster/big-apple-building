@@ -1,6 +1,7 @@
-import { Info, AlertTriangle } from 'lucide-react';
+import { Info, AlertTriangle, Home, Building2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 
 export type DatasetCapability = 'unit-bbl' | 'building-bbl' | 'bin' | 'address' | 'geo';
 
@@ -10,6 +11,8 @@ interface QueriedIdentifierProps {
   scope: 'unit' | 'building';
   datasetCapability: DatasetCapability;
   datasetName: string;
+  onScopeChange?: (scope: 'unit' | 'building') => void;
+  showScopeToggle?: boolean;
 }
 
 const CAPABILITY_LABELS: Record<DatasetCapability, { label: string; description: string }> = {
@@ -25,7 +28,9 @@ export function QueriedIdentifier({
   bin, 
   scope, 
   datasetCapability, 
-  datasetName 
+  datasetName,
+  onScopeChange,
+  showScopeToggle = false,
 }: QueriedIdentifierProps) {
   const capability = CAPABILITY_LABELS[datasetCapability];
   const isBuildingLevel = datasetCapability === 'building-bbl' || datasetCapability === 'bin';
@@ -35,7 +40,30 @@ export function QueriedIdentifier({
     <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground mb-4 p-2 bg-muted/30 rounded border border-border/50">
       <Info className="h-4 w-4 flex-shrink-0" />
       
-      <span>Queried identifier:</span>
+      {/* Scope toggle if enabled */}
+      {showScopeToggle && onScopeChange && (
+        <>
+          <span className="text-xs">Viewing:</span>
+          <ToggleGroup 
+            type="single" 
+            value={scope} 
+            onValueChange={(v) => v && onScopeChange(v as 'unit' | 'building')}
+            className="h-7"
+          >
+            <ToggleGroupItem value="unit" aria-label="Unit scope" className="h-6 px-2 text-xs gap-1 data-[state=on]:bg-primary data-[state=on]:text-primary-foreground">
+              <Home className="h-3 w-3" />
+              Unit
+            </ToggleGroupItem>
+            <ToggleGroupItem value="building" aria-label="Building scope" className="h-6 px-2 text-xs gap-1 data-[state=on]:bg-primary data-[state=on]:text-primary-foreground">
+              <Building2 className="h-3 w-3" />
+              Building
+            </ToggleGroupItem>
+          </ToggleGroup>
+          <span className="text-muted-foreground/70">|</span>
+        </>
+      )}
+      
+      <span>Queried:</span>
       
       {datasetCapability === 'bin' && bin ? (
         <Badge variant="outline" className="font-mono text-xs">
@@ -51,12 +79,14 @@ export function QueriedIdentifier({
         </Badge>
       )}
       
-      <Badge 
-        variant={scope === 'unit' ? 'default' : 'secondary'} 
-        className="text-xs"
-      >
-        {scope === 'unit' ? 'Unit' : 'Building'}
-      </Badge>
+      {!showScopeToggle && (
+        <Badge 
+          variant={scope === 'unit' ? 'default' : 'secondary'} 
+          className="text-xs"
+        >
+          {scope === 'unit' ? 'Unit' : 'Building'}
+        </Badge>
+      )}
       
       <span className="text-muted-foreground/70">|</span>
       
@@ -78,7 +108,7 @@ export function QueriedIdentifier({
       {showMismatchWarning && (
         <div className="flex items-center gap-1.5 ml-auto text-amber-600 dark:text-amber-400">
           <AlertTriangle className="h-3.5 w-3.5" />
-          <span className="text-xs">Building-level data shown in Unit scope</span>
+          <span className="text-xs">Building-level data shown</span>
         </div>
       )}
     </div>

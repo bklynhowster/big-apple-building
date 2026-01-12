@@ -183,6 +183,8 @@ export default function Results() {
                 latitude={latitude}
                 longitude={longitude}
                 unitLabel={currentUnitLabel}
+                billingBbl={billingBbl}
+                isCondoUnit={hasCondoUnits && isUnitLot}
               />
 
               {/* Property Profile */}
@@ -261,7 +263,8 @@ export default function Results() {
                     <Card>
                       <CardContent className="p-6">
                         <SummaryTab 
-                          bbl={queryBbl}
+                          bbl={bbl}
+                          billingBbl={billingBbl}
                           onTabChange={handleTabChange}
                         />
                       </CardContent>
