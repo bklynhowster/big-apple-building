@@ -51,6 +51,31 @@ interface CombinedUnitStats {
   }[];
 }
 
+/**
+ * Calculate confidence level based on source diversity and count.
+ * High: 2+ DOB filings
+ * Medium: DOB + other source, or 2+ sources
+ * Low: single source mention
+ */
+function getConfidenceLevel(stat: CombinedUnitStats): { level: 'high' | 'medium' | 'low'; dots: string; title: string } {
+  const sourceTypes = [
+    stat.filingsCount > 0,
+    stat.hpdCount > 0,
+    stat.threeOneOneCount > 0,
+  ].filter(Boolean).length;
+  
+  if (stat.filingsCount >= 2) {
+    return { level: 'high', dots: '●●●', title: 'High: Referenced by 2+ DOB filings' };
+  }
+  if (stat.filingsCount >= 1 && sourceTypes >= 2) {
+    return { level: 'medium', dots: '●●○', title: 'Medium: DOB filing + other source' };
+  }
+  if (sourceTypes >= 2) {
+    return { level: 'medium', dots: '●●○', title: 'Medium: Multiple source types' };
+  }
+  return { level: 'low', dots: '●○○', title: 'Low: Single source mention' };
+}
+
 // Evidence record types for the drawer
 interface EvidenceRecord {
   source: 'hpd' | '311' | 'sales' | 'filings';
@@ -241,6 +266,54 @@ function formatDate(date: Date | null): string {
     month: 'short', 
     day: 'numeric' 
   });
+}
+
+// Expandable source references component
+interface SourceRef {
+  type: 'dob' | 'hpd' | '311' | 'sales';
+  id: string;
+  label: string;
+}
+
+function ExpandableRefs({ refs }: { refs: SourceRef[] }) {
+  const [expanded, setExpanded] = useState(false);
+  
+  if (refs.length === 0) {
+    return <span className="text-muted-foreground">-</span>;
+  }
+  
+  const visibleRefs = expanded ? refs : refs.slice(0, 1);
+  const hiddenCount = refs.length - 1;
+  
+  return (
+    <div className="flex flex-wrap items-center gap-1">
+      {visibleRefs.map((ref, idx) => (
+        <span 
+          key={`${ref.type}-${ref.id}-${idx}`} 
+          className="inline-block px-1.5 py-0.5 bg-muted rounded text-muted-foreground font-mono text-[11px]"
+          title={ref.label}
+        >
+          {ref.label.length > 16 ? ref.label.slice(0, 16) + '…' : ref.label}
+        </span>
+      ))}
+      {!expanded && hiddenCount > 0 && (
+        <button 
+          onClick={(e) => { e.stopPropagation(); setExpanded(true); }}
+          className="text-primary hover:underline text-[11px]"
+        >
+          +{hiddenCount} more
+        </button>
+      )}
+      {expanded && hiddenCount > 0 && (
+        <button 
+          onClick={(e) => { e.stopPropagation(); setExpanded(false); }}
+          className="text-muted-foreground hover:underline text-[11px]"
+        >
+          show less
+        </button>
+      )}
+    </div>
+  );
 }
 
 // Evidence Drawer Component
@@ -562,7 +635,7 @@ export function UnitInsightsCard({
           <Alert className="border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30">
             <Info className="h-4 w-4 text-amber-600 dark:text-amber-400" />
             <AlertDescription className="text-sm text-amber-800 dark:text-amber-200">
-              Units are inferred from DOB job filings, HPD complaints, 311 requests, and Rolling Sales data.
+              Unit references are inferred only when city records explicitly mention an apartment or unit number.
               {fallbackMode && (
                 <span className="block mt-1 text-amber-600 dark:text-amber-400">
                   Note: DOB job filings API unavailable.{' '}
@@ -605,7 +678,12 @@ export function UnitInsightsCard({
 
           {/* Unit Stats Table */}
           {hasData && (
-            <div className="rounded-md border border-amber-200 dark:border-amber-800 overflow-hidden">
+            <div className="space-y-2">
+              {/* Filter explanation - one line */}
+              <p className="text-xs text-muted-foreground">
+                Filtering highlights records that mention this unit. All records remain building-level.
+              </p>
+              <div className="rounded-md border border-amber-200 dark:border-amber-800 overflow-hidden">
               <Table>
                 <TableHeader>
                   <TableRow className="bg-amber-100/50 dark:bg-amber-900/30">
@@ -628,7 +706,12 @@ export function UnitInsightsCard({
                         311
                       </span>
                     </TableHead>
-                    <TableHead className="min-w-[140px]">Referenced In</TableHead>
+                    <TableHead className="text-center w-16">
+                      <span title="Based on source count: ●●● = 2+ DOB filings, ●●○ = DOB+other, ●○○ = single source">
+                        Conf.
+                      </span>
+                    </TableHead>
+                    <TableHead className="min-w-[120px]">Referenced In</TableHead>
                     <TableHead>Last Activity</TableHead>
                     <TableHead className="text-right">Action</TableHead>
                   </TableRow>
@@ -646,10 +729,15 @@ export function UnitInsightsCard({
                       `}
                     >
                       <TableCell className="font-mono font-medium">
-                        {selectedUnit === stat.unit && (
-                          <Badge className="mr-2 bg-amber-600 text-white text-xs">Active</Badge>
-                        )}
-                        {stat.unit}
+                        <div className="flex items-center gap-1.5">
+                          {selectedUnit === stat.unit && (
+                            <Badge className="bg-amber-600 text-white text-xs">Active</Badge>
+                          )}
+                          <span title="Unit label as written in city records">{stat.unit}</span>
+                          <span className="text-[10px] text-muted-foreground italic" title="As reported in city records">
+                            as reported
+                          </span>
+                        </div>
                       </TableCell>
                       <TableCell className="text-center">
                         {stat.filingsCount > 0 ? (
@@ -678,47 +766,60 @@ export function UnitInsightsCard({
                           <span className="text-muted-foreground">-</span>
                         )}
                       </TableCell>
+                      {/* Confidence indicator */}
+                      <TableCell className="text-center">
+                        {(() => {
+                          const conf = getConfidenceLevel(stat);
+                          return (
+                            <span 
+                              className={`font-mono text-xs cursor-help ${
+                                conf.level === 'high' ? 'text-green-600 dark:text-green-400' :
+                                conf.level === 'medium' ? 'text-amber-600 dark:text-amber-400' :
+                                'text-muted-foreground'
+                              }`}
+                              title={conf.title}
+                            >
+                              {conf.dots}
+                            </span>
+                          );
+                        })()}
+                      </TableCell>
+                      {/* Referenced In - expandable */}
                       <TableCell className="text-xs">
-                        {/* Show up to 2 source refs as provenance */}
-                        {stat.sourceRefs.slice(0, 2).map((ref, idx) => (
-                          <span 
-                            key={`${ref.type}-${ref.id}-${idx}`} 
-                            className="inline-block mr-1 mb-1 px-1.5 py-0.5 bg-muted rounded text-muted-foreground font-mono"
-                            title={ref.label}
-                          >
-                            {ref.label.length > 18 ? ref.label.slice(0, 18) + '…' : ref.label}
-                          </span>
-                        ))}
-                        {stat.sourceRefs.length > 2 && (
-                          <span className="text-muted-foreground">+{stat.sourceRefs.length - 2} more</span>
-                        )}
+                        <ExpandableRefs refs={stat.sourceRefs} />
                       </TableCell>
                       <TableCell className="text-sm text-muted-foreground">
                         {formatDate(stat.lastActivity)}
                       </TableCell>
-                      <TableCell className="text-right space-x-1">
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => handleViewEvidence(stat)}
-                          className="h-7 px-2 text-xs"
-                          title="View evidence"
-                        >
-                          <Eye className="h-3 w-3" />
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant={selectedUnit === stat.unit ? 'secondary' : 'outline'}
-                          onClick={() => onUnitSelect(stat.unit)}
-                          className="h-7 px-3 text-xs"
-                        >
-                          {selectedUnit === stat.unit ? 'Viewing' : 'Filter'}
-                        </Button>
+                      <TableCell className="text-right">
+                        <div className="flex flex-col items-end gap-1">
+                          <div className="flex gap-1">
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => handleViewEvidence(stat)}
+                              className="h-7 px-2 text-xs"
+                              title="View evidence"
+                            >
+                              <Eye className="h-3 w-3" />
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant={selectedUnit === stat.unit ? 'secondary' : 'outline'}
+                              onClick={() => onUnitSelect(stat.unit)}
+                              className="h-7 px-3 text-xs"
+                              title="Filtering highlights records that mention this unit. All records remain building-level."
+                            >
+                              {selectedUnit === stat.unit ? 'Viewing' : 'Filter'}
+                            </Button>
+                          </div>
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
               </Table>
+              </div>
             </div>
           )}
         </CardContent>
