@@ -33,11 +33,14 @@ import { RecordDetailDrawer, RecordType } from './RecordDetailDrawer';
 import { ColumnSelector, useColumnVisibility, ColumnConfig } from './ColumnSelector';
 import { QueriedIdentifier, DatasetCapability } from './QueriedIdentifier';
 import { QueryScope } from './ScopeSelector';
+import { BuildingLevelBanner } from './BuildingLevelBanner';
 
 interface ViolationsTabProps {
   bbl: string;
   bin?: string;
   scope?: QueryScope;
+  isCoop?: boolean;
+  coopUnitContext?: string | null;
 }
 
 const COLUMN_CONFIGS: ColumnConfig[] = [
@@ -94,7 +97,7 @@ function LoadingSkeleton() {
   );
 }
 
-export function ViolationsTab({ bbl, bin, scope = 'building' }: ViolationsTabProps) {
+export function ViolationsTab({ bbl, bin, scope = 'building', isCoop = false, coopUnitContext }: ViolationsTabProps) {
   const {
     loading,
     error,
@@ -198,6 +201,9 @@ export function ViolationsTab({ bbl, bin, scope = 'building' }: ViolationsTabPro
 
   return (
     <div className="space-y-4">
+      {/* Co-op building-level info banner */}
+      {isCoop && <BuildingLevelBanner coopUnitContext={coopUnitContext} />}
+      
       {/* Queried Identifier */}
       <QueriedIdentifier
         bbl={bbl}
