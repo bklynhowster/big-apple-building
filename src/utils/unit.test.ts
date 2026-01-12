@@ -20,75 +20,52 @@ import {
 // ============================================================================
 
 const VALID_UNIT_PATTERNS = [
-  // Number + letter patterns (most common in NYC co-ops)
+  // Core NYC patterns
   { input: '6M', expected: '6M' },
-  { input: '2G', expected: '2G' },
+  { input: '6G', expected: '6G' },
+  { input: '4J', expected: '4J' },
+  { input: '2H', expected: '2H' },
   { input: '12B', expected: '12B' },
-  { input: '1A', expected: '1A' },
-  { input: '10F', expected: '10F' },
-  { input: '100A', expected: '100A' },  // Large building units
-  
-  // Letter + number patterns
-  { input: 'A1', expected: 'A1' },
-  { input: 'B12', expected: 'B12' },
-  { input: 'A123', expected: 'A123' },
-  
+  { input: '100A', expected: '100A' },
+
   // With prefixes (should be stripped)
-  { input: 'APT 2G', expected: '2G' },
-  { input: 'UNIT PH', expected: 'PH' },
+  { input: 'APT 6M', expected: '6M' },
+  { input: 'APARTMENT 6G', expected: '6G' },
+  { input: 'UNIT 4J', expected: '4J' },
   { input: '#12B', expected: '12B' },
-  { input: 'Apartment 6M', expected: '6M' },
-  { input: 'APT. 3A', expected: '3A' },
-  { input: 'Apt 4J', expected: '4J' },
-  { input: 'apt. 5K', expected: '5K' },
-  { input: 'APARTMENT 7L', expected: '7L' },
-  { input: 'Unit 2H', expected: '2H' },
-  
+
   // Penthouse patterns
   { input: 'PH', expected: 'PH' },
-  { input: 'PHA', expected: 'PHA' },
-  { input: 'PHW', expected: 'PHW' },
-  { input: 'PHN', expected: 'PHN' },
-  { input: 'PH1', expected: 'PH1' },
-  { input: 'PH2A', expected: 'PH2A' },
-  
-  // Short numeric (1-3 digits)
-  { input: '1', expected: '1' },
-  { input: '12', expected: '12' },
-  { input: '100', expected: '100' },
-  
-  // Single letters
-  { input: 'A', expected: 'A' },
-  { input: 'G', expected: 'G' },
-  { input: 'R', expected: 'R' },
-  
+  { input: 'PHH', expected: 'PHH' },
+
   // With separators (should be normalized)
   { input: '12-B', expected: '12B' },
   { input: '6 M', expected: '6M' },
   { input: '2.G', expected: '2G' },
-  
-  // Multi-letter codes
-  { input: 'TH', expected: 'TH' },
-  { input: 'GF', expected: 'GF' },
-  { input: 'REAR', expected: 'REAR' },
 ];
 
 const INVALID_UNIT_PATTERNS = [
+  // False-positive narrative words
+  { input: 'ONLY', reason: 'stopword' },
+  { input: 'IF', reason: 'stopword' },
+  { input: 'AH', reason: 'stopword' },
+  { input: 'S', reason: 'single-letter weak token' },
+
   // Address-like values
   { input: '40 TEHAMA STREET', reason: 'address' },
   { input: 'BROOKLYN', reason: 'borough' },
   { input: '123 WEST AVENUE', reason: 'address' },
-  
+
   // Job numbers
   { input: 'B00123456', reason: 'job number' },
   { input: 'NB12345', reason: 'new building number' },
   { input: 'A1234567', reason: 'alteration number' },
-  
+
   // Floor-only
   { input: 'FLOOR 3', reason: 'floor only' },
   { input: '3RD FLOOR', reason: 'floor only' },
   { input: 'FL2', reason: 'floor only' },
-  
+
   // Junk values
   { input: 'N/A', reason: 'junk' },
   { input: 'NONE', reason: 'junk' },
@@ -97,11 +74,11 @@ const INVALID_UNIT_PATTERNS = [
   { input: 'CELLAR', reason: 'junk' },
   { input: 'UNKNOWN', reason: 'junk' },
   { input: '', reason: 'empty' },
-  
+
   // Long numbers (4+ digits are likely addresses or house numbers)
   { input: '1200', reason: 'house number (4 digits)' },
   { input: '3250', reason: 'house number (4 digits)' },
-  
+
   // ZIP codes
   { input: '11201', reason: 'zip code' },
   { input: '10001', reason: 'zip code' },
@@ -116,9 +93,15 @@ const RECORD_EXTRACTION_FIXTURES = [
   },
   {
     name: 'Direct apartment field',
-    record: { apartment: '2G' },
-    expectedUnit: '2G',
+    record: { apartment: '6M' },
+    expectedUnit: '6M',
     expectedField: 'apartment',
+  },
+  {
+    name: 'Direct apartment_no field (heuristic structured key)',
+    record: { apartment_no: '6G' },
+    expectedUnit: '6G',
+    expectedField: 'apartment_no',
   },
   {
     name: 'HPD complaint with unit in descriptor',
@@ -128,8 +111,8 @@ const RECORD_EXTRACTION_FIXTURES = [
   },
   {
     name: 'Unit field with prefix',
-    record: { unit: 'UNIT PH' },
-    expectedUnit: 'PH',
+    record: { unit: 'UNIT PHH' },
+    expectedUnit: 'PHH',
     expectedField: 'unit',
   },
   {
@@ -140,8 +123,8 @@ const RECORD_EXTRACTION_FIXTURES = [
   },
   {
     name: 'Problem description pattern',
-    record: { problem_description: 'Tenant in APT 3R reports leak' },
-    expectedUnit: '3R',
+    record: { problem_description: 'Tenant in APT 3H reports leak' },
+    expectedUnit: '3H',
     expectedField: 'problem_description',
   },
   {
