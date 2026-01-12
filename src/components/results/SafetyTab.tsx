@@ -27,9 +27,13 @@ import { toast } from '@/hooks/use-toast';
 import { ErrorBanner } from '@/components/ui/error-banner';
 import { RecordDetailDrawer } from './RecordDetailDrawer';
 import { ColumnSelector, useColumnVisibility, ColumnConfig } from './ColumnSelector';
+import { QueriedIdentifier, DatasetCapability } from './QueriedIdentifier';
+import { QueryScope } from './ScopeSelector';
 
 interface SafetyTabProps {
   bbl: string;
+  bin?: string;
+  scope?: QueryScope;
 }
 
 interface SafetyViolation {
@@ -83,7 +87,7 @@ function LoadingSkeleton() {
   );
 }
 
-export function SafetyTab({ bbl }: SafetyTabProps) {
+export function SafetyTab({ bbl, bin, scope = 'building' }: SafetyTabProps) {
   const [status, setStatus] = useState<'open' | 'closed' | 'all'>('all');
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
@@ -134,8 +138,20 @@ export function SafetyTab({ bbl }: SafetyTabProps) {
     toast({ title: 'Export complete', description: `Exported ${items.length} safety violations to CSV` });
   };
 
+  // Dataset capability for Safety - BIN-based, building-level
+  const datasetCapability: DatasetCapability = 'bin';
+
   return (
     <div className="space-y-4">
+      {/* Queried Identifier */}
+      <QueriedIdentifier
+        bbl={bbl}
+        bin={bin}
+        scope={scope}
+        datasetCapability={datasetCapability}
+        datasetName="DOB Safety Violations"
+      />
+      
       <div className="flex flex-wrap gap-4 items-end">
         <div className="space-y-1">
           <Label htmlFor="status-filter">Status</Label>
