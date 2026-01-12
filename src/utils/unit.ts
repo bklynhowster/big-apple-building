@@ -126,6 +126,21 @@ const ADDRESS_SUBSTRINGS = [
 // Well-known penthouse/special unit tokens (ALLOWED even if pure alpha)
 const PENTHOUSE_TOKENS = new Set(['PH', 'PHH', 'PHS', 'PHN', 'PHE', 'PHW', 'TH', 'GF', 'LH', 'RH', 'BS']);
 
+// ============================================================================
+// DEBUG LOGGING (DEV-ONLY)
+// ============================================================================
+
+// Debug mode for extraction tracing — enabled via ?debug=1 in DEV mode only
+const EXTRACTION_DEBUG = typeof window !== 'undefined' &&
+  window.location?.search?.includes('debug=1') &&
+  (import.meta.env?.DEV ?? process.env.NODE_ENV === 'development');
+
+function debugLog(scope: string, payload: Record<string, unknown>): void {
+  if (!EXTRACTION_DEBUG) return;
+  // Keep logs compact + structured for grepping
+  console.log(`[${scope}]`, payload);
+}
+
 /**
  * Check if a token is in the STOPLIST (case-insensitive).
  * Exported for diagnostics/testing.
@@ -199,9 +214,10 @@ export function isLikelyUnitLabel(unit: string, hasStrongEvidence: boolean = fal
 
   // Always-allow: digits WITH letters (NYC unit core)
   if (/^[1-9]\d{0,2}[A-Z]{1,2}$/.test(upperUnit)) {
-    // Disallow common address-ish suffixes when they appear as the letter part.
-    if (/^\d{1,3}(ST|AVE|AV|RD|BLVD|PL|DR|CT|LN|WAY|TER|CIR)$/.test(upperUnit)) {
-      debugLog('UnitValidate.reject', { unit: upperUnit, hasStrongEvidence, reason: 'address_suffix' });
+    // Disallow common address-ish suffixes and ordinals when they appear as the letter part.
+    // ST=street/1st, ND=2nd, RD=road/3rd, TH=4th+, AVE=avenue, etc.
+    if (/^\d{1,3}(ST|ND|RD|TH|AVE|AV|BLVD|PL|DR|CT|LN|WAY|TER|CIR)$/.test(upperUnit)) {
+      debugLog('UnitValidate.reject', { unit: upperUnit, hasStrongEvidence, reason: 'address_or_ordinal_suffix' });
       return false;
     }
     debugLog('UnitValidate.accept', { unit: upperUnit, hasStrongEvidence, reason: 'digit_letter', pattern: '/^[1-9]\\d{0,2}[A-Z]{1,2}$/' });
@@ -339,49 +355,63 @@ function containsAddressSubstring(raw: string): boolean {
  * @param hasStrongEvidence Token was extracted with explicit APT/UNIT prefix evidence
  */
 export function normalizeUnit(
-  raw: string | null | undefined, 
+  raw: string | null | undefined,
   relaxed: boolean = false,
   hasStrongEvidence: boolean = false
 ): string | null {
   if (raw == null) return null;
-  
+
+  const rawStr = String(raw);
+
+  // Helper for debug-only reject logging
+  const reject = (reason: string, extra?: Record<string, unknown>) => {
+    if (EXTRACTION_DEBUG) {
+      debugLog('UnitNormalize.reject', { raw: rawStr.slice(0, 50), relaxed, hasStrongEvidence, reason, ...extra });
+    }
+    return null;
+  };
+
   // 1. Trim and uppercase
-  let value = String(raw).trim().toUpperCase();
-  
+  let value = rawStr.trim().toUpperCase();
+
   // 2. Check junk values early
-  if (JUNK_VALUES.has(value)) return null;
-  
+  if (JUNK_VALUES.has(value)) return reject('junk_value');
+
   // 3. Reject if contains address-like substrings (before stripping prefixes)
-  if (containsAddressSubstring(value)) return null;
-  
+  if (containsAddressSubstring(value)) return reject('address_substring');
+
   // 4. Strip common prefixes FIRST (APT, UNIT, #, etc.)
   const prefixPattern = new RegExp(`^(${STRIP_PREFIXES.join('|')})\\s*[:\\-\\.\\s]*`, 'i');
   value = value.replace(prefixPattern, '');
-  
+
   // 5. Remove all whitespace, hyphens, and common separators between characters
   // e.g., "12-B" → "12B", "12 B" → "12B", "12.B" → "12B"
   value = value.replace(/[\s\-\.]+/g, '');
-  
+
   // 6. Remove any remaining punctuation except alphanumeric
   value = value.replace(/[^A-Z0-9]/g, '');
-  
+
   // 7. Final junk check after normalization
-  if (!value || JUNK_VALUES.has(value)) return null;
-  
+  if (!value || JUNK_VALUES.has(value)) return reject('empty_or_junk_after_cleanup', { cleaned: value });
+
   // 8. Additional validation: must contain at least one letter or digit
-  if (!/[A-Z0-9]/.test(value)) return null;
-  
-  // 9. NOW check stoplist (after stripping prefixes and cleaning up)
-  // Skip stoplist check for digit-containing tokens (valid units like 6M)
-  if (!/\d/.test(value) && isStopword(value)) return null;
-  
-  // 10. Validate against unit label patterns
+  if (!/[A-Z0-9]/.test(value)) return reject('no_alnum', { cleaned: value });
+
+  // 9. STOPLIST check — ONLY for alpha-only tokens (no digits)
+  // CRITICAL: Digit-containing tokens (6M, 12B, etc.) MUST bypass stoplist entirely
+  if (!/\d/.test(value) && isStopword(value)) return reject('stopword', { cleaned: value });
+
+  // 10. Validate against unit label patterns (single source of truth)
   if (relaxed) {
-    if (!isLikelyUnitLabelRelaxed(value)) return null;
+    if (!isLikelyUnitLabelRelaxed(value)) return reject('validate_relaxed_failed', { cleaned: value });
   } else {
-    if (!isLikelyUnitLabel(value, hasStrongEvidence)) return null;
+    if (!isLikelyUnitLabel(value, hasStrongEvidence)) return reject('validate_strict_failed', { cleaned: value });
   }
-  
+
+  if (EXTRACTION_DEBUG) {
+    debugLog('UnitNormalize.accept', { raw: rawStr.slice(0, 50), cleaned: value, relaxed, hasStrongEvidence });
+  }
+
   return value;
 }
 
@@ -831,17 +861,6 @@ export function hasValidBuildingId(record: Record<string, unknown> | null | unde
 // ============================================================================
 // MAIN EXTRACTION FUNCTIONS
 // ============================================================================
-
-// Debug mode for extraction tracing
-const EXTRACTION_DEBUG = typeof window !== 'undefined' &&
-  window.location?.search?.includes('debug=1') &&
-  (import.meta.env?.DEV ?? process.env.NODE_ENV === 'development');
-
-function debugLog(scope: string, payload: Record<string, unknown>): void {
-  if (!EXTRACTION_DEBUG) return;
-  // Keep logs compact + structured for grepping
-  console.log(`[${scope}]`, payload);
-}
 
 /**
  * Flatten a record's values to strings for extraction.
