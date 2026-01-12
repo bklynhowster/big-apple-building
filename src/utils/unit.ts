@@ -183,9 +183,15 @@ export function isLikelyUnitLabel(unit: string, hasStrongEvidence: boolean = fal
   // ZIP
   if (/^\d{5}$/.test(upperUnit)) return false;
 
-  // Always-allow: digits with optional 0-2 letters (NYC unit core)
-  // Examples: 6, 6G, 12B, 100A, 12AB
-  if (/^[1-9]\d{0,2}[A-Z]{0,2}$/.test(upperUnit)) {
+  // Co-op rule: suppress numeric-only units unless strong evidence
+  // Floor numbers (1, 2, 12, etc.) are commonly misidentified as apartment units
+  if (/^[1-9]\d{0,2}$/.test(upperUnit)) {
+    if (!hasStrongEvidence) return false;
+  }
+
+  // Always-allow: digits WITH letters (NYC unit core)
+  // Examples: 6G, 12B, 100A, 12AB - these are unambiguous apartment identifiers
+  if (/^[1-9]\d{0,2}[A-Z]{1,2}$/.test(upperUnit)) {
     // Disallow common address-ish suffixes when they appear as the letter part.
     if (/^\d{1,3}(ST|AVE|AV|RD|BLVD|PL|DR|CT|LN|WAY|TER|CIR)$/.test(upperUnit)) return false;
     return true;
