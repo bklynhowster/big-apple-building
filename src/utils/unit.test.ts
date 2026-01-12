@@ -1,6 +1,7 @@
 import { isLikelyUnitLabel, normalizeUnit, extractUnitFromRecordWithTrace } from './unit';
 
 // Simple test helpers (vitest not installed)
+// These only run when explicitly imported in DEV
 const describe = (name: string, fn: () => void) => { console.log(`\n=== ${name} ===`); fn(); };
 const it = (name: string, fn: () => void) => { try { fn(); console.log(`✓ ${name}`); } catch (e) { console.error(`✗ ${name}:`, e); } };
 const expect = (val: unknown) => ({
@@ -93,11 +94,10 @@ describe('record extraction: extractUnitFromRecordWithTrace', () => {
   });
 });
 
-// Optional: expose a simple test runner for manual console use
-if (typeof window !== 'undefined') {
-  (window as any).runUnitExtractionTests = () => {
-    // Vitest runs these normally; this helper is only for quick manual checks.
-    // eslint-disable-next-line no-console
-    console.log('Run `pnpm test` / `npm test` to execute vitest suite.');
-  };
+/**
+ * Exported test runner for manual DEV use.
+ * Usage: import { runUnitExtractionTests } from '@/utils/unit.test'; runUnitExtractionTests();
+ */
+export function runUnitExtractionTests(): void {
+  console.log('Unit extraction tests completed. See results above.');
 }

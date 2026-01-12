@@ -79,7 +79,7 @@ export function usePropertySearch(): UsePropertySearchResult {
       }
 
       const fullUrl = `${baseUrl}?${queryParams.toString()}`;
-      console.log('Calling geocode API:', fullUrl);
+      if (import.meta.env.DEV) console.log('Calling geocode API:', fullUrl);
 
       const response = await fetch(fullUrl, {
         method: 'GET',
@@ -111,7 +111,7 @@ export function usePropertySearch(): UsePropertySearchResult {
       // Check if still mounted
       if (!isMountedRef.current) return;
 
-      console.log('Geocode result:', responseData);
+      if (import.meta.env.DEV) console.log('Geocode result:', responseData);
 
       // Normalize BBL to ensure 10 digits
       const normalizedBBL = normalizeBBL(responseData.bbl as string);
