@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef } from 'react';
 import { parseApiError, type ApiError } from '@/types/api-error';
+import { useTrackedFetch } from '@/hooks/useTrackedFetch';
 
 export interface HPDViolationRecord {
   recordType: string;
@@ -38,7 +39,7 @@ export interface HPDFilters {
   fromDate?: string;
   toDate?: string;
   keyword?: string;
-  violationClass?: string; // A, B, C, I for violations only
+  violationClass?: string;
 }
 
 interface UseHPDResult<T> {
@@ -65,17 +66,14 @@ function createHPDHook<T>(endpoint: 'hpd-violations' | 'hpd-complaints') {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<ApiError | null>(null);
     const [data, setData] = useState<HPDApiResponse<T> | null>(null);
-    const [filters, setFilters] = useState<HPDFilters>({
-      status: 'all',
-      keyword: '',
-    });
-    const [appliedFilters, setAppliedFilters] = useState<HPDFilters>({
-      status: 'all',
-      keyword: '',
-    });
+    const [filters, setFilters] = useState<HPDFilters>({ status: 'all', keyword: '' });
+    const [appliedFilters, setAppliedFilters] = useState<HPDFilters>({ status: 'all', keyword: '' });
     const [offset, setOffset] = useState(0);
     const [currentBBL, setCurrentBBL] = useState<string | null>(null);
-    const loggedUrlsRef = useRef<Set<string>>(new Set());
+    const { trackedFetch } = useTrackedFetch({ 
+      endpoint, 
+      dataset: endpoint === 'hpd-violations' ? 'HPD Violations' : 'HPD Complaints' 
+    });
 
     const blocked = !bbl || bbl.length !== 10;
 
@@ -107,12 +105,7 @@ function createHPDHook<T>(endpoint: 'hpd-violations' | 'hpd-complaints') {
         const urlParams = new URLSearchParams(queryParams);
         const fullUrl = `${baseUrl}?${urlParams.toString()}`;
 
-        if (!loggedUrlsRef.current.has(fullUrl)) {
-          console.log(`[use${endpoint}] fetching:`, fullUrl);
-          loggedUrlsRef.current.add(fullUrl);
-        }
-
-        const response = await fetch(fullUrl, {
+        const response = await trackedFetch(fullUrl, queryParams, {
           method: 'GET',
           headers: {
             'Content-Type': 'application/json',
@@ -142,7 +135,7 @@ function createHPDHook<T>(endpoint: 'hpd-violations' | 'hpd-complaints') {
       } finally {
         setLoading(false);
       }
-    }, [appliedFilters]);
+    }, [appliedFilters, trackedFetch]);
 
     const applyFilters = useCallback(() => {
       setAppliedFilters(filters);

@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react';
 import { parseApiError, type ApiError } from '@/types/api-error';
+import { useTrackedFetch } from '@/hooks/useTrackedFetch';
 
 export interface PermitRecord {
   recordType: string;
@@ -61,6 +62,7 @@ export function usePermits(bbl?: string | null): UsePermitsReturn {
   const [appliedFilters, setAppliedFilters] = useState<PermitsFilters>({ status: 'all', keyword: '' });
   const [offset, setOffset] = useState(0);
   const [currentBBL, setCurrentBBL] = useState<string | null>(null);
+  const { trackedFetch } = useTrackedFetch({ endpoint: 'dob-permits', dataset: 'DOB Permits' });
 
   const blocked = !bbl || bbl.length !== 10;
 
@@ -89,7 +91,7 @@ export function usePermits(bbl?: string | null): UsePermitsReturn {
       const urlParams = new URLSearchParams(queryParams);
       const fullUrl = `${baseUrl}?${urlParams.toString()}`;
 
-      const response = await fetch(fullUrl, {
+      const response = await trackedFetch(fullUrl, queryParams, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
@@ -119,7 +121,7 @@ export function usePermits(bbl?: string | null): UsePermitsReturn {
     } finally {
       setLoading(false);
     }
-  }, [appliedFilters]);
+  }, [appliedFilters, trackedFetch]);
 
   const applyFilters = useCallback(() => {
     setAppliedFilters(filters);
