@@ -1465,6 +1465,38 @@ export function UnitInsightsCard({
                         </Tooltip>
                       </TooltipProvider>
                     </TableHead>
+                    {/* NEW: Violations column (DOB + ECB combined) */}
+                    <TableHead className="text-center">
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="flex items-center justify-center gap-1 cursor-help">
+                              <Shield className="h-3.5 w-3.5" />
+                              Vio
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent className="max-w-xs">
+                            <p>Building-level DOB &amp; ECB violations that mention this unit. These are building-issued records, not unit-specific enforcement.</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    </TableHead>
+                    {/* NEW: Permits column */}
+                    <TableHead className="text-center">
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="flex items-center justify-center gap-1 cursor-help">
+                              <FileText className="h-3.5 w-3.5" />
+                              Prmt
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent className="max-w-xs">
+                            <p>Building-level DOB permits that mention this unit. These are building-issued records, not unit-specific permits.</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    </TableHead>
                     {/* Sortable: Total Mentions */}
                     <TableHead className="text-center">
                       <TooltipProvider>
@@ -1567,6 +1599,54 @@ export function UnitInsightsCard({
                           <Badge variant="outline" className="font-mono">
                             {stat.threeOneOneCount}
                           </Badge>
+                        ) : (
+                          <span className="text-muted-foreground">-</span>
+                        )}
+                      </TableCell>
+                      {/* Violations (DOB + ECB combined) */}
+                      <TableCell className="text-center">
+                        {(() => {
+                          const violationsTotal = stat.dobViolationsCount + stat.ecbViolationsCount;
+                          return violationsTotal > 0 ? (
+                            <TooltipProvider>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Badge variant="outline" className="font-mono cursor-help text-destructive border-destructive/50">
+                                    {violationsTotal}
+                                  </Badge>
+                                </TooltipTrigger>
+                                <TooltipContent className="max-w-xs">
+                                  <p className="text-xs">
+                                    {stat.dobViolationsCount > 0 && `${stat.dobViolationsCount} DOB violation${stat.dobViolationsCount !== 1 ? 's' : ''}`}
+                                    {stat.dobViolationsCount > 0 && stat.ecbViolationsCount > 0 && ', '}
+                                    {stat.ecbViolationsCount > 0 && `${stat.ecbViolationsCount} ECB violation${stat.ecbViolationsCount !== 1 ? 's' : ''}`}
+                                    {' '}mention this unit. Building-issued, not unit-specific.
+                                  </p>
+                                </TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
+                          ) : (
+                            <span className="text-muted-foreground">-</span>
+                          );
+                        })()}
+                      </TableCell>
+                      {/* Permits */}
+                      <TableCell className="text-center">
+                        {stat.permitsCount > 0 ? (
+                          <TooltipProvider>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Badge variant="outline" className="font-mono cursor-help">
+                                  {stat.permitsCount}
+                                </Badge>
+                              </TooltipTrigger>
+                              <TooltipContent className="max-w-xs">
+                                <p className="text-xs">
+                                  {stat.permitsCount} permit{stat.permitsCount !== 1 ? 's' : ''} mention this unit. Building-issued, not unit-specific.
+                                </p>
+                              </TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
                         ) : (
                           <span className="text-muted-foreground">-</span>
                         )}
