@@ -27,6 +27,7 @@ const VALID_UNIT_PATTERNS = [
   { input: '2H', expected: '2H' },
   { input: '12B', expected: '12B' },
   { input: '100A', expected: '100A' },
+  { input: '12AA', expected: '12AA' },
 
   // With prefixes (should be stripped)
   { input: 'APT 6M', expected: '6M' },
@@ -88,7 +89,12 @@ const INVALID_UNIT_PATTERNS = [
   { input: '10001', reason: 'zip code' },
 ];
 
-const RECORD_EXTRACTION_FIXTURES = [
+const RECORD_EXTRACTION_FIXTURES: Array<{
+  name: string;
+  record: Record<string, unknown>;
+  expectedUnit: string | null;
+  expectedField: string | null;
+}> = [
   {
     name: 'Job description with APT mention',
     record: { job_description: 'Renovation of apartment 6M including kitchen and bath' },
@@ -142,6 +148,12 @@ const RECORD_EXTRACTION_FIXTURES = [
     record: { apt_no: '5K' },
     expectedUnit: '5K',
     expectedField: 'apt_no',
+  },
+  {
+    name: 'Narrative floor mention must not extract',
+    record: { descriptor: 'PUBLIC HALL, 6th STORY' },
+    expectedUnit: null,
+    expectedField: null,
   },
 ];
 
@@ -274,6 +286,20 @@ export function runUnitExtractionTests(): TestResults {
   console.log('\n=== Record Extraction Tests ===');
   for (const { name, record, expectedUnit, expectedField } of RECORD_EXTRACTION_FIXTURES) {
     const result = extractUnitFromRecordWithTrace(record);
+
+    if (expectedUnit === null) {
+      if (result === null) {
+        passed++;
+        console.log(`✓ ${name}: correctly returned null`);
+      } else {
+        failed++;
+        const error = `✗ ${name}: expected null, got "${result.normalizedUnit}" from "${result.sourceField}"`;
+        errors.push(error);
+        console.error(error);
+      }
+      continue;
+    }
+
     if (result && result.normalizedUnit === expectedUnit) {
       passed++;
       console.log(`✓ ${name}: "${expectedUnit}" from "${result.sourceField}"`);

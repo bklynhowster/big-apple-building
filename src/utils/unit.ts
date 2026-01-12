@@ -33,6 +33,8 @@ export interface UnitExtractionResult {
   asReported: string;
   /** Field name where the unit was found */
   sourceField: string;
+  /** Whether extraction had explicit evidence (direct unit field or explicit prefix) */
+  hasStrongEvidence?: boolean;
   /** Text snippet showing context (for free-text extractions) */
   snippet: string | null;
   /** Unit type classification */
@@ -195,16 +197,6 @@ export function isLikelyUnitLabel(unit: string, hasStrongEvidence: boolean = fal
     return false;
   }
 
-  // Co-op rule: numeric-only units require strong evidence
-  if (/^[1-9]\d{0,2}$/.test(upperUnit)) {
-    if (!hasStrongEvidence) {
-      debugLog('UnitValidate.reject', { unit: upperUnit, hasStrongEvidence, reason: 'numeric_no_evidence', pattern: '/^[1-9]\\d{0,2}$/' });
-      return false;
-    }
-    debugLog('UnitValidate.accept', { unit: upperUnit, hasStrongEvidence, reason: 'numeric_with_evidence', pattern: '/^[1-9]\\d{0,2}$/' });
-    return true;
-  }
-
   // Always-allow: digits WITH letters (NYC unit core)
   if (/^[1-9]\d{0,2}[A-Z]{1,2}$/.test(upperUnit)) {
     // Disallow common address-ish suffixes when they appear as the letter part.
@@ -214,6 +206,18 @@ export function isLikelyUnitLabel(unit: string, hasStrongEvidence: boolean = fal
     }
     debugLog('UnitValidate.accept', { unit: upperUnit, hasStrongEvidence, reason: 'digit_letter', pattern: '/^[1-9]\\d{0,2}[A-Z]{1,2}$/' });
     return true;
+  }
+
+  // Co-op rule: numeric-only units require strong evidence
+  if (/^[1-9]\d{0,2}$/.test(upperUnit)) {
+    const ok = hasStrongEvidence;
+    debugLog(ok ? 'UnitValidate.accept' : 'UnitValidate.reject', {
+      unit: upperUnit,
+      hasStrongEvidence,
+      reason: ok ? 'numeric_with_evidence' : 'numeric_no_evidence',
+      pattern: '/^[1-9]\\d{0,2}$/',
+    });
+    return ok;
   }
 
   // Single-letter tokens are ambiguous
@@ -770,15 +774,6 @@ function extractUnitFromText(
         }
       }
 
-      // HARD BLOCK: numeric-only units from free text without strong evidence
-      // This is a critical guard to prevent floor numbers (1, 2, 12, 100) from being
-      // extracted as unit identifiers when they appear in narrative text.
-      if (/^\d{1,3}$/.test(normalized) && !hasStrongEvidence) {
-        if (EXTRACTION_DEBUG) {
-          debugLog('UnitExtract.reject', { fieldName, keyword, normalized, reason: 'numeric_only_no_evidence' });
-        }
-        continue;
-      }
 
       const matchIndex = match.index || 0;
       const snippetStart = Math.max(0, matchIndex - 30);
@@ -791,13 +786,14 @@ function extractUnitFromText(
       const { confidence, reason } = determineConfidence('pattern', keyword, normalized, fieldName, false);
 
       if (EXTRACTION_DEBUG) {
-        debugLog('UnitExtract.accept', { fieldName, keyword, normalized, unitType, confidence });
+        debugLog('UnitExtract.accept', { fieldName, keyword, normalized, unitType, confidence, hasStrongEvidence });
       }
 
       return {
         normalizedUnit: normalized,
         asReported,
         sourceField: fieldName,
+        hasStrongEvidence,
         snippet,
         unitType,
         confidence,
@@ -926,20 +922,28 @@ export function extractUnitFromRecordWithTrace(
         const { confidence, reason } = determineConfidence('direct', field, normalized, field);
 
         if (EXTRACTION_DEBUG) {
-          console.log(`[UnitExtract] Direct field "${actualKey}" -> "${normalized}" (from "${rawValue}")`);
+          debugLog('UnitExtract.accept_first', {
+            method: 'direct',
+            sourceField: actualKey,
+            canonicalField: field,
+            normalized,
+            asReported: rawValue,
+            hasStrongEvidence: true,
+          });
         }
 
         return {
           normalizedUnit: normalized,
           asReported: rawValue.trim().toUpperCase(),
           sourceField: field,
+          hasStrongEvidence: true,
           snippet: null,
           unitType,
           confidence,
           confidenceReason: reason,
         };
       } else if (EXTRACTION_DEBUG) {
-        console.log(`[UnitExtract] Direct field "${actualKey}" rejected: "${rawValue}"`);
+        debugLog('UnitExtract.direct_reject', { sourceField: actualKey, canonicalField: field, rawValue });
       }
     }
   }
@@ -975,13 +979,20 @@ export function extractUnitFromRecordWithTrace(
       const { confidence, reason } = determineConfidence('direct', key, normalized, key);
 
       if (EXTRACTION_DEBUG) {
-        console.log(`[UnitExtract] Heuristic field "${key}" -> "${normalized}" (from "${value}")`);
+        debugLog('UnitExtract.accept_first', {
+          method: 'heuristic',
+          sourceField: key,
+          normalized,
+          asReported: value,
+          hasStrongEvidence: true,
+        });
       }
 
       return {
         normalizedUnit: normalized,
         asReported: value.trim().toUpperCase(),
         sourceField: key,
+        hasStrongEvidence: true,
         snippet: null,
         unitType,
         confidence,
@@ -1000,9 +1011,12 @@ export function extractUnitFromRecordWithTrace(
       const extracted = extractUnitFromText(value, field);
       if (extracted) {
         if (EXTRACTION_DEBUG) {
-          console.log(
-            `[UnitExtract] Pattern match in "${actualKey}" -> "${extracted.normalizedUnit}" (snippet: "${extracted.snippet?.slice(0, 50)}...")`
-          );
+          debugLog('UnitExtract.accept_first', {
+            method: 'pattern',
+            sourceField: actualKey,
+            normalizedUnit: extracted.normalizedUnit,
+            hasStrongEvidence: extracted.hasStrongEvidence,
+          });
         }
         return extracted;
       }
@@ -1022,7 +1036,12 @@ export function extractUnitFromRecordWithTrace(
     const extracted = extractUnitFromText(value, key);
     if (extracted) {
       if (EXTRACTION_DEBUG) {
-        console.log(`[UnitExtract] Fallback pattern in "${key}" -> "${extracted.normalizedUnit}"`);
+        debugLog('UnitExtract.accept_first', {
+          method: 'fallback_pattern',
+          sourceField: key,
+          normalizedUnit: extracted.normalizedUnit,
+          hasStrongEvidence: extracted.hasStrongEvidence,
+        });
       }
       return extracted;
     }
