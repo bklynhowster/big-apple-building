@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { getLandmarkStatus, type LandmarkResult } from "@/lib/landmarks";
+import { getLandmarkStatus, normalizeBBL, type LandmarkResult } from "@/lib/landmarks";
 
 export interface LandmarkStatus {
   isLoading: boolean;
@@ -10,12 +10,15 @@ export interface LandmarkStatus {
   individualDate?: string;
   districtName?: string;
   error?: string;
+  debugReason?: string;
 }
 
 export function useLandmarkStatus(params: {
   bbl?: string | number;
+  bin?: string;
   lat?: number;
   lon?: number;
+  plutoHistDist?: string | null;
 }): LandmarkStatus {
   const [state, setState] = useState<LandmarkStatus>({
     isLoading: false,
@@ -25,11 +28,18 @@ export function useLandmarkStatus(params: {
   });
 
   useEffect(() => {
-    const { bbl, lat, lon } = params;
-    const bblStr = bbl?.toString() ?? "";
-    const hasBbl = bblStr.length === 10;
+    const { bbl, bin, lat, lon, plutoHistDist } = params;
+    const bblNormalized = normalizeBBL(bbl);
     
-    if (!hasBbl) return;
+    if (!bblNormalized) {
+      setState(s => ({
+        ...s,
+        isLoading: false,
+        status: 'unknown',
+        debugReason: 'missing_bbl',
+      }));
+      return;
+    }
 
     let cancelled = false;
 
@@ -38,9 +48,11 @@ export function useLandmarkStatus(params: {
 
       try {
         const result: LandmarkResult = await getLandmarkStatus({
-          bbl: bblStr,
+          bbl: bblNormalized!,
+          bin,
           lat,
           lon,
+          plutoHistDist,
         });
 
         if (cancelled) return;
@@ -53,6 +65,7 @@ export function useLandmarkStatus(params: {
           individualName: result.individualName,
           individualDate: result.individualDate,
           districtName: result.districtName,
+          debugReason: result.debugReason,
         });
       } catch (e: unknown) {
         if (cancelled) return;
@@ -63,6 +76,7 @@ export function useLandmarkStatus(params: {
           isIndividual: false,
           isHistoricDistrict: false,
           error: message,
+          debugReason: 'exception',
         });
       }
     }
@@ -72,7 +86,7 @@ export function useLandmarkStatus(params: {
     return () => {
       cancelled = true;
     };
-  }, [params.bbl, params.lat, params.lon]);
+  }, [params.bbl, params.bin, params.lat, params.lon, params.plutoHistDist]);
 
   return state;
 }
