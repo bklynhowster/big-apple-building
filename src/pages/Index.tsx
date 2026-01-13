@@ -2,90 +2,7 @@ import { FileText, Shield, AlertTriangle, Hammer, Scale, FileSearch } from 'luci
 import { Header } from '@/components/layout/Header';
 import { Footer } from '@/components/layout/Footer';
 import { SearchForm } from '@/components/search/SearchForm';
-
-// Inline SVG component for NYC architectural line art background
-const NYCArchitecturalBackground = () => (
-  <svg
-    className="absolute inset-0 w-full h-full pointer-events-none"
-    style={{ opacity: 0.04 }}
-    preserveAspectRatio="xMidYMid slice"
-    xmlns="http://www.w3.org/2000/svg"
-  >
-    <defs>
-      <pattern id="nyc-lines" x="0" y="0" width="400" height="300" patternUnits="userSpaceOnUse">
-        {/* Brooklyn Bridge cable geometry */}
-        <path
-          d="M0 280 Q100 200 200 280 Q300 200 400 280"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="0.5"
-        />
-        <path
-          d="M0 260 Q100 180 200 260 Q300 180 400 260"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="0.3"
-        />
-        {/* Suspension cables - vertical lines from main cable */}
-        <line x1="50" y1="240" x2="50" y2="280" stroke="currentColor" strokeWidth="0.3" />
-        <line x1="100" y1="210" x2="100" y2="280" stroke="currentColor" strokeWidth="0.3" />
-        <line x1="150" y1="230" x2="150" y2="280" stroke="currentColor" strokeWidth="0.3" />
-        <line x1="200" y1="250" x2="200" y2="280" stroke="currentColor" strokeWidth="0.3" />
-        <line x1="250" y1="230" x2="250" y2="280" stroke="currentColor" strokeWidth="0.3" />
-        <line x1="300" y1="210" x2="300" y2="280" stroke="currentColor" strokeWidth="0.3" />
-        <line x1="350" y1="240" x2="350" y2="280" stroke="currentColor" strokeWidth="0.3" />
-        
-        {/* Brownstone roofline silhouettes */}
-        <path
-          d="M0 120 L0 100 L20 100 L20 90 L25 85 L30 90 L30 100 L60 100 L60 110 L80 110 L80 95 L85 90 L90 95 L90 110 L120 110 L120 100"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="0.4"
-        />
-        <path
-          d="M120 100 L140 100 L140 85 L145 80 L150 85 L150 100 L180 100 L180 115 L200 115 L200 105 L220 105 L220 90 L225 85 L230 90 L230 105 L260 105"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="0.4"
-        />
-        <path
-          d="M260 105 L280 105 L280 95 L300 95 L300 110 L320 110 L320 100 L325 95 L330 100 L330 110 L360 110 L360 100 L380 100 L380 115 L400 115"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="0.4"
-        />
-        
-        {/* Cornice details - horizontal accent lines */}
-        <line x1="20" y1="102" x2="60" y2="102" stroke="currentColor" strokeWidth="0.2" />
-        <line x1="80" y1="112" x2="120" y2="112" stroke="currentColor" strokeWidth="0.2" />
-        <line x1="140" y1="102" x2="180" y2="102" stroke="currentColor" strokeWidth="0.2" />
-        <line x1="220" y1="107" x2="260" y2="107" stroke="currentColor" strokeWidth="0.2" />
-        <line x1="300" y1="112" x2="360" y2="112" stroke="currentColor" strokeWidth="0.2" />
-        
-        {/* Stoop/entrance hints */}
-        <path d="M45 100 L45 120 L55 120 L55 100" fill="none" stroke="currentColor" strokeWidth="0.3" />
-        <path d="M165 100 L165 120 L175 120 L175 100" fill="none" stroke="currentColor" strokeWidth="0.3" />
-        <path d="M345 100 L345 120 L355 120 L355 100" fill="none" stroke="currentColor" strokeWidth="0.3" />
-        
-        {/* Manhattan skyline suggestion - distant towers */}
-        <line x1="70" y1="60" x2="70" y2="100" stroke="currentColor" strokeWidth="0.2" />
-        <line x1="72" y1="65" x2="72" y2="100" stroke="currentColor" strokeWidth="0.2" />
-        <line x1="190" y1="50" x2="190" y2="100" stroke="currentColor" strokeWidth="0.2" />
-        <line x1="192" y1="55" x2="192" y2="100" stroke="currentColor" strokeWidth="0.2" />
-        <line x1="194" y1="60" x2="194" y2="100" stroke="currentColor" strokeWidth="0.2" />
-        <line x1="310" y1="55" x2="310" y2="95" stroke="currentColor" strokeWidth="0.2" />
-        <line x1="312" y1="60" x2="312" y2="95" stroke="currentColor" strokeWidth="0.2" />
-        
-        {/* Bridge tower hints */}
-        <rect x="95" y="160" width="10" height="100" fill="none" stroke="currentColor" strokeWidth="0.3" />
-        <rect x="295" y="160" width="10" height="100" fill="none" stroke="currentColor" strokeWidth="0.3" />
-        <path d="M95 160 L100 150 L105 160" fill="none" stroke="currentColor" strokeWidth="0.3" />
-        <path d="M295 160 L300 150 L305 160" fill="none" stroke="currentColor" strokeWidth="0.3" />
-      </pattern>
-    </defs>
-    <rect width="100%" height="100%" fill="url(#nyc-lines)" className="text-primary-foreground" />
-  </svg>
-);
+import brooklynBridgeLines from '@/assets/brooklyn-bridge-lines.png';
 
 const features = [
   {
@@ -116,10 +33,20 @@ export default function Index() {
       <Header />
       
       <main className="flex-1">
-        {/* Hero Section - Architectural, with NYC line art background */}
+        {/* Hero Section - Architectural, with Brooklyn Bridge line art background */}
         <section className="relative bg-primary py-16 md:py-24 overflow-hidden">
-          {/* NYC Architectural Line Art Background */}
-          <NYCArchitecturalBackground />
+          {/* Brooklyn Bridge Line Art Background */}
+          <div 
+            className="absolute inset-0 pointer-events-none"
+            style={{
+              backgroundImage: `url(${brooklynBridgeLines})`,
+              backgroundSize: 'cover',
+              backgroundPosition: 'center',
+              opacity: 0.08,
+              filter: 'brightness(1.5) contrast(0.8)',
+              mixBlendMode: 'soft-light',
+            }}
+          />
           
           <div className="container mx-auto px-4 relative z-10">
             <div className="max-w-3xl mx-auto text-center mb-12">
