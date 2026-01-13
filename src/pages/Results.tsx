@@ -1,5 +1,5 @@
 import { useMemo, useState, useCallback, useEffect, useRef } from 'react';
-import { useLocation, Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, AlertCircle, Building2, Home } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
 import { Footer } from '@/components/layout/Footer';
@@ -47,31 +47,26 @@ function isValidTab(tab: string | null): tab is ValidTab {
 }
 
 export default function Results() {
-  const location = useLocation();
+  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const { setContextInfo } = useQueryDebug();
 
-  // Read all params from URL
-  const params = useMemo(() => {
-    return new URLSearchParams(location.search);
-  }, [location.search]);
-
   // Initialize active tab from URL or default to 'summary'
   const initialTab = useMemo(() => {
-    const tabParam = params.get('tab');
+    const tabParam = searchParams.get('tab');
     return isValidTab(tabParam) ? tabParam : 'summary';
-  }, [params]);
+  }, [searchParams]);
 
   const [activeTab, setActiveTab] = useState<string>(initialTab);
 
-  const bbl = useMemo(() => normalizeBBL(params.get('bbl')), [params]);
-  const address = params.get('address') || '';
-  const borough = params.get('borough') || '';
-  const bin = params.get('bin') || '';
-  const latitude = params.get('lat') ? parseFloat(params.get('lat')!) : undefined;
-  const longitude = params.get('lon') ? parseFloat(params.get('lon')!) : undefined;
-  const unitContextParam = params.get('unitContext') || null;
-  const normalizedStreet = params.get('normalized') || null; // Client-side normalization info
+  const bbl = useMemo(() => normalizeBBL(searchParams.get('bbl')), [searchParams]);
+  const address = searchParams.get('address') || '';
+  const borough = searchParams.get('borough') || '';
+  const bin = searchParams.get('bin') || '';
+  const latitude = searchParams.get('lat') ? parseFloat(searchParams.get('lat')!) : undefined;
+  const longitude = searchParams.get('lon') ? parseFloat(searchParams.get('lon')!) : undefined;
+  const unitContextParam = searchParams.get('unitContext') || null;
+  const normalizedStreet = searchParams.get('normalized') || null; // Client-side normalization info
 
   const isValidBBL = bbl.length === 10;
 
@@ -244,12 +239,12 @@ export default function Results() {
 
   // Sync from URL when it changes externally (e.g., back/forward navigation)
   useEffect(() => {
-    const tabParam = params.get('tab');
+    const tabParam = searchParams.get('tab');
     const validTab = isValidTab(tabParam) ? tabParam : 'summary';
     if (validTab !== activeTab) {
       setActiveTab(validTab);
     }
-  }, [params]);
+  }, [searchParams]);
 
   // Update document title based on context
   useEffect(() => {
