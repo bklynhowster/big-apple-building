@@ -1,9 +1,21 @@
 import { ExternalLink } from 'lucide-react';
+import nycArchitecturalLines from '@/assets/nyc-architectural-lines.png';
 
 export function Footer() {
   return (
-    <footer className="bg-card border-t border-border py-6 mt-auto">
-      <div className="container mx-auto px-4">
+    <footer className="bg-card border-t border-border py-6 mt-auto relative overflow-hidden">
+      {/* Subtle architectural fragment in footer */}
+      <div 
+        className="absolute left-0 bottom-0 w-1/4 h-full opacity-[0.025] pointer-events-none"
+        style={{
+          backgroundImage: `url(${nycArchitecturalLines})`,
+          backgroundSize: 'cover',
+          backgroundPosition: 'right bottom',
+          filter: 'brightness(0.2)',
+        }}
+      />
+      
+      <div className="container mx-auto px-4 relative z-10">
         <div className="flex flex-col md:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <div className="w-0.5 h-6 bg-primary rounded-full" />
