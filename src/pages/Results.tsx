@@ -392,7 +392,10 @@ export default function Results() {
               {/* Risk Snapshot - Building-level risk signals summary */}
               <RiskSnapshotCard 
                 counts={recordCounts} 
-                loading={riskSnapshotLoading} 
+                loading={riskSnapshotLoading}
+                onNavigateToSection={(tab) => {
+                  handleTabChange(tab);
+                }}
               />
 
               {/* Property Profile with embedded map */}
@@ -544,7 +547,7 @@ export default function Results() {
                   </TabsContent>
                   
                   <TabsContent value="violations" className="mt-0">
-                    <Card>
+                    <Card id="dob-violations">
                       <CardContent className="p-6">
                         <ViolationsTab bbl={queryBbl} bin={bin} scope={scope} isCoop={isCoop} coopUnitContext={coopUnitContext} />
                       </CardContent>
@@ -552,7 +555,7 @@ export default function Results() {
                   </TabsContent>
                   
                   <TabsContent value="ecb" className="mt-0">
-                    <Card>
+                    <Card id="ecb-violations">
                       <CardContent className="p-6">
                         <ECBTab bbl={queryBbl} bin={bin} scope={scope} isCoop={isCoop} coopUnitContext={coopUnitContext} />
                       </CardContent>
@@ -568,7 +571,7 @@ export default function Results() {
                   </TabsContent>
                   
                   <TabsContent value="permits" className="mt-0">
-                    <Card>
+                    <Card id="dob-permits">
                       <CardContent className="p-6">
                         <PermitsTab bbl={queryBbl} bin={bin} scope={scope} isCoop={isCoop} coopUnitContext={coopUnitContext} />
                       </CardContent>
@@ -578,6 +581,8 @@ export default function Results() {
                   <TabsContent value="hpd" className="mt-0">
                     <Card>
                       <CardContent className="p-6">
+                        <div id="hpd-violations" />
+                        <div id="hpd-complaints" />
                         <HPDTab 
                           bbl={queryBbl} 
                           bin={bin} 
@@ -591,7 +596,7 @@ export default function Results() {
                   </TabsContent>
                   
                   <TabsContent value="311" className="mt-0">
-                    <Card>
+                    <Card id="service-requests">
                       <CardContent className="p-6">
                         <ThreeOneOneTab 
                           lat={latitude} 
@@ -608,6 +613,8 @@ export default function Results() {
                   <TabsContent value="all" className="mt-0">
                     <Card>
                       <CardContent className="p-6">
+                        <div id="sales-records" />
+                        <div id="dob-filings" />
                         <AllRecordsTab bbl={queryBbl} onViewInTab={handleViewInTab} />
                       </CardContent>
                     </Card>
