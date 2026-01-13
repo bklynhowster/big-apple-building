@@ -211,9 +211,19 @@ export function SearchForm() {
 
       const data = await response.json().catch(() => ({}));
 
+      // Handle true HTTP errors (500, etc.)
       if (!response.ok) {
-        // Handle 404 gracefully - this is a "not found" result, not an exception
-        if (import.meta.env.DEV) console.log('[search] geocode returned error:', data);
+        if (import.meta.env.DEV) console.log('[search] geocode HTTP error:', response.status, data);
+        setAddressError({ 
+          message: data.userMessage || 'Search service temporarily unavailable. Please try again.' 
+        });
+        setLoading(false);
+        return;
+      }
+
+      // Handle logical failures (ok: false) - address not found but not a server error
+      if (data.ok === false) {
+        if (import.meta.env.DEV) console.log('[search] geocode address not found:', data);
         
         const errorState: SearchError = {
           message: data.userMessage || data.error || 'Address not found. Check spelling and try again.',
@@ -230,7 +240,7 @@ export function SearchForm() {
       const bbl = data.bbl;
 
       if (!bbl) {
-        console.error('[search] geocode response missing bbl:', data);
+        if (import.meta.env.DEV) console.error('[search] geocode response missing bbl:', data);
         setAddressError({ message: 'Geocoding succeeded but no BBL was returned. Please try again.' });
         setLoading(false);
         return;
@@ -292,14 +302,23 @@ export function SearchForm() {
         },
       });
 
+      // Handle true HTTP errors (500, etc.)
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
-        setBblError(errorData.userMessage || errorData.error || 'BBL lookup failed');
+        setBblError(errorData.userMessage || 'BBL lookup service temporarily unavailable.');
         setLoading(false);
         return;
       }
 
       const geocodeData = await response.json();
+
+      // Handle logical failures (ok: false)
+      if (geocodeData.ok === false) {
+        setBblError(geocodeData.userMessage || geocodeData.error || 'BBL not found.');
+        setLoading(false);
+        return;
+      }
+
       const bbl = geocodeData.bbl;
 
       if (!bbl) {
@@ -332,7 +351,7 @@ export function SearchForm() {
 
       navigate(`/results?${resultParams.toString()}`);
     } catch (err) {
-      console.error('[search] BBL geocode error:', err);
+      if (import.meta.env.DEV) console.error('[search] BBL geocode error:', err);
       setBblError(err instanceof Error ? err.message : 'Search failed. Please try again.');
     } finally {
       setLoading(false);

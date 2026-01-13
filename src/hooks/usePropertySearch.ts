@@ -100,11 +100,20 @@ export function usePropertySearch(): UsePropertySearchResult {
         throw new Error(`Failed to parse response: HTTP ${response.status}`);
       }
 
+      // Handle true HTTP errors (500, etc.)
       if (!response.ok) {
         throw new Error(
+          (responseData.userMessage as string) || 
+          'Search service temporarily unavailable. Please try again.'
+        );
+      }
+
+      // Handle logical failures (ok: false) - address not found
+      if (responseData.ok === false) {
+        throw new Error(
+          (responseData.userMessage as string) || 
           (responseData.error as string) || 
-          (responseData.details as string) || 
-          `HTTP ${response.status}`
+          'Address not found. Check spelling and try again.'
         );
       }
 
