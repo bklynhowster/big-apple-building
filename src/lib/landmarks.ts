@@ -3,7 +3,6 @@
  * Uses NYC Open Data Socrata datasets:
  * - LPC Individual Landmark Sites: buis-pvji
  * - LPC Historic Districts: xbvj-gfnw
- * Also accepts PLUTO histdist field as a source
  */
 
 export type LandmarkResult = {
@@ -13,43 +12,13 @@ export type LandmarkResult = {
   individualName?: string;
   individualDate?: string;
   districtName?: string;
-  source?: 'lpc' | 'pluto' | 'unknown';
-  debugReason?: string; // For DEV diagnostics
+  source?: 'lpc' | 'unknown';
 };
 
 const SOCRATA_BASE = 'https://data.cityofnewyork.us/resource';
 const INDIVIDUAL_LANDMARKS_DATASET = 'buis-pvji';
 const HISTORIC_DISTRICTS_DATASET = 'xbvj-gfnw';
 const TIMEOUT_MS = 6000;
-
-const isDebug = () => {
-  if (typeof window === 'undefined') return false;
-  const params = new URLSearchParams(window.location.search);
-  return import.meta.env.DEV && params.get('debug') === '1';
-};
-
-function debugLog(label: string, data: Record<string, unknown>) {
-  if (isDebug()) {
-    console.log(`[LandmarkFetch] ${label}`, data);
-  }
-}
-
-/**
- * Normalize BBL to 10-digit string with leading zeros
- */
-export function normalizeBBL(bbl: string | number | null | undefined): string | null {
-  if (bbl === null || bbl === undefined) return null;
-  
-  // Convert to string and strip non-digits
-  const digits = String(bbl).replace(/\D/g, '');
-  
-  if (digits.length === 0) return null;
-  if (digits.length === 10) return digits;
-  if (digits.length < 10) return digits.padStart(10, '0');
-  
-  // If longer than 10, it's invalid
-  return null;
-}
 
 /**
  * Fetch with timeout wrapper
@@ -95,7 +64,9 @@ function pointInPolygon(point: [number, number], polygon: [number, number][]): b
  */
 function pointInMultiPolygon(point: [number, number], multiPolygon: [number, number][][][]): boolean {
   for (const polygon of multiPolygon) {
+    // Check outer ring (first ring)
     if (polygon.length > 0 && pointInPolygon(point, polygon[0])) {
+      // Check if inside any holes (subsequent rings)
       let inHole = false;
       for (let i = 1; i < polygon.length; i++) {
         if (pointInPolygon(point, polygon[i])) {
@@ -114,7 +85,6 @@ interface IndividualLandmarkRecord {
   lm_name?: string;
   desig_date?: string;
   bbl?: string;
-  bin_number?: string;
   the_geom?: {
     type: string;
     coordinates: number[] | number[][] | number[][][] | number[][][][];
@@ -132,90 +102,38 @@ interface HistoricDistrictRecord {
 
 /**
  * Query Individual Landmarks dataset
- * Tries BBL match, then BIN match, then spatial query
+ * First tries BBL match, then falls back to spatial query
  */
 async function checkIndividualLandmark(
   bbl: string,
-  bin?: string,
   lat?: number,
   lon?: number
-): Promise<{ isLandmark: boolean; name?: string; date?: string; debugReason?: string }> {
-  const bblNormalized = normalizeBBL(bbl);
-  
+): Promise<{ isLandmark: boolean; name?: string; date?: string }> {
   try {
-    // Try BBL match first - use quoted string comparison
-    if (bblNormalized) {
-      const bblUrl = `${SOCRATA_BASE}/${INDIVIDUAL_LANDMARKS_DATASET}.json?$where=bbl='${bblNormalized}'&$limit=1&$select=lm_name,desig_date,bbl`;
-      
-      debugLog('Individual BBL Query', { url: bblUrl, bblRaw: bbl, bblNormalized });
-      
-      const bblResponse = await fetchWithTimeout(bblUrl, TIMEOUT_MS);
-      
-      if (bblResponse.ok) {
-        const bblData: IndividualLandmarkRecord[] = await bblResponse.json();
-        debugLog('Individual BBL Response', { 
-          status: 'ok', 
-          httpStatus: bblResponse.status, 
-          rowCount: bblData.length,
-          sampleRow: bblData[0] || null 
-        });
-        
-        if (bblData.length > 0) {
-          return {
-            isLandmark: true,
-            name: bblData[0].lm_name,
-            date: bblData[0].desig_date,
-          };
-        }
-      } else {
-        debugLog('Individual BBL Response', { 
-          status: 'http_error', 
-          httpStatus: bblResponse.status 
-        });
+    // Try BBL match first - the dataset has 'bbl' field
+    const bblUrl = `${SOCRATA_BASE}/${INDIVIDUAL_LANDMARKS_DATASET}.json?$where=bbl='${bbl}'&$limit=1`;
+    
+    const bblResponse = await fetchWithTimeout(bblUrl, TIMEOUT_MS);
+    if (bblResponse.ok) {
+      const bblData: IndividualLandmarkRecord[] = await bblResponse.json();
+      if (bblData.length > 0) {
+        return {
+          isLandmark: true,
+          name: bblData[0].lm_name,
+          date: bblData[0].desig_date,
+        };
       }
     }
 
-    // Try BIN match if available
-    if (bin) {
-      const binNormalized = bin.replace(/\D/g, '');
-      if (binNormalized.length > 0) {
-        const binUrl = `${SOCRATA_BASE}/${INDIVIDUAL_LANDMARKS_DATASET}.json?$where=bin_number='${binNormalized}'&$limit=1&$select=lm_name,desig_date,bin_number`;
-        
-        debugLog('Individual BIN Query', { url: binUrl, bin: binNormalized });
-        
-        const binResponse = await fetchWithTimeout(binUrl, TIMEOUT_MS);
-        if (binResponse.ok) {
-          const binData: IndividualLandmarkRecord[] = await binResponse.json();
-          debugLog('Individual BIN Response', { 
-            status: 'ok', 
-            httpStatus: binResponse.status, 
-            rowCount: binData.length 
-          });
-          
-          if (binData.length > 0) {
-            return {
-              isLandmark: true,
-              name: binData[0].lm_name,
-              date: binData[0].desig_date,
-            };
-          }
-        }
-      }
-    }
-
-    // Spatial query if we have coordinates
+    // If no BBL match and we have coordinates, try spatial query
     if (lat !== undefined && lon !== undefined) {
-      const spatialUrl = `${SOCRATA_BASE}/${INDIVIDUAL_LANDMARKS_DATASET}.json?$where=within_circle(the_geom,${lat},${lon},50)&$limit=5&$select=lm_name,desig_date,the_geom`;
-      
-      debugLog('Individual Spatial Query', { url: spatialUrl, lat, lon });
+      // Socrata supports within_circle for point features
+      // Query landmarks within ~50 meters and check geometry
+      const spatialUrl = `${SOCRATA_BASE}/${INDIVIDUAL_LANDMARKS_DATASET}.json?$where=within_circle(the_geom,${lat},${lon},100)&$limit=10`;
       
       const spatialResponse = await fetchWithTimeout(spatialUrl, TIMEOUT_MS);
       if (spatialResponse.ok) {
         const spatialData: IndividualLandmarkRecord[] = await spatialResponse.json();
-        debugLog('Individual Spatial Response', { 
-          status: 'ok', 
-          rowCount: spatialData.length 
-        });
         
         for (const record of spatialData) {
           if (record.the_geom) {
@@ -223,6 +141,7 @@ async function checkIndividualLandmark(
             const point: [number, number] = [lon, lat];
             
             if (geom.type === 'Point') {
+              // For point geometries, we already matched via within_circle
               return {
                 isLandmark: true,
                 name: record.lm_name,
@@ -252,11 +171,10 @@ async function checkIndividualLandmark(
       }
     }
 
-    return { isLandmark: false, debugReason: 'no_rows_individual' };
+    return { isLandmark: false };
   } catch (error) {
-    const reason = error instanceof Error && error.name === 'AbortError' ? 'timeout' : 'fetch_error';
-    debugLog('Individual Landmark Error', { error: String(error), reason });
-    return { isLandmark: false, debugReason: reason };
+    console.warn('Individual landmark lookup failed:', error);
+    throw error; // Re-throw to signal unknown status
   }
 }
 
@@ -266,29 +184,22 @@ async function checkIndividualLandmark(
 async function checkHistoricDistrict(
   lat?: number,
   lon?: number
-): Promise<{ inDistrict: boolean; districtName?: string; debugReason?: string }> {
+): Promise<{ inDistrict: boolean; districtName?: string }> {
   if (lat === undefined || lon === undefined) {
-    return { inDistrict: false, debugReason: 'no_coords' };
+    return { inDistrict: false };
   }
 
   try {
-    const url = `${SOCRATA_BASE}/${HISTORIC_DISTRICTS_DATASET}.json?$where=within_circle(the_geom,${lat},${lon},200)&$limit=10&$select=area_name,hist_dist,the_geom`;
-    
-    debugLog('Historic District Query', { url, lat, lon });
+    // Use Socrata's within_circle to find nearby districts, then do point-in-polygon
+    // Historic districts are polygons, so we query those that might contain our point
+    const url = `${SOCRATA_BASE}/${HISTORIC_DISTRICTS_DATASET}.json?$where=within_circle(the_geom,${lat},${lon},500)&$limit=20`;
     
     const response = await fetchWithTimeout(url, TIMEOUT_MS);
     if (!response.ok) {
-      debugLog('Historic District Response', { status: 'http_error', httpStatus: response.status });
-      return { inDistrict: false, debugReason: `http_${response.status}` };
+      throw new Error(`Historic district query failed: ${response.status}`);
     }
 
     const data: HistoricDistrictRecord[] = await response.json();
-    debugLog('Historic District Response', { 
-      status: 'ok', 
-      httpStatus: response.status, 
-      rowCount: data.length 
-    });
-    
     const point: [number, number] = [lon, lat];
 
     for (const record of data) {
@@ -315,126 +226,71 @@ async function checkHistoricDistrict(
       }
     }
 
-    return { inDistrict: false, debugReason: 'no_rows_district' };
+    return { inDistrict: false };
   } catch (error) {
-    const reason = error instanceof Error && error.name === 'AbortError' ? 'timeout' : 'fetch_error';
-    debugLog('Historic District Error', { error: String(error), reason });
-    return { inDistrict: false, debugReason: reason };
+    console.warn('Historic district lookup failed:', error);
+    throw error; // Re-throw to signal unknown status
   }
 }
 
 /**
  * Main landmark status lookup function
- * @param args.bbl - BBL string
- * @param args.bin - Optional BIN for additional lookup
- * @param args.lat - Latitude for spatial queries
- * @param args.lon - Longitude for spatial queries  
- * @param args.plutoHistDist - PLUTO histdist field if available (from property profile)
  */
 export async function getLandmarkStatus(args: {
   bbl: string;
-  bin?: string;
   lat?: number;
   lon?: number;
-  plutoHistDist?: string | null;
 }): Promise<LandmarkResult> {
-  const { bbl, bin, lat, lon, plutoHistDist } = args;
-  const bblNormalized = normalizeBBL(bbl);
+  const { bbl, lat, lon } = args;
   
-  debugLog('Starting Lookup', { 
-    bblRaw: bbl, 
-    bblNormalized, 
-    bin, 
-    lat, 
-    lon, 
-    plutoHistDist 
-  });
+  let individualResult: { isLandmark: boolean; name?: string; date?: string } | null = null;
+  let districtResult: { inDistrict: boolean; districtName?: string } | null = null;
+  let hasError = false;
 
-  // Quick check: If PLUTO has histdist, we know it's in a historic district
-  if (plutoHistDist && plutoHistDist.trim().length > 0) {
-    debugLog('PLUTO histdist found', { histdist: plutoHistDist });
-    return {
-      status: 'yes',
-      isIndividual: false,
-      isHistoricDistrict: true,
-      districtName: plutoHistDist.trim(),
-      source: 'pluto',
-    };
-  }
-
-  if (!bblNormalized) {
-    debugLog('Invalid BBL', { bblRaw: bbl });
-    return {
-      status: 'unknown',
-      isIndividual: false,
-      isHistoricDistrict: false,
-      source: 'unknown',
-      debugReason: 'invalid_bbl',
-    };
-  }
-
-  // Run LPC queries in parallel
+  // Run both queries in parallel
   const [individualOutcome, districtOutcome] = await Promise.allSettled([
-    checkIndividualLandmark(bblNormalized, bin, lat, lon),
+    checkIndividualLandmark(bbl, lat, lon),
     checkHistoricDistrict(lat, lon),
   ]);
 
-  let individualResult: { isLandmark: boolean; name?: string; date?: string; debugReason?: string } | null = null;
-  let districtResult: { inDistrict: boolean; districtName?: string; debugReason?: string } | null = null;
-  const debugReasons: string[] = [];
-
   if (individualOutcome.status === 'fulfilled') {
     individualResult = individualOutcome.value;
-    if (individualResult.debugReason) {
-      debugReasons.push(individualResult.debugReason);
-    }
   } else {
-    debugReasons.push('individual_rejected');
+    console.warn('Individual landmark check failed:', individualOutcome.reason);
+    hasError = true;
   }
 
   if (districtOutcome.status === 'fulfilled') {
     districtResult = districtOutcome.value;
-    if (districtResult.debugReason) {
-      debugReasons.push(districtResult.debugReason);
-    }
   } else {
-    debugReasons.push('district_rejected');
+    console.warn('Historic district check failed:', districtOutcome.reason);
+    hasError = true;
   }
 
+  // Determine final status
   const isIndividual = individualResult?.isLandmark ?? false;
   const isHistoricDistrict = districtResult?.inDistrict ?? false;
 
-  // If both queries failed completely, status is unknown
+  // If both queries failed, status is unknown
   if (individualResult === null && districtResult === null) {
     return {
       status: 'unknown',
       isIndividual: false,
       isHistoricDistrict: false,
       source: 'unknown',
-      debugReason: debugReasons.join(',') || 'both_queries_failed',
     };
   }
 
+  // If at least one succeeded, we can determine status
   const isLandmarked = isIndividual || isHistoricDistrict;
 
-  if (isLandmarked) {
-    return {
-      status: 'yes',
-      isIndividual,
-      isHistoricDistrict,
-      individualName: individualResult?.name,
-      individualDate: individualResult?.date,
-      districtName: districtResult?.districtName,
-      source: 'lpc',
-    };
-  }
-
-  // Both queries succeeded but no matches
   return {
-    status: 'no',
-    isIndividual: false,
-    isHistoricDistrict: false,
+    status: isLandmarked ? 'yes' : (hasError ? 'unknown' : 'no'),
+    isIndividual,
+    isHistoricDistrict,
+    individualName: individualResult?.name,
+    individualDate: individualResult?.date,
+    districtName: districtResult?.districtName,
     source: 'lpc',
-    debugReason: debugReasons.join(',') || 'no_matches',
   };
 }

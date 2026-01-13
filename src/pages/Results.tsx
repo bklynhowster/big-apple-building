@@ -88,15 +88,8 @@ export default function Results() {
   const ecbHook = useECB(isCoop && isValidBBL ? bbl : null);
   const permitsHook = usePermits(isCoop && isValidBBL ? bbl : null);
   
-  // Landmark status lookup - pass PLUTO histdist if available for quick detection
-  const plutoHistDist = profile?.raw?.histdist as string | undefined;
-  const landmarkStatus = useLandmarkStatus({ 
-    bbl, 
-    bin, 
-    lat: latitude, 
-    lon: longitude, 
-    plutoHistDist 
-  });
+  // Landmark status lookup
+  const landmarkStatus = useLandmarkStatus({ bbl, lat: latitude, lon: longitude });
   
   // Track if we've fetched data for insights
   const insightsFetchedRef = useRef(false);
