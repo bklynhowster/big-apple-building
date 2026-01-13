@@ -7,20 +7,22 @@ interface BuildingPhotoCardProps {
   lon?: number;
 }
 
-// Centralized helper to build tax photo URLs
-function buildTaxPhotoLinks(lat: number | undefined, lon: number | undefined) {
-  const zoom = 19;
-  const hasCoords = lat !== undefined && lon !== undefined;
-  
-  return {
-    hasCoords,
-    url1940s: hasCoords ? `https://1940s.nyc/map#${zoom}/${lat}/${lon}` : null,
-    url80s: hasCoords ? `https://80s.nyc/#${zoom}/${lat}/${lon}` : null,
-  };
+// Centralized helper to build historic photo deep links
+function buildHistoricPhotoLink(base: '1940s' | '80s', lat?: number, lon?: number) {
+  const z = 19;
+  if (typeof lat !== 'number' || typeof lon !== 'number') {
+    return base === '1940s' ? 'https://1940s.nyc/map' : 'https://80s.nyc/map';
+  }
+  const latStr = lat.toFixed(6);
+  const lonStr = lon.toFixed(6);
+  const host = base === '1940s' ? 'https://1940s.nyc' : 'https://80s.nyc';
+  return `${host}/map#${z}/${latStr}/${lonStr}`;
 }
 
 export function BuildingPhotoCard({ lat, lon }: BuildingPhotoCardProps) {
-  const { hasCoords, url1940s, url80s } = buildTaxPhotoLinks(lat, lon);
+  const hasCoords = typeof lat === 'number' && typeof lon === 'number';
+  const url1940s = buildHistoricPhotoLink('1940s', lat, lon);
+  const url80s = buildHistoricPhotoLink('80s', lat, lon);
 
   return (
     <Card className="border-amber-200/50 bg-gradient-to-br from-amber-50/50 to-background dark:from-amber-950/20 dark:to-background">
