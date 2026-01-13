@@ -18,15 +18,15 @@ interface PropertyProfileCardProps {
   lon?: number;
 }
 
-// Color mapping for property types
+// Color mapping for property types - using ELK theme tokens
 const PROPERTY_TYPE_COLORS: Record<PropertyTypeLabel, string> = {
-  'Condo': 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200',
-  'Co-op': 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200',
-  '1-2 Family': 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200',
-  '3+ Family': 'bg-teal-100 text-teal-800 dark:bg-teal-900 dark:text-teal-200',
-  'Mixed-Use': 'bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200',
-  'Commercial': 'bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200',
-  'Other': 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200',
+  'Condo': 'bg-accent text-accent-foreground',
+  'Co-op': 'bg-primary/10 text-primary',
+  '1-2 Family': 'bg-success/10 text-success',
+  '3+ Family': 'bg-success/15 text-success',
+  'Mixed-Use': 'bg-warning/10 text-warning',
+  'Commercial': 'bg-warning/15 text-warning-foreground',
+  'Other': 'bg-muted text-muted-foreground',
   'Unknown': 'bg-muted text-muted-foreground',
 };
 
@@ -306,7 +306,7 @@ export function PropertyProfileCard({ bbl, unitLabel, parentAddress, landmarkSta
                     <TooltipProvider>
                       <Tooltip>
                         <TooltipTrigger asChild>
-                          <span className="inline-flex items-center gap-1.5 rounded-md bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-200 px-2 py-0.5 text-sm font-semibold cursor-help">
+                          <span className="inline-flex items-center gap-1.5 rounded-md bg-warning/15 text-warning px-2 py-0.5 text-sm font-semibold cursor-help">
                             <Building2 className="h-3.5 w-3.5" />
                             Yes
                           </span>
@@ -352,8 +352,8 @@ export function PropertyProfileCard({ bbl, unitLabel, parentAddress, landmarkSta
 
         {/* Co-op disclaimer */}
         {isCoop && (
-          <div className="flex items-start gap-2 p-3 mt-4 rounded-md bg-blue-50 dark:bg-blue-950/30 text-sm text-blue-800 dark:text-blue-200 border border-blue-200 dark:border-blue-800">
-            <Info className="h-4 w-4 mt-0.5 shrink-0" />
+          <div className="elk-info-box flex items-start gap-2 mt-4">
+            <Info className="h-4 w-4 mt-0.5 shrink-0 text-primary" />
             <p>
               Co-op units do not have individual tax lots/BBLs. Most NYC regulatory records are issued at the building level.
             </p>

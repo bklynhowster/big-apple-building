@@ -60,7 +60,7 @@ export function ContextBanner({
         {/* Co-op Context Indicator Pills */}
         {coopUnitContext && (
           <div className="flex items-center gap-2 flex-wrap">
-            <Badge className="bg-blue-500 text-white gap-1.5 py-1.5 px-3 text-sm">
+            <Badge className="bg-primary text-primary-foreground gap-1.5 py-1.5 px-3 text-sm">
               <Home className="h-4 w-4" />
               Viewing: {coopUnitContext}
             </Badge>
@@ -79,9 +79,9 @@ export function ContextBanner({
         )}
 
         {/* Main Banner */}
-        <div className="bg-blue-50 dark:bg-blue-950/30 border-2 border-blue-200 dark:border-blue-800 rounded-lg overflow-hidden">
+        <div className="elk-highlight-banner overflow-hidden">
           {/* Breadcrumb Navigation */}
-          <div className="bg-background/50 px-4 py-2 border-b border-blue-200 dark:border-blue-800">
+          <div className="bg-background/50 px-4 py-2 border-b border-border">
             <Breadcrumb>
               <BreadcrumbList>
                 <BreadcrumbItem>
@@ -114,8 +114,8 @@ export function ContextBanner({
             <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
               {/* Building / Unit Identity */}
               <div className="flex items-start gap-4">
-                <div className="flex items-center justify-center w-12 h-12 bg-blue-100 dark:bg-blue-900 rounded-lg shrink-0">
-                  <Building2 className="h-6 w-6 text-blue-700 dark:text-blue-300" />
+                <div className="flex items-center justify-center w-12 h-12 bg-primary/10 rounded-lg shrink-0">
+                  <Building2 className="h-6 w-6 text-primary" />
                 </div>
                 <div className="space-y-1">
                   {coopUnitContext ? (
@@ -135,7 +135,7 @@ export function ContextBanner({
                         {address || 'Co-op Building'}
                       </h1>
                       <div className="flex items-center gap-2">
-                        <Badge variant="secondary" className="bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200">
+                        <Badge variant="secondary" className="bg-primary/10 text-primary">
                           Co-op
                         </Badge>
                       </div>
@@ -169,11 +169,11 @@ export function ContextBanner({
             </div>
 
             {/* Info about co-op data */}
-            <div className="mt-4 pt-4 border-t border-blue-200 dark:border-blue-800">
-              <div className="flex items-start gap-2 text-sm text-blue-800 dark:text-blue-200">
+            <div className="mt-4 pt-4 border-t border-border">
+              <div className="flex items-start gap-2 text-sm text-muted-foreground">
                 <Info className="h-4 w-4 mt-0.5 shrink-0" />
                 <p>
-                  <strong>Co-op buildings:</strong> Unit-level regulatory records are not issued for NYC co-ops. 
+                  <strong className="text-foreground">Co-op buildings:</strong> Unit-level regulatory records are not issued for NYC co-ops. 
                   All data shown is at the building level. You can optionally set a unit context for navigation purposes.
                 </p>
               </div>
@@ -232,9 +232,9 @@ export function ContextBanner({
       />
 
       {/* Main Banner */}
-      <div className="bg-primary/5 border-2 border-primary/20 rounded-lg overflow-hidden">
+      <div className="elk-highlight-banner overflow-hidden">
         {/* Breadcrumb Navigation */}
-        <div className="bg-background/50 px-4 py-2 border-b border-primary/10">
+        <div className="bg-background/50 px-4 py-2 border-b border-border">
           <Breadcrumb>
             <BreadcrumbList>
               <BreadcrumbItem>
@@ -273,7 +273,7 @@ export function ContextBanner({
           <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
             {/* Unit Identity - Primary */}
             <div className="flex items-start gap-4">
-              <div className="flex items-center justify-center w-12 h-12 bg-primary/20 rounded-lg shrink-0">
+              <div className="flex items-center justify-center w-12 h-12 bg-primary/10 rounded-lg shrink-0">
                 <Home className="h-6 w-6 text-primary" />
               </div>
               <div className="space-y-1">
@@ -325,7 +325,7 @@ export function ContextBanner({
           </div>
 
           {/* Global Scope Toggle */}
-          <div className="mt-4 pt-4 border-t border-primary/10">
+          <div className="mt-4 pt-4 border-t border-border">
             <div className="flex flex-col sm:flex-row sm:items-center gap-3">
               <span className="text-sm font-medium text-foreground">Viewing data for:</span>
               <ToggleGroup 

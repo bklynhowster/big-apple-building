@@ -209,10 +209,10 @@ function ScanningStatusRow({
   
   if (isPaused) {
     return (
-      <div className="flex items-center justify-between p-3 bg-amber-50 dark:bg-amber-950/30 rounded-lg border border-amber-200 dark:border-amber-800">
+      <div className="flex items-center justify-between p-3 bg-warning/10 rounded-lg border border-border">
         <div className="flex items-center gap-2 text-sm">
-          <Pause className="h-4 w-4 text-amber-600" />
-          <span className="text-amber-700 dark:text-amber-300">Scanning paused</span>
+          <Pause className="h-4 w-4 text-warning" />
+          <span className="text-warning">Scanning paused</span>
           <span className="text-muted-foreground">— partial results shown</span>
         </div>
         <Button variant="outline" size="sm" onClick={onRefresh} className="h-7 text-xs gap-1">
@@ -228,13 +228,13 @@ function ScanningStatusRow({
   }
   
   return (
-    <div className="flex items-center justify-between p-3 bg-blue-50 dark:bg-blue-950/30 rounded-lg border border-blue-200 dark:border-blue-800">
+    <div className="flex items-center justify-between p-3 bg-accent/30 rounded-lg border border-border">
       <div className="flex items-center gap-3">
-        <Loader2 className="h-4 w-4 text-blue-600 animate-spin" />
+        <Loader2 className="h-4 w-4 text-primary animate-spin" />
         <div className="text-sm">
-          <span className="font-medium text-blue-700 dark:text-blue-300">{progress.stageLabel}</span>
+          <span className="font-medium text-foreground">{progress.stageLabel}</span>
           {progress.total > 0 && (
-            <span className="text-blue-600 dark:text-blue-400 ml-2">
+            <span className="text-muted-foreground ml-2">
               {progress.scanned}/{progress.total} records
             </span>
           )}
@@ -847,9 +847,9 @@ function PermitsMentioningUnitsSection({
   return (
     <Collapsible open={isOpen} onOpenChange={setIsOpen} className="mt-6">
       <CollapsibleTrigger asChild>
-        <Button variant="ghost" className="w-full justify-between p-3 h-auto border border-blue-200 dark:border-blue-800 bg-blue-50/50 dark:bg-blue-950/20 rounded-lg">
+        <Button variant="ghost" className="w-full justify-between p-3 h-auto border border-border bg-accent/30 rounded-lg">
           <div className="flex items-center gap-2">
-            <FileText className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+            <FileText className="h-4 w-4 text-primary" />
             <span className="font-medium text-foreground">Permits/Job Filings Mentioning Units (Inferred)</span>
             <Badge variant="secondary" className="text-xs">
               {totalPermits} permit{totalPermits !== 1 ? 's' : ''}
@@ -860,10 +860,10 @@ function PermitsMentioningUnitsSection({
       </CollapsibleTrigger>
       <CollapsibleContent className="mt-2 space-y-3">
         {/* Critical disclaimer */}
-        <Alert className="border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/30">
-          <Info className="h-4 w-4 text-blue-600 dark:text-blue-400" />
-          <AlertDescription className="text-sm text-blue-800 dark:text-blue-200">
-            <strong>Building-level permits.</strong> DOB permits and job filings are issued at the building level. 
+        <Alert className="elk-info-box">
+          <Info className="h-4 w-4 text-primary" />
+          <AlertDescription className="text-sm text-muted-foreground">
+            <strong className="text-foreground">Building-level permits.</strong> DOB permits and job filings are issued at the building level. 
             Unit references are inferred from filing text and do not imply unit-level issuance or enforcement.
           </AlertDescription>
         </Alert>
@@ -912,11 +912,11 @@ function PermitsMentioningUnitsSection({
                       <Tooltip>
                         <TooltipTrigger asChild>
                           <span 
-                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-mono cursor-help bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300"
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-mono cursor-help bg-accent text-accent-foreground"
                           >
                             {permit.jobNumber ? `Job #${permit.jobNumber.slice(-10)}` : `Permit #${permit.id.slice(-8)}`}
                             {permit.status === 'open' && (
-                              <span className="w-1.5 h-1.5 rounded-full bg-green-500" title="Open/Active" />
+                              <span className="w-1.5 h-1.5 rounded-full bg-success" title="Open/Active" />
                             )}
                           </span>
                         </TooltipTrigger>
@@ -1011,7 +1011,7 @@ function EvidenceDrawer({
       <DialogContent className="max-w-2xl max-h-[80vh] overflow-hidden flex flex-col">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <Badge className="bg-amber-600 text-white">Mentioned Unit: {unit}</Badge>
+            <Badge className="bg-primary text-primary-foreground">Mentioned Unit: {unit}</Badge>
             <span className="text-muted-foreground font-normal text-sm">(Inferred from city records)</span>
           </DialogTitle>
           <DialogDescription>
@@ -1021,10 +1021,10 @@ function EvidenceDrawer({
         </DialogHeader>
 
         {/* Warning banner - reinforced messaging */}
-        <Alert className="border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30">
-          <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400" />
-          <AlertDescription className="text-sm text-amber-800 dark:text-amber-200">
-            <strong>Building-level records only.</strong> These records are issued at the building level. 
+        <Alert className="elk-info-box border-warning/30">
+          <AlertTriangle className="h-4 w-4 text-warning" />
+          <AlertDescription className="text-sm text-muted-foreground">
+            <strong className="text-foreground">Building-level records only.</strong> These records are issued at the building level. 
             Unit mentions are extracted from text fields and do not indicate unit-specific enforcement or legal responsibility.
           </AlertDescription>
         </Alert>
@@ -1037,7 +1037,7 @@ function EvidenceDrawer({
                 <CollapsibleTrigger asChild>
                   <Button variant="ghost" className="w-full justify-between p-3 h-auto">
                     <div className="flex items-center gap-2">
-                      <FileText className="h-4 w-4 text-blue-600" />
+                      <FileText className="h-4 w-4 text-primary" />
                       <span className="font-medium">DOB Job Filings</span>
                       <Badge variant="secondary">{stats.filingRefs.length}</Badge>
                     </div>
@@ -1314,12 +1314,12 @@ export function UnitInsightsCard({
 
   return (
     <>
-      <Card className="border-amber-200 dark:border-amber-800 bg-amber-50/50 dark:bg-amber-950/20">
+      <Card className="elk-highlight-card">
         <CardHeader className="pb-3">
           <div className="flex items-center justify-between">
             <TooltipProvider>
               <div className="flex items-center gap-2">
-                <Users className="h-5 w-5 text-amber-600 dark:text-amber-400" />
+                <Users className="h-5 w-5 text-primary" />
                 <CardTitle className="text-lg">Mentioned Units</CardTitle>
                 {isScanning && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
                 <Tooltip>
@@ -1372,9 +1372,9 @@ export function UnitInsightsCard({
           )}
 
           {/* Info banner */}
-          <Alert className="border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30">
-            <Info className="h-4 w-4 text-amber-600 dark:text-amber-400" />
-            <AlertDescription className="text-sm text-amber-800 dark:text-amber-200">
+          <Alert className="elk-info-box">
+            <Info className="h-4 w-4 text-primary" />
+            <AlertDescription className="text-sm text-muted-foreground">
               Mentioned units are inferred only when city records explicitly reference an apartment or unit number (e.g., "APT 2G", "Unit PH").
               {fallbackMode && (
                 <span className="block mt-1 text-amber-600 dark:text-amber-400">
