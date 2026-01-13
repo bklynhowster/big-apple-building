@@ -135,14 +135,13 @@ export default function Index() {
                 <div className="w-px h-12 bg-primary-foreground/20" />
               </div>
               <h1 className="text-4xl md:text-5xl lg:text-6xl text-primary-foreground mb-4">
-                ELK Solutions
+                New York City Property Intelligence
               </h1>
               <p className="elk-case-header text-primary-foreground/50 mb-6">
-                NYC Real Estate · Legal · Insurance Intelligence
+                Due Diligence · Compliance · Official Records
               </p>
               <p className="text-base md:text-lg text-primary-foreground/75 max-w-xl mx-auto font-sans">
-                Access Department of Buildings records, violations, and permits 
-                using official NYC municipal data.
+                Comprehensive access to Department of Buildings violations, permits, and enforcement records for real estate transactions, litigation support, and regulatory compliance.
               </p>
             </div>
             
