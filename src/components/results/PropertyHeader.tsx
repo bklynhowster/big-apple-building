@@ -1,6 +1,5 @@
-import { Building2, MapPin, Hash } from 'lucide-react';
+import { MapPin } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import type { PropertyInfo } from '@/types/property';
 
 interface PropertyHeaderProps {
@@ -9,39 +8,44 @@ interface PropertyHeaderProps {
 
 export function PropertyHeader({ info }: PropertyHeaderProps) {
   return (
-    <Card className="bg-card">
-      <CardContent className="p-6">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+    <Card className="bg-card border-border">
+      <CardContent className="p-5">
+        <div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
+          {/* Address with vertical accent rule */}
           <div className="flex items-start gap-4">
-            <div className="flex items-center justify-center w-12 h-12 bg-primary/10 rounded-lg shrink-0">
-              <Building2 className="h-6 w-6 text-primary" />
-            </div>
+            <div className="w-0.5 h-full min-h-[48px] bg-primary rounded-full flex-shrink-0" />
             <div>
-              <h1 className="text-xl font-semibold text-foreground">
+              <p className="elk-case-header mb-1">Property Record</p>
+              <h1 className="text-xl font-semibold text-foreground tracking-tight">
                 {info.address}
               </h1>
-              <div className="flex items-center gap-2 mt-1 text-muted-foreground">
-                <MapPin className="h-4 w-4" />
+              <div className="flex items-center gap-2 mt-1.5 text-muted-foreground">
+                <MapPin className="h-3.5 w-3.5" />
                 <span className="text-sm">{info.borough}</span>
               </div>
             </div>
           </div>
-          <div className="flex flex-wrap items-center gap-3">
-            <Badge variant="outline" className="font-mono">
-              <Hash className="h-3 w-3 mr-1" />
-              BBL: {info.bbl}
-            </Badge>
+          
+          {/* Structured metadata pills */}
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="elk-metadata-pill">
+              <span className="text-muted-foreground mr-1.5">BBL</span>
+              {info.bbl}
+            </span>
             {info.bin && (
-              <Badge variant="outline" className="font-mono">
-                BIN: {info.bin}
-              </Badge>
+              <span className="elk-metadata-pill">
+                <span className="text-muted-foreground mr-1.5">BIN</span>
+                {info.bin}
+              </span>
             )}
-            <Badge variant="secondary" className="font-mono">
-              Block: {info.block}
-            </Badge>
-            <Badge variant="secondary" className="font-mono">
-              Lot: {info.lot}
-            </Badge>
+            <span className="elk-metadata-pill">
+              <span className="text-muted-foreground mr-1.5">Block</span>
+              {info.block}
+            </span>
+            <span className="elk-metadata-pill">
+              <span className="text-muted-foreground mr-1.5">Lot</span>
+              {info.lot}
+            </span>
           </div>
         </div>
       </CardContent>

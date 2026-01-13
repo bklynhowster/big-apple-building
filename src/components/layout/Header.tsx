@@ -1,22 +1,20 @@
-import { Building2 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { SavedSearchesDropdown } from '@/components/SavedSearchesDropdown';
 
 export function Header() {
   return (
-    <header className="bg-card border-b border-border shadow-sm">
+    <header className="bg-card border-b border-border">
       <div className="container mx-auto px-4">
-        <div className="flex items-center justify-between h-16">
+        <div className="flex items-center justify-between h-14">
           <Link to="/" className="flex items-center gap-3 hover:opacity-80 transition-opacity">
-            <div className="flex items-center justify-center w-10 h-10 bg-primary rounded-md">
-              <Building2 className="h-6 w-6 text-primary-foreground" />
-            </div>
+            {/* Vertical accent rule - architectural motif */}
+            <div className="w-1 h-8 bg-primary rounded-full" />
             <div>
               <h1 className="text-lg font-semibold text-foreground tracking-tight">
-                NYC Building Intel
+                ELK Solutions
               </h1>
-              <p className="text-xs text-muted-foreground">
-                Department of Buildings Records
+              <p className="text-[10px] text-muted-foreground uppercase tracking-municipal">
+                Real Estate & Legal Intelligence
               </p>
             </div>
           </Link>
