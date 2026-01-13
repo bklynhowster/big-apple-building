@@ -8,7 +8,7 @@ const corsHeaders = {
 };
 
 const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
-const FETCH_TIMEOUT_MS = 8000;
+const FETCH_TIMEOUT_MS = 15000;
 
 interface ArchivesPhotoResponse {
   ok: boolean;
@@ -41,6 +41,42 @@ async function fetchWithTimeout(url: string, options: RequestInit = {}): Promise
   } finally {
     clearTimeout(timeoutId);
   }
+}
+
+/**
+ * Extract the first Preservica item URL from text content
+ * Tries multiple patterns to find item links
+ */
+function extractItemUrl(text: string): string | null {
+  // Pattern 1: Full absolute URL
+  const absoluteMatch = text.match(/https?:\/\/nycrecords\.access\.preservica\.com\/uncategorized\/IO_[a-zA-Z0-9\-_]+\/?/);
+  if (absoluteMatch) {
+    console.log('Found absolute URL match');
+    return absoluteMatch[0];
+  }
+  
+  // Pattern 2: href attribute with relative path
+  const hrefMatch = text.match(/href=["']?(\/uncategorized\/IO_[a-zA-Z0-9\-_]+\/?)/i);
+  if (hrefMatch) {
+    console.log('Found href relative match');
+    return `https://nycrecords.access.preservica.com${hrefMatch[1]}`;
+  }
+  
+  // Pattern 3: Any relative path
+  const relativeMatch = text.match(/\/uncategorized\/IO_[a-zA-Z0-9\-_]+\/?/);
+  if (relativeMatch) {
+    console.log('Found relative path match');
+    return `https://nycrecords.access.preservica.com${relativeMatch[0]}`;
+  }
+  
+  // Pattern 4: Look for IO_ UUIDs in any context
+  const ioMatch = text.match(/IO_[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/i);
+  if (ioMatch) {
+    console.log('Found IO UUID match');
+    return `https://nycrecords.access.preservica.com/uncategorized/${ioMatch[0]}/`;
+  }
+  
+  return null;
 }
 
 serve(async (req) => {
@@ -100,30 +136,52 @@ serve(async (req) => {
 
     console.log(`Searching archives for block=${block}, lot=${lot}`);
 
-    // Build search URL
+    // Build search URL - fetch directly (edge function bypasses CORS)
     const searchQuery = `block=${block} AND lot=${lot}`;
     const searchUrl = `https://nycrecords.access.preservica.com/?q=${encodeURIComponent(searchQuery)}`;
     
     console.log(`Search URL: ${searchUrl}`);
 
-    // Fetch search page
+    // Fetch search page directly (server-side, no CORS issues)
     step = 'search_fetch';
-    let searchResponse: Response;
+    let searchText: string;
+    
     try {
-      searchResponse = await fetchWithTimeout(searchUrl, {
+      const searchResponse = await fetchWithTimeout(searchUrl, {
         headers: {
           'User-Agent': USER_AGENT,
-          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
           'Accept-Language': 'en-US,en;q=0.5',
         },
       });
+
+      if (!searchResponse.ok) {
+        console.log(`Search page returned status: ${searchResponse.status}`);
+        return jsonResponse({
+          ok: true,
+          itemUrl: null,
+          thumbnailUrl: null,
+          searchUrl,
+          error: `Search page returned status ${searchResponse.status}`,
+          debug: { block, lot, step },
+        });
+      }
+
+      searchText = await searchResponse.text();
+      console.log(`Search text length: ${searchText.length}`);
+      
+      // Log a snippet for debugging
+      if (searchText.length > 0) {
+        console.log(`Search text snippet: ${searchText.substring(0, 500)}`);
+      }
+      
     } catch (fetchError) {
       const errorMsg = fetchError instanceof Error && fetchError.name === 'AbortError' 
         ? 'Search page request timed out' 
         : `Search page fetch failed: ${String(fetchError)}`;
       console.error(errorMsg);
       return jsonResponse({
-        ok: false,
+        ok: true,
         itemUrl: null,
         thumbnailUrl: null,
         searchUrl,
@@ -132,40 +190,11 @@ serve(async (req) => {
       });
     }
 
-    if (!searchResponse.ok) {
-      console.log(`Search page returned status: ${searchResponse.status}`);
-      return jsonResponse({
-        ok: false,
-        itemUrl: null,
-        thumbnailUrl: null,
-        searchUrl,
-        error: `Search page returned status ${searchResponse.status}`,
-        debug: { block, lot, step },
-      });
-    }
-
-    // Parse search HTML
+    // Extract first item URL from text
     step = 'search_parse';
-    let searchHtml: string;
-    try {
-      searchHtml = await searchResponse.text();
-    } catch (textError) {
-      return jsonResponse({
-        ok: false,
-        itemUrl: null,
-        thumbnailUrl: null,
-        searchUrl,
-        error: `Failed to read search page: ${String(textError)}`,
-        debug: { block, lot, step },
-      });
-    }
+    const itemUrl = extractItemUrl(searchText);
     
-    console.log(`Search HTML length: ${searchHtml.length}`);
-
-    // Look for item links matching /uncategorized/IO_.../ pattern
-    const itemLinkMatch = searchHtml.match(/href=["']([^"']*\/uncategorized\/IO_[^"']*)/i);
-    
-    if (!itemLinkMatch) {
+    if (!itemUrl) {
       console.log('No item link found in search results');
       return jsonResponse({
         ok: true,
@@ -176,106 +205,13 @@ serve(async (req) => {
       });
     }
 
-    // Construct full item URL
-    let itemPath = itemLinkMatch[1];
-    if (!itemPath.startsWith('/')) {
-      itemPath = '/' + itemPath;
-    }
-    const itemUrl = `https://nycrecords.access.preservica.com${itemPath}`;
     console.log(`Found item URL: ${itemUrl}`);
 
-    // Fetch item page to get thumbnail
-    step = 'item_fetch';
-    let itemResponse: Response;
-    try {
-      itemResponse = await fetchWithTimeout(itemUrl, {
-        headers: {
-          'User-Agent': USER_AGENT,
-          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-          'Accept-Language': 'en-US,en;q=0.5',
-        },
-      });
-    } catch (fetchError) {
-      const errorMsg = fetchError instanceof Error && fetchError.name === 'AbortError'
-        ? 'Item page request timed out'
-        : `Item page fetch failed: ${String(fetchError)}`;
-      console.error(errorMsg);
-      return jsonResponse({
-        ok: true,
-        itemUrl,
-        thumbnailUrl: null,
-        searchUrl,
-        error: errorMsg,
-        debug: { block, lot, step },
-      });
-    }
-
-    if (!itemResponse.ok) {
-      console.log(`Item page returned status: ${itemResponse.status}`);
-      return jsonResponse({
-        ok: true,
-        itemUrl,
-        thumbnailUrl: null,
-        searchUrl,
-        error: `Item page returned status ${itemResponse.status}`,
-        debug: { block, lot, step },
-      });
-    }
-
-    // Parse item HTML
-    step = 'item_parse';
-    let itemHtml: string;
-    try {
-      itemHtml = await itemResponse.text();
-    } catch (textError) {
-      return jsonResponse({
-        ok: true,
-        itemUrl,
-        thumbnailUrl: null,
-        searchUrl,
-        error: `Failed to read item page: ${String(textError)}`,
-        debug: { block, lot, step },
-      });
-    }
-    
-    console.log(`Item HTML length: ${itemHtml.length}`);
-
-    // Try to extract thumbnail URL
-    let thumbnailUrl: string | null = null;
-
-    // First try og:image meta tag
-    const ogImageMatch = itemHtml.match(/<meta\s+property=["']og:image["']\s+content=["']([^"']+)["']/i) ||
-                         itemHtml.match(/<meta\s+content=["']([^"']+)["']\s+property=["']og:image["']/i);
-    
-    if (ogImageMatch) {
-      thumbnailUrl = ogImageMatch[1];
-      console.log(`Found og:image thumbnail: ${thumbnailUrl}`);
-    }
-
-    // If no og:image, try to find any download image link
-    if (!thumbnailUrl) {
-      const downloadMatch = itemHtml.match(/https:\/\/[^"'\s]+\/download\?[^"'\s]+/i);
-      if (downloadMatch) {
-        thumbnailUrl = downloadMatch[0];
-        console.log(`Found download thumbnail: ${thumbnailUrl}`);
-      }
-    }
-
-    // Try to find image in content area
-    if (!thumbnailUrl) {
-      const imgMatch = itemHtml.match(/<img[^>]+src=["'](https:\/\/[^"']+(?:\.jpg|\.jpeg|\.png|\.gif|download\?)[^"']*)["']/i);
-      if (imgMatch) {
-        thumbnailUrl = imgMatch[1];
-        console.log(`Found img src thumbnail: ${thumbnailUrl}`);
-      }
-    }
-
-    console.log(`Final result: itemUrl=${itemUrl}, thumbnailUrl=${thumbnailUrl}`);
-
+    // Return result without fetching item page (no thumbnail in Phase 1)
     return jsonResponse({
       ok: true,
       itemUrl,
-      thumbnailUrl,
+      thumbnailUrl: null,
       searchUrl,
       debug: { block, lot, step: 'complete' },
     });
