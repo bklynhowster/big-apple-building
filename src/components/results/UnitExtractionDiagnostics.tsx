@@ -7,7 +7,12 @@ import { useMemo } from 'react';
 import { ChevronDown, Bug, CheckCircle, XCircle } from 'lucide-react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Badge } from '@/components/ui/badge';
-import { extractUnitFromRecordWithTrace, normalizeUnit, isStopword, extractUnitCandidatesFromText } from '@/utils/unit';
+import { 
+  extractUnitFromRecordWithTrace, 
+  normalizeUnit, 
+  isStopword, 
+  extractUnitCandidatesFromText 
+} from '@/utils/unit';
 import type { HPDComplaintRecord, HPDViolationRecord } from '@/hooks/useHPD';
 import type { ServiceRequestRecord } from '@/hooks/use311';
 import type { UnitRosterEntry } from '@/hooks/useCoopUnitRoster';
