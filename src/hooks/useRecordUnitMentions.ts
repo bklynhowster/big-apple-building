@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { extractUnitFromRecordWithTrace, normalizeUnit, type UnitConfidence } from "@/utils/unit";
+import { extractUnitCandidatesFromText, normalizeUnit, type UnitConfidence } from "@/utils/unit";
 
 // ============================================================================
 // TYPES
@@ -28,57 +28,11 @@ export interface UseRecordUnitMentionsResult<T> {
 }
 
 // ============================================================================
-// NATURAL UNIT SORTING
+// SORTING
 // ============================================================================
 
-const SPECIAL_UNITS = [
-  "PH",
-  "PHA",
-  "PHB",
-  "PHC",
-  "PHD",
-  "PENTHOUSE",
-  "BSMT",
-  "BASEMENT",
-  "G",
-  "GF",
-  "L",
-  "LL",
-  "R",
-  "REAR",
-  "ROOF",
-];
-
-function parseUnitForSort(unit: string) {
-  const upper = unit.toUpperCase();
-  const isSpecial = SPECIAL_UNITS.some((s) => upper === s || upper.startsWith(s));
-
-  const m = upper.match(/^(\d+)([A-Z]*)$/);
-  if (m) {
-    return {
-      isSpecial: false,
-      numeric: parseInt(m[1], 10),
-      alpha: m[2] ?? "",
-      original: upper,
-    };
-  }
-
-  return {
-    isSpecial,
-    numeric: isSpecial ? Number.MAX_SAFE_INTEGER : 0,
-    alpha: upper,
-    original: upper,
-  };
-}
-
-function compareUnitsNatural(a: string, b: string): number {
-  const A = parseUnitForSort(a);
-  const B = parseUnitForSort(b);
-
-  if (A.isSpecial && !B.isSpecial) return 1;
-  if (!A.isSpecial && B.isSpecial) return -1;
-  if (A.numeric !== B.numeric) return A.numeric - B.numeric;
-  return A.alpha.localeCompare(B.alpha);
+function naturalUnitSort(a: string, b: string) {
+  return a.localeCompare(b, undefined, { numeric: true });
 }
 
 // ============================================================================
@@ -89,80 +43,67 @@ export function useRecordUnitMentions<T extends { raw: Record<string, unknown> }
   records: T[],
   coopUnitContext?: string | null,
 ): UseRecordUnitMentionsResult<T> {
-  const normalizedContext = useMemo(
-    () => (coopUnitContext ? normalizeUnit(coopUnitContext, false, true) : null),
-    [coopUnitContext],
-  );
-
-  // ------------------------------------------------------------
-  // Extract mentions per record
-  // ------------------------------------------------------------
+  const normalizedContext = useMemo(() => {
+    return coopUnitContext ? normalizeUnit(coopUnitContext, false, true) : null;
+  }, [coopUnitContext]);
 
   const recordsWithMentions = useMemo(() => {
     return records.map((record) => {
-      const extraction = extractUnitFromRecordWithTrace(record.raw);
       const mentions: UnitMention[] = [];
+      const seen = new Set<string>();
 
-      if (extraction) {
-        mentions.push({
-          unit: extraction.normalizedUnit,
-          sourceField: extraction.sourceField,
-          snippet: extraction.snippet,
-          confidence: extraction.confidence,
-          confidenceReason: extraction.confidenceReason,
-        });
+      for (const [field, value] of Object.entries(record.raw)) {
+        if (typeof value !== "string") continue;
+
+        const candidates = extractUnitCandidatesFromText(value);
+
+        for (const { token, strong } of candidates) {
+          const normalized = normalizeUnit(token, false, strong);
+          if (!normalized) continue;
+          if (seen.has(normalized)) continue;
+
+          seen.add(normalized);
+
+          mentions.push({
+            unit: normalized,
+            sourceField: field,
+            snippet: value.slice(0, 200),
+            confidence: strong ? "high" : "medium",
+            confidenceReason: strong ? "Explicit apartment/unit reference" : "Unit-like token in text",
+          });
+        }
       }
 
       const matchesContext = normalizedContext ? mentions.some((m) => m.unit === normalizedContext) : false;
 
-      return { record, mentions, matchesContext };
+      return {
+        record,
+        mentions,
+        matchesContext,
+      };
     });
   }, [records, normalizedContext]);
-
-  // ------------------------------------------------------------
-  // All mentioned units (global list)
-  // ------------------------------------------------------------
 
   const allMentionedUnits = useMemo(() => {
     const set = new Set<string>();
     for (const r of recordsWithMentions) {
       for (const m of r.mentions) set.add(m.unit);
     }
-    return Array.from(set).sort(compareUnitsNatural);
+    return Array.from(set).sort(naturalUnitSort);
   }, [recordsWithMentions]);
-
-  // ------------------------------------------------------------
-  // FIXED: Context-aware count
-  // ------------------------------------------------------------
 
   const recordsWithMentionsCount = useMemo(() => {
-    if (!normalizedContext) {
-      return recordsWithMentions.filter((r) => r.mentions.length > 0).length;
-    }
-    return recordsWithMentions.filter((r) => r.matchesContext).length;
-  }, [recordsWithMentions, normalizedContext]);
-
-  // ------------------------------------------------------------
-  // Filter helpers
-  // ------------------------------------------------------------
-
-  const filterByUnit = useMemo(() => {
-    return (unit: string | null) => {
-      if (!unit) return recordsWithMentions;
-      const normalized = normalizeUnit(unit, false, true);
-      if (!normalized) return recordsWithMentions;
-      return recordsWithMentions.filter((r) => r.mentions.some((m) => m.unit === normalized));
-    };
+    return recordsWithMentions.filter((r) => r.mentions.length > 0).length;
   }, [recordsWithMentions]);
 
-  const filterToMentionsOnly = useMemo(() => {
-    return () => {
-      if (!normalizedContext) {
-        return recordsWithMentions.filter((r) => r.mentions.length > 0);
-      }
-      return recordsWithMentions.filter((r) => r.matchesContext);
-    };
-  }, [recordsWithMentions, normalizedContext]);
+  const filterByUnit = (unit: string | null) => {
+    if (!unit) return recordsWithMentions;
+    const normalized = normalizeUnit(unit, false, true);
+    if (!normalized) return recordsWithMentions;
+    return recordsWithMentions.filter((r) => r.mentions.some((m) => m.unit === normalized));
+  };
+
+  const filterToMentionsOnly = () => recordsWithMentions.filter((r) => r.mentions.length > 0);
 
   return {
     recordsWithMentions,
