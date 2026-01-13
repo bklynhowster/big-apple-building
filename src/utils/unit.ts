@@ -10,8 +10,8 @@
  * - Do not add extraction-layer hard blocks. Validation lives in normalizeUnit/isLikelyUnitLabel only.
  */
 
-export type UnitType = 'APT' | 'UNIT' | 'PH' | 'UNKNOWN';
-export type UnitConfidence = 'high' | 'medium' | 'low';
+export type UnitType = "APT" | "UNIT" | "PH" | "UNKNOWN";
+export type UnitConfidence = "high" | "medium" | "low";
 
 export interface UnitExtractionResult {
   normalizedUnit: string;
@@ -28,14 +28,14 @@ export interface UnitExtractionResult {
 // ------------------------------
 
 const EXTRACTION_DEBUG =
-  typeof window !== 'undefined' &&
-  window.location?.search?.includes('debug=1') &&
-  (import.meta as any)?.env?.DEV;
+  typeof window !== "undefined" && window.location?.search?.includes("debug=1") && (import.meta as any)?.env?.DEV;
 
 function debugLog(event: string, payload: Record<string, unknown>) {
   if (!EXTRACTION_DEBUG) return;
   // keep logs small to avoid spam
-  const safe = JSON.parse(JSON.stringify(payload, (_, v) => (typeof v === 'string' && v.length > 180 ? v.slice(0, 180) + '…' : v)));
+  const safe = JSON.parse(
+    JSON.stringify(payload, (_, v) => (typeof v === "string" && v.length > 180 ? v.slice(0, 180) + "…" : v)),
+  );
   console.log(`[${event}]`, safe);
 }
 
@@ -44,10 +44,32 @@ function debugLog(event: string, payload: Record<string, unknown>) {
 // ------------------------------
 
 const JUNK_VALUES = new Set([
-  '', 'N/A', 'NA', 'NONE', 'UNKNOWN', '0', '-', 'N', 'NULL',
-  'BUILDING', 'BLDG', 'BASEMENT', 'CELLAR', 'ROOF', 'COMMON', 'LOBBY',
-  'HALLWAY', 'ALL', 'ENTIRE', 'BSMT', 'ROOFDECK', 'TERRACE', 'GARAGE',
-  'STORE', 'STOREFRONT', 'COMMERCIAL'
+  "",
+  "N/A",
+  "NA",
+  "NONE",
+  "UNKNOWN",
+  "0",
+  "-",
+  "N",
+  "NULL",
+  "BUILDING",
+  "BLDG",
+  "BASEMENT",
+  "CELLAR",
+  "ROOF",
+  "COMMON",
+  "LOBBY",
+  "HALLWAY",
+  "ALL",
+  "ENTIRE",
+  "BSMT",
+  "ROOFDECK",
+  "TERRACE",
+  "GARAGE",
+  "STORE",
+  "STOREFRONT",
+  "COMMERCIAL",
 ]);
 
 /**
@@ -55,58 +77,169 @@ const JUNK_VALUES = new Set([
  * IMPORTANT: Do NOT include single letters A–Z here; those are handled separately.
  */
 const UNIT_STOPLIST = new Set([
-  'ONLY', 'IF', 'AND', 'OR', 'BUT', 'NOT', 'YES', 'NO', 'THE', 'AN',
-  'IN', 'ON', 'AT', 'BY', 'TO', 'FOR', 'OF', 'FROM', 'WITH', 'WITHOUT',
-  'AS', 'IS', 'IT', 'BE', 'SO', 'WE', 'ME', 'HE', 'OK', 'AM', 'PM',
-  'HAS', 'HAD', 'WAS', 'ARE', 'CAN', 'DID', 'DO', 'HER', 'HIM', 'HIS',
-  'ITS', 'MY', 'OUR', 'THAT', 'THEM', 'THEY', 'THIS', 'WHO', 'WILL',
-  'BEEN', 'HAVE', 'WERE', 'WHAT', 'WHEN', 'WHERE', 'WHICH', 'YOUR',
-  'NYC', 'BK', 'MN', 'BX', 'QN', 'SI', 'NY', 'NJ',
-  'APT', 'UNIT', 'FL', 'FLOOR', 'RM', 'ROOM', 'STE', 'SUITE',
-  'ST', 'AVE', 'AV', 'RD', 'BLVD', 'PL', 'DR', 'CT', 'LN', 'WAY', 'TER', 'CIR',
-  'UNK', 'TBD', 'NA', 'NEED', 'NEW', 'OLD', 'SEE', 'PER', 'USE',
-  'AH', 'OH', 'UH', 'RE', 'CC', 'CO', 'VS', 'IE', 'EG',
-  'OPEN', 'CLOSED', 'PENDING', 'DONE', 'FAIL', 'PASS', 'GOOD', 'BAD',
+  "ONLY",
+  "IF",
+  "AND",
+  "OR",
+  "BUT",
+  "NOT",
+  "YES",
+  "NO",
+  "THE",
+  "AN",
+  "IN",
+  "ON",
+  "AT",
+  "BY",
+  "TO",
+  "FOR",
+  "OF",
+  "FROM",
+  "WITH",
+  "WITHOUT",
+  "AS",
+  "IS",
+  "IT",
+  "BE",
+  "SO",
+  "WE",
+  "ME",
+  "HE",
+  "OK",
+  "AM",
+  "PM",
+  "HAS",
+  "HAD",
+  "WAS",
+  "ARE",
+  "CAN",
+  "DID",
+  "DO",
+  "HER",
+  "HIM",
+  "HIS",
+  "ITS",
+  "MY",
+  "OUR",
+  "THAT",
+  "THEM",
+  "THEY",
+  "THIS",
+  "WHO",
+  "WILL",
+  "BEEN",
+  "HAVE",
+  "WERE",
+  "WHAT",
+  "WHEN",
+  "WHERE",
+  "WHICH",
+  "YOUR",
+  "NYC",
+  "BK",
+  "MN",
+  "BX",
+  "QN",
+  "SI",
+  "NY",
+  "NJ",
+  "APT",
+  "UNIT",
+  "FL",
+  "FLOOR",
+  "RM",
+  "ROOM",
+  "STE",
+  "SUITE",
+  "ST",
+  "AVE",
+  "AV",
+  "RD",
+  "BLVD",
+  "PL",
+  "DR",
+  "CT",
+  "LN",
+  "WAY",
+  "TER",
+  "CIR",
+  "UNK",
+  "TBD",
+  "NA",
+  "NEED",
+  "NEW",
+  "OLD",
+  "SEE",
+  "PER",
+  "USE",
+  "AH",
+  "OH",
+  "UH",
+  "RE",
+  "CC",
+  "CO",
+  "VS",
+  "IE",
+  "EG",
+  "OPEN",
+  "CLOSED",
+  "PENDING",
+  "DONE",
+  "FAIL",
+  "PASS",
+  "GOOD",
+  "BAD",
   // ordinals as standalone words sometimes appear; keep them here (alpha-only)
-  'ST', 'ND', 'RD', 'TH'
+  "ND",
+  "RD",
+  "TH",
 ]);
 
-const PENTHOUSE_TOKENS = new Set(['PH', 'PHH', 'PHS', 'PHN', 'PHE', 'PHW', 'TH', 'GF', 'LH', 'RH', 'BS']);
+const PENTHOUSE_TOKENS = new Set(["PH", "PHH", "PHS", "PHN", "PHE", "PHW", "TH", "GF", "LH", "RH", "BS"]);
 
 const STRIP_PREFIXES = [
-  'APARTMENT',
-  'APT\\.?',       // APT / APT.
-  'UNIT',
-  'SUITE',
-  'STE\\.?',       // STE / STE.
-  'ROOM',
-  'RM\\.?',        // RM / RM.
-  '#',
-  'NO\\.?',        // NO / NO.
-  'NUMBER'
+  "APARTMENT",
+  "APT\\.?", // APT / APT.
+  "UNIT",
+  "SUITE",
+  "STE\\.?", // STE / STE.
+  "ROOM",
+  "RM\\.?", // RM / RM.
+  "#",
+  "NO\\.?", // NO / NO.
+  "NUMBER",
 ];
 
 const FLOOR_ONLY_PATTERNS: RegExp[] = [
   /^(?:FLOOR|FL)\s*\d+$/i,
   /^\d+(?:ST|ND|RD|TH)\s*(?:FLOOR|FL)$/i,
   /^(?:1ST|2ND|3RD|\d+TH)\s*FL(?:OOR)?$/i,
-  /^FL\d+$/i
+  /^FL\d+$/i,
 ];
 
-const JOB_NUMBER_PATTERNS: RegExp[] = [
-  /^[ABJMNPQRX]\d{8,}$/i,
-  /^NB\d+$/i,
-  /^A[123]\d+$/i,
-  /^\d{8,}$/
-];
+const JOB_NUMBER_PATTERNS: RegExp[] = [/^[ABJMNPQRX]\d{8,}$/i, /^NB\d+$/i, /^A[123]\d+$/i, /^\d{8,}$/];
 
-const ADDRESS_SUFFIXES = ['ST', 'AVE', 'AV', 'RD', 'BLVD', 'PL', 'DR', 'CT', 'LN', 'WAY', 'TER', 'CIR'];
-const ORDINAL_SUFFIXES = ['ST', 'ND', 'RD', 'TH'];
+const ADDRESS_SUFFIXES = ["ST", "AVE", "AV", "RD", "BLVD", "PL", "DR", "CT", "LN", "WAY", "TER", "CIR"];
+const ORDINAL_SUFFIXES = ["ST", "ND", "RD", "TH"];
 
 const ADDRESS_SUBSTRINGS = [
-  'STREET', 'AVENUE', 'ROAD', 'BOULEVARD', 'BLVD',
-  'PLACE', 'DRIVE', 'LANE', 'WEST', 'EAST', 'NORTH', 'SOUTH',
-  'BROOKLYN', 'MANHATTAN', 'BRONX', 'QUEENS', 'STATEN'
+  "STREET",
+  "AVENUE",
+  "ROAD",
+  "BOULEVARD",
+  "BLVD",
+  "PLACE",
+  "DRIVE",
+  "LANE",
+  "WEST",
+  "EAST",
+  "NORTH",
+  "SOUTH",
+  "BROOKLYN",
+  "MANHATTAN",
+  "BRONX",
+  "QUEENS",
+  "STATEN",
 ];
 
 export function isStopword(token: string): boolean {
@@ -115,7 +248,7 @@ export function isStopword(token: string): boolean {
 
 function containsAddressSubstring(raw: string): boolean {
   const upper = raw.toUpperCase();
-  return ADDRESS_SUBSTRINGS.some(substr => new RegExp(`\\b${substr}\\b`, 'i').test(upper));
+  return ADDRESS_SUBSTRINGS.some((substr) => new RegExp(`\\b${substr}\\b`, "i").test(upper));
 }
 
 function isAllowedSpecialToken(token: string): boolean {
@@ -129,7 +262,7 @@ function isAllowedSpecialToken(token: string): boolean {
 function isAllowedSingleLetterUnit(token: string, hasStrongEvidence: boolean): boolean {
   if (!hasStrongEvidence) return false;
   const upper = token.toUpperCase();
-  if (upper === 'S') return false;
+  if (upper === "S") return false;
   return /^[A-RT-Z]$/.test(upper);
 }
 
@@ -139,7 +272,8 @@ function isAllowedSingleLetterUnit(token: string, hasStrongEvidence: boolean): b
 
 export function isLikelyUnitLabel(unit: string, hasStrongEvidence: boolean = false): boolean {
   if (!unit) return false;
-  const upper = unit.toUpperCase();
+  const upper = unit.toUpperCase().trim();
+  if (!upper) return false;
   if (upper.length > 8) return false;
 
   // Floor-only patterns
@@ -155,17 +289,17 @@ export function isLikelyUnitLabel(unit: string, hasStrongEvidence: boolean = fal
   // ZIP code
   if (/^\d{5}$/.test(upper)) return false;
 
-  // Ordinals like 6TH / 12TH / 1ST etc. (must be rejected even though they look like digit+letters)
-  if (/^\d{1,3}(ST|ND|RD|TH)$/.test(upper)) return false;
+  // Reject ordinals like 6TH / 12TH / 1ST etc.
+  if (/^[1-9]\d{0,2}(ST|ND|RD|TH)$/.test(upper)) return false;
 
   // 1) ALWAYS allow digit+letter (1–3 digits + 1–2 letters)
   // Examples: 6G, 4J, 12B, 100A, 12AA
   if (/^[1-9]\d{0,2}[A-Z]{1,2}$/.test(upper)) {
     // reject address-ish suffixes when used as the letter part: 12ST, 8AVE, etc.
     const m = upper.match(/^(\d{1,3})([A-Z]{1,2})$/);
-    const suffix = m?.[2] ?? '';
+    const suffix = m?.[2] ?? "";
     if (ADDRESS_SUFFIXES.includes(suffix)) return false;
-    if (ORDINAL_SUFFIXES.includes(suffix)) return false; // redundant safety
+    if (ORDINAL_SUFFIXES.includes(suffix)) return false;
     return true;
   }
 
@@ -200,18 +334,18 @@ export function isLikelyUnitLabel(unit: string, hasStrongEvidence: boolean = fal
 export function normalizeUnit(
   raw: string | null | undefined,
   relaxed: boolean = false,
-  hasStrongEvidence: boolean = false
+  hasStrongEvidence: boolean = false,
 ): string | null {
   if (raw == null) return null;
   const rawStr = String(raw);
 
   const reject = (reason: string, extra?: Record<string, unknown>) => {
-    debugLog('UnitNormalize.reject', {
+    debugLog("UnitNormalize.reject", {
       raw: rawStr.slice(0, 80),
       relaxed,
       hasStrongEvidence,
       reason,
-      ...(extra ?? {})
+      ...(extra ?? {}),
     });
     return null;
   };
@@ -221,37 +355,35 @@ export function normalizeUnit(
   if (!value) return null;
 
   // 2) Early junk
-  if (JUNK_VALUES.has(value)) return reject('junk_early', { value });
+  if (JUNK_VALUES.has(value)) return reject("junk_early", { value });
 
   // 3) Address substring reject (pre-prefix strip)
-  if (containsAddressSubstring(value)) return reject('address_substring', { value });
+  if (containsAddressSubstring(value)) return reject("address_substring", { value });
 
   // 4) Strip prefixes FIRST
-  const prefixPattern = new RegExp(`^(${STRIP_PREFIXES.join('|')})\\s*[:\\-\\.\\s]*`, 'i');
-  value = value.replace(prefixPattern, '');
+  const prefixPattern = new RegExp(`^(${STRIP_PREFIXES.join("|")})\\s*[:\\-\\.\\s]*`, "i");
+  value = value.replace(prefixPattern, "");
 
   // 5) Collapse whitespace/hyphens/dots between characters
-  value = value.replace(/[\s\-\.]+/g, '');
+  value = value.replace(/[\s\-\.]+/g, "");
 
   // 6) Remove remaining punctuation except alphanumerics
-  value = value.replace(/[^A-Z0-9]/g, '');
+  value = value.replace(/[^A-Z0-9]/g, "");
 
   // 7) Post-clean junk
-  if (!value) return reject('empty_after_clean');
-  if (JUNK_VALUES.has(value)) return reject('junk_after_clean', { value });
+  if (!value) return reject("empty_after_clean");
+  if (JUNK_VALUES.has(value)) return reject("junk_after_clean", { value });
 
   // 8) STOPLIST only for alpha-only tokens (no digits)
   if (!/\d/.test(value) && isStopword(value)) {
-    return reject('stopword_alpha_only', { value });
+    return reject("stopword_alpha_only", { value });
   }
 
-  // 9) Validate
+  // 9) Validate (relaxed currently maps to same strict validator to keep behavior stable)
   const ok = isLikelyUnitLabel(value, hasStrongEvidence);
-  if (!ok) {
-    return reject('failed_validation', { value });
-  }
+  if (!ok) return reject("failed_validation", { value });
 
-  debugLog('UnitNormalize.accept', { raw: rawStr.slice(0, 80), value, hasStrongEvidence });
+  debugLog("UnitNormalize.accept", { raw: rawStr.slice(0, 80), value, hasStrongEvidence });
   return value;
 }
 
@@ -262,50 +394,62 @@ export function normalizeUnit(
 function determineUnitTypeFromField(fieldName: string, normalizedUnit: string): UnitType {
   const lower = fieldName.toLowerCase();
   const u = normalizedUnit.toUpperCase();
-  if (u.startsWith('PH') || PENTHOUSE_TOKENS.has(u)) return 'PH';
-  if (lower.includes('apt') || lower.includes('apartment')) return 'APT';
-  if (lower.includes('unit')) return 'UNIT';
-  return 'UNKNOWN';
+  if (u.startsWith("PH") || PENTHOUSE_TOKENS.has(u)) return "PH";
+  if (lower.includes("apt") || lower.includes("apartment")) return "APT";
+  if (lower.includes("unit")) return "UNIT";
+  return "UNKNOWN";
 }
 
-function determineConfidence(extractionMethod: 'direct' | 'pattern', reason: string): { confidence: UnitConfidence; reason: string } {
-  if (extractionMethod === 'direct') return { confidence: 'high', reason };
-  return { confidence: 'medium', reason };
+function determineConfidence(
+  extractionMethod: "direct" | "pattern",
+  reason: string,
+): { confidence: UnitConfidence; reason: string } {
+  if (extractionMethod === "direct") return { confidence: "high", reason };
+  return { confidence: "medium", reason };
 }
 
 const UNIT_FIELDS = [
-  'apartment', 'apt', 'apt_no', 'apartment_number', 'apartmentnumber', 'apartmentno',
-  'apt_num', 'apt_number', 'unit', 'unit_number', 'unitnumber'
+  "apartment",
+  "apt",
+  "apt_no",
+  "apartment_number",
+  "apartmentnumber",
+  "apartmentno",
+  "apt_num",
+  "apt_number",
+  "unit",
+  "unit_number",
+  "unitnumber",
 ];
 
 const TEXT_EXTRACTION_FIELDS = [
-  'descriptor',
-  'resolution_description',
-  'complaint_type',
-  'problem_description',
-  'minorcat',
-  'spacetype',
-  'job_description',
-  'jobdescription',
-  'comments',
-  'description',
-  'violation_description',
-  'ecb_violation_description'
+  "descriptor",
+  "resolution_description",
+  "complaint_type",
+  "problem_description",
+  "minorcat",
+  "spacetype",
+  "job_description",
+  "jobdescription",
+  "comments",
+  "description",
+  "violation_description",
+  "ecb_violation_description",
 ];
 
 // Explicit "strong evidence" patterns only (APT/UNIT/#/RM/STE/etc.)
 const UNIT_EXTRACTION_PATTERNS: { pattern: RegExp; keyword: string; strong: boolean }[] = [
-  { pattern: /\bAPT\.?\s*#?\s*([A-Z0-9]{1,8})\b/i, keyword: 'APT', strong: true },
-  { pattern: /\bAPARTMENT\s*#?\s*([A-Z0-9]{1,8})\b/i, keyword: 'APARTMENT', strong: true },
-  { pattern: /\bUNIT\s*#?\s*([A-Z0-9]{1,8})\b/i, keyword: 'UNIT', strong: true },
-  { pattern: /\bRM\.?\s*#?\s*([A-Z0-9]{1,8})\b/i, keyword: 'RM', strong: true },
-  { pattern: /\bROOM\s*#?\s*([A-Z0-9]{1,8})\b/i, keyword: 'ROOM', strong: true },
-  { pattern: /\bSTE\.?\s*#?\s*([A-Z0-9]{1,8})\b/i, keyword: 'STE', strong: true },
-  { pattern: /\bSUITE\s*#?\s*([A-Z0-9]{1,8})\b/i, keyword: 'SUITE', strong: true },
-  { pattern: /#\s*([A-Z0-9]{1,8})\b/i, keyword: '#', strong: true },
+  { pattern: /\bAPT\.?\s*#?\s*([A-Z0-9]{1,8})\b/i, keyword: "APT", strong: true },
+  { pattern: /\bAPARTMENT\s*#?\s*([A-Z0-9]{1,8})\b/i, keyword: "APARTMENT", strong: true },
+  { pattern: /\bUNIT\s*#?\s*([A-Z0-9]{1,8})\b/i, keyword: "UNIT", strong: true },
+  { pattern: /\bRM\.?\s*#?\s*([A-Z0-9]{1,8})\b/i, keyword: "RM", strong: true },
+  { pattern: /\bROOM\s*#?\s*([A-Z0-9]{1,8})\b/i, keyword: "ROOM", strong: true },
+  { pattern: /\bSTE\.?\s*#?\s*([A-Z0-9]{1,8})\b/i, keyword: "STE", strong: true },
+  { pattern: /\bSUITE\s*#?\s*([A-Z0-9]{1,8})\b/i, keyword: "SUITE", strong: true },
+  { pattern: /#\s*([A-Z0-9]{1,8})\b/i, keyword: "#", strong: true },
   // PH / PENTHOUSE are special tokens
-  { pattern: /\bPENTHOUSE\s*([A-Z0-9]{0,3})\b/i, keyword: 'PENTHOUSE', strong: true },
-  { pattern: /\bPH\s*([A-Z0-9]{0,3})\b/i, keyword: 'PH', strong: true }
+  { pattern: /\bPENTHOUSE\s*([A-Z0-9]{0,3})\b/i, keyword: "PENTHOUSE", strong: true },
+  { pattern: /\bPH\s*([A-Z0-9]{0,3})\b/i, keyword: "PH", strong: true },
 ];
 
 function extractUnitFromText(text: string | null | undefined, fieldName: string): UnitExtractionResult | null {
@@ -316,12 +460,12 @@ function extractUnitFromText(text: string | null | undefined, fieldName: string)
     const match = s.match(pattern);
     if (!match) continue;
 
-    const rawToken = (match[1] ?? '').toUpperCase();
+    const rawToken = (match[1] ?? "").toUpperCase();
     let normalized: string | null = null;
 
-    if (keyword === 'PENTHOUSE' || keyword === 'PH') {
-      const suffix = rawToken ? rawToken.replace(/^PH/i, '') : '';
-      const ph = `PH${suffix}`;
+    if (keyword === "PENTHOUSE" || keyword === "PH") {
+      const suffix = rawToken ? rawToken.replace(/^PH/i, "") : "";
+      const ph = `PH${suffix}`.replace(/^PH$/, "PH");
       if (!isLikelyUnitLabel(ph, true)) continue;
       normalized = ph;
     } else {
@@ -332,19 +476,19 @@ function extractUnitFromText(text: string | null | undefined, fieldName: string)
     const idx = match.index ?? 0;
     const start = Math.max(0, idx - 30);
     const end = Math.min(s.length, idx + match[0].length + 30);
-    const snippet = (start > 0 ? '…' : '') + s.slice(start, end).trim() + (end < s.length ? '…' : '');
+    const snippet = (start > 0 ? "…" : "") + s.slice(start, end).trim() + (end < s.length ? "…" : "");
 
-    debugLog('UnitExtract.accept_text', { fieldName, keyword, rawToken, normalized, strong });
+    debugLog("UnitExtract.accept_text", { fieldName, keyword, rawToken, normalized, strong });
 
-    const { confidence, reason } = determineConfidence('pattern', `Explicit ${keyword} prefix`);
+    const { confidence, reason } = determineConfidence("pattern", `Explicit ${keyword} prefix`);
     return {
       normalizedUnit: normalized,
       asReported: match[0].trim(),
       sourceField: fieldName,
       snippet,
-      unitType: keyword === 'UNIT' ? 'UNIT' : keyword === 'PH' || keyword === 'PENTHOUSE' ? 'PH' : 'APT',
+      unitType: keyword === "UNIT" ? "UNIT" : keyword === "PH" || keyword === "PENTHOUSE" ? "PH" : "APT",
       confidence,
-      confidenceReason: reason
+      confidenceReason: reason,
     };
   }
 
@@ -355,9 +499,9 @@ function flattenRecordToStrings(record: Record<string, unknown>): Map<string, st
   const out = new Map<string, string>();
   for (const [k, v] of Object.entries(record)) {
     if (v == null) continue;
-    if (typeof v === 'string') out.set(k, v);
-    else if (typeof v === 'number' || typeof v === 'boolean') out.set(k, String(v));
-    else if (typeof v === 'object') {
+    if (typeof v === "string") out.set(k, v);
+    else if (typeof v === "number" || typeof v === "boolean") out.set(k, String(v));
+    else if (typeof v === "object") {
       try {
         const json = JSON.stringify(v);
         out.set(k, json.length > 800 ? json.slice(0, 800) : json);
@@ -369,7 +513,9 @@ function flattenRecordToStrings(record: Record<string, unknown>): Map<string, st
   return out;
 }
 
-export function extractUnitFromRecordWithTrace(record: Record<string, unknown> | null | undefined): UnitExtractionResult | null {
+export function extractUnitFromRecordWithTrace(
+  record: Record<string, unknown> | null | undefined,
+): UnitExtractionResult | null {
   if (!record) return null;
 
   const flat = flattenRecordToStrings(record);
@@ -387,13 +533,13 @@ export function extractUnitFromRecordWithTrace(record: Record<string, unknown> |
 
     const normalized = normalizeUnit(value, false, true);
     if (!normalized) {
-      debugLog('UnitExtract.reject_direct', { field: actualKey, value });
+      debugLog("UnitExtract.reject_direct", { field: actualKey, value });
       continue;
     }
 
-    debugLog('UnitExtract.accept_direct', { field: actualKey, value, normalized });
+    debugLog("UnitExtract.accept_direct", { field: actualKey, value, normalized });
 
-    const { confidence, reason } = determineConfidence('direct', 'Direct apartment/unit field');
+    const { confidence, reason } = determineConfidence("direct", "Direct apartment/unit field");
     return {
       normalizedUnit: normalized,
       asReported: value.trim().toUpperCase(),
@@ -401,7 +547,7 @@ export function extractUnitFromRecordWithTrace(record: Record<string, unknown> |
       snippet: null,
       unitType: determineUnitTypeFromField(actualKey, normalized),
       confidence,
-      confidenceReason: reason
+      confidenceReason: reason,
     };
   }
 
@@ -419,8 +565,8 @@ export function extractUnitFromRecordWithTrace(record: Record<string, unknown> |
   // Fallback: scan all fields (still explicit-prefix patterns only)
   for (const [k, v] of flat.entries()) {
     if (!v || v.length > 1500) continue;
-    if (UNIT_FIELDS.some(f => f.toLowerCase() === k.toLowerCase())) continue;
-    if (TEXT_EXTRACTION_FIELDS.some(f => f.toLowerCase() === k.toLowerCase())) continue;
+    if (UNIT_FIELDS.some((f) => f.toLowerCase() === k.toLowerCase())) continue;
+    if (TEXT_EXTRACTION_FIELDS.some((f) => f.toLowerCase() === k.toLowerCase())) continue;
 
     const extracted = extractUnitFromText(v, k);
     if (extracted) return extracted;
@@ -468,19 +614,19 @@ export function extractUnitCandidatesFromText(text: string): Array<{ token: stri
     pattern.lastIndex = 0;
     let m: RegExpExecArray | null;
     while ((m = pattern.exec(text)) !== null) {
-      const fullMatch = (m[0] ?? '').toUpperCase();
-      const raw = (m[1] ?? '').toUpperCase().replace(/\s+/g, '');
+      const fullMatch = (m[0] ?? "").toUpperCase();
+      const raw = (m[1] ?? "").toUpperCase().replace(/\s+/g, "");
 
-      if (!raw && !fullMatch.includes('PENTHOUSE') && !/\bPH\b/.test(fullMatch)) continue;
+      if (!raw && !fullMatch.includes("PENTHOUSE") && !/\bPH\b/.test(fullMatch)) continue;
 
       // Normalize PH forms into PH / PHH / etc.
       let token = raw;
-      if (fullMatch.includes('PENTHOUSE') || /\bPH\b/.test(fullMatch)) {
-        const suffix = raw ? raw.replace(/^PH/i, '') : '';
-        token = `PH${suffix}`.replace(/^PH$/, 'PH');
+      if (fullMatch.includes("PENTHOUSE") || /\bPH\b/.test(fullMatch)) {
+        const suffix = raw ? raw.replace(/^PH/i, "") : "";
+        token = `PH${suffix}`.replace(/^PH$/, "PH");
       }
 
-      const key = `${token}|${strong ? 'strong' : 'weak'}`;
+      const key = `${token}|${strong ? "strong" : "weak"}`;
       if (seen.has(key)) continue;
       seen.add(key);
 
@@ -499,9 +645,7 @@ export function extractUnitCandidatesFromText(text: string): Array<{ token: stri
  * Group records by extracted unit.
  * Records with no extractable unit are grouped under the null key.
  */
-export function groupRecordsByUnit<T extends Record<string, unknown>>(
-  records: T[]
-): Map<string | null, T[]> {
+export function groupRecordsByUnit<T extends Record<string, unknown>>(records: T[]): Map<string | null, T[]> {
   const groups = new Map<string | null, T[]>();
   for (const record of records) {
     const unit = extractUnitFromRecord(record);
@@ -523,7 +667,7 @@ export interface UnitStats {
  */
 export function getUnitStats<T extends Record<string, unknown>>(
   records: T[],
-  dateField: string = 'issueDate'
+  dateField: string = "issueDate",
 ): UnitStats[] {
   const groups = groupRecordsByUnit(records);
   const stats: UnitStats[] = [];
@@ -533,7 +677,7 @@ export function getUnitStats<T extends Record<string, unknown>>(
     let maxDate: Date | null = null;
     for (const r of recs) {
       const v = r[dateField] as unknown;
-      if (typeof v === 'string' && v) {
+      if (typeof v === "string" && v) {
         const d = new Date(v);
         if (!Number.isNaN(d.getTime())) {
           if (!maxDate || d > maxDate) maxDate = d;
@@ -553,15 +697,14 @@ export function getUnitStats<T extends Record<string, unknown>>(
  * Filter records to those that match a specific unit context.
  * If unitContext is null/empty/invalid, returns the original array.
  */
-export function filterRecordsByUnit<T extends Record<string, unknown>>(
-  records: T[],
-  unitContext: string | null
-): T[] {
+export function filterRecordsByUnit<T extends Record<string, unknown>>(records: T[], unitContext: string | null): T[] {
   if (!unitContext) return records;
+
   // IMPORTANT: unit context is a user-selected filter; treat as "strong evidence"
   // so numeric-only contexts (e.g., "12") can still function in the UI.
   const normalizedContext = normalizeUnit(unitContext, false, true);
   if (!normalizedContext) return records;
+
   return records.filter((record) => extractUnitFromRecord(record) === normalizedContext);
 }
 
@@ -570,44 +713,14 @@ export function filterRecordsByUnit<T extends Record<string, unknown>>(
  */
 export function recordMentionsUnit(
   record: Record<string, unknown> | null | undefined,
-  unitContext: string | null
+  unitContext: string | null,
 ): boolean {
   if (!record || !unitContext) return false;
+
   // Same rationale as filterRecordsByUnit: UI context should be treated as strong.
   const normalizedContext = normalizeUnit(unitContext, false, true);
   if (!normalizedContext) return false;
+
   const recordUnit = extractUnitFromRecord(record);
   return recordUnit === normalizedContext;
-}
-
-// ------------------------------
-// DEV globals for sanity / tests
-// ------------------------------
-
-function runSanity(): Record<string, unknown> {
-  const cases: Array<{ name: string; got: boolean; want: boolean }> = [
-    { name: '6G digit+letter allowed', got: isLikelyUnitLabel('6G', false), want: true },
-    { name: '12B digit+letter allowed', got: isLikelyUnitLabel('12B', false), want: true },
-    { name: '12AA digit+letter allowed', got: isLikelyUnitLabel('12AA', false), want: true },
-    { name: '12 numeric-only requires evidence (false)', got: isLikelyUnitLabel('12', false), want: false },
-    { name: '12 numeric-only requires evidence (true)', got: isLikelyUnitLabel('12', true), want: true },
-    { name: '6TH ordinal rejected', got: isLikelyUnitLabel('6TH', true), want: false },
-    { name: '12TH ordinal rejected', got: isLikelyUnitLabel('12TH', true), want: false }
-  ];
-  const failures = cases.filter(c => c.got !== c.want);
-  return { ok: failures.length === 0, failures, cases };
-}
-
-declare global {
-  interface Window {
-    runUnitSanityChecks?: () => void;
-    runUnitExtractionTests?: () => void;
-  }
-}
-
-if (typeof window !== 'undefined' && (import.meta as any)?.env?.DEV) {
-  window.runUnitSanityChecks = () => {
-    const res = runSanity();
-    console.log('[UnitSanity]', res);
-  };
 }
