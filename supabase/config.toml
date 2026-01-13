@@ -35,3 +35,6 @@ verify_jwt = false
 
 [functions.dob-job-filings]
 verify_jwt = false
+
+[functions.archives-photo]
+verify_jwt = false
