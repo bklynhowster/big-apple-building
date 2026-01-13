@@ -24,19 +24,18 @@ export interface UnitExtractionResult {
 }
 
 // ------------------------------
-// Debug helpers (safe ordering)
+// Debug helpers (single gate)
 // ------------------------------
 
 const EXTRACTION_DEBUG =
   typeof window !== 'undefined' &&
-  window.location?.search?.includes('debug=1') &&
-  (import.meta as any)?.env?.DEV;
+  import.meta.env.DEV &&
+  window.location.search.includes('debug=1');
 
-function debugLog(event: string, payload: Record<string, unknown>) {
+function debugLog(event: string, data?: Record<string, unknown>) {
   if (!EXTRACTION_DEBUG) return;
-  // keep logs small to avoid spam
-  const safe = JSON.parse(JSON.stringify(payload, (_, v) => (typeof v === 'string' && v.length > 180 ? v.slice(0, 180) + '…' : v)));
-  console.log(`[${event}]`, safe);
+  // keep log compact; no huge blobs
+  console.log(`[UnitExtract] ${event}`, data ?? {});
 }
 
 // ------------------------------
@@ -580,24 +579,3 @@ export function recordMentionsUnit(
   return recordUnit === normalizedContext;
 }
 
-// ------------------------------
-// DEV-only sanity check (exported, not on window)
-// ------------------------------
-
-/**
- * DEV-only sanity check for unit validation logic.
- * Call manually in dev console: import { runUnitSanityCheck } from '@/utils/unit'; runUnitSanityCheck();
- */
-export function runUnitSanityCheck(): Record<string, unknown> {
-  const cases: Array<{ name: string; got: boolean; want: boolean }> = [
-    { name: '6G digit+letter allowed', got: isLikelyUnitLabel('6G', false), want: true },
-    { name: '12B digit+letter allowed', got: isLikelyUnitLabel('12B', false), want: true },
-    { name: '12AA digit+letter allowed', got: isLikelyUnitLabel('12AA', false), want: true },
-    { name: '12 numeric-only requires evidence (false)', got: isLikelyUnitLabel('12', false), want: false },
-    { name: '12 numeric-only requires evidence (true)', got: isLikelyUnitLabel('12', true), want: true },
-    { name: '6TH ordinal rejected', got: isLikelyUnitLabel('6TH', true), want: false },
-    { name: '12TH ordinal rejected', got: isLikelyUnitLabel('12TH', true), want: false }
-  ];
-  const failures = cases.filter(c => c.got !== c.want);
-  return { ok: failures.length === 0, failures, cases };
-}
