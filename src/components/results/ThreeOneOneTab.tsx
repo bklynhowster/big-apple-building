@@ -18,7 +18,7 @@ import { ColumnSelector, useColumnVisibility, ColumnConfig } from './ColumnSelec
 import { QueriedIdentifier, DatasetCapability } from './QueriedIdentifier';
 import { QueryScope } from './ScopeSelector';
 import { BuildingLevelBanner } from './BuildingLevelBanner';
-import { filterRecordsByUnit } from '@/utils/unit';
+import { filterRecordsByUnit } from '@/utils/unitExports';
 
 interface ThreeOneOneTabProps {
   lat?: number;
