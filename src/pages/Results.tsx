@@ -6,6 +6,7 @@ import { Footer } from '@/components/layout/Footer';
 import { ContextBanner, QueryScope } from '@/components/results/ContextBanner';
 import { PropertyOverview } from '@/components/results/PropertyOverview';
 import { PropertyProfileCard } from '@/components/results/PropertyProfileCard';
+import { PropertyMap } from '@/components/results/PropertyMap';
 import { CondoUnitsCard } from '@/components/results/CondoUnitsCard';
 import { ResidentialUnitsCard } from '@/components/results/ResidentialUnitsCard';
 import { UnitInsightsCard } from '@/components/results/UnitInsightsCard';
@@ -318,6 +319,9 @@ export default function Results() {
                 parentAddress={address}
                 landmarkStatus={landmarkStatus}
               />
+
+              {/* Property Map */}
+              <PropertyMap lat={latitude} lon={longitude} address={address} />
               
               {/* Condo Units Discovery - only show when NOT on a unit page and NOT a co-op */}
               {!isUnitLot && !isCoop && (
