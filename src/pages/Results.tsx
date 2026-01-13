@@ -6,6 +6,7 @@ import { Footer } from '@/components/layout/Footer';
 import { ContextBanner, QueryScope } from '@/components/results/ContextBanner';
 import { PropertyOverview } from '@/components/results/PropertyOverview';
 import { PropertyProfileCard } from '@/components/results/PropertyProfileCard';
+import { RiskSnapshotCard, type RecordCounts, type LoadingStates } from '@/components/results/RiskSnapshotCard';
 import brooklynBridgeLines from '@/assets/brooklyn-bridge-lines.png';
 
 import { CondoUnitsCard } from '@/components/results/CondoUnitsCard';
@@ -80,15 +81,15 @@ export default function Results() {
   const { profile } = usePropertyProfile(isValidBBL ? bbl : null);
   const isCoop = profile?.propertyTenure === 'COOP';
 
-  // Pre-fetch HPD, 311, Rolling Sales, DOB Filings, DOB Violations, ECB, and Permits for Unit Insights (co-ops only)
-  const hpdViolations = useHPDViolations(isCoop && isValidBBL ? bbl : null);
-  const hpdComplaints = useHPDComplaints(isCoop && isValidBBL ? bbl : null);
-  const threeOneOne = use311(isCoop ? latitude : undefined, isCoop ? longitude : undefined);
+  // Pre-fetch HPD, 311, Rolling Sales, DOB Filings, DOB Violations, ECB, and Permits for Risk Snapshot + Unit Insights
+  const hpdViolations = useHPDViolations(isValidBBL ? bbl : null);
+  const hpdComplaints = useHPDComplaints(isValidBBL ? bbl : null);
+  const threeOneOne = use311(latitude, longitude);
   const coopUnitRoster = useCoopUnitRoster();
   const dobJobFilings = useDobJobFilings();
-  const dobViolationsHook = useViolations(isCoop && isValidBBL ? bbl : null);
-  const ecbHook = useECB(isCoop && isValidBBL ? bbl : null);
-  const permitsHook = usePermits(isCoop && isValidBBL ? bbl : null);
+  const dobViolationsHook = useViolations(isValidBBL ? bbl : null);
+  const ecbHook = useECB(isValidBBL ? bbl : null);
+  const permitsHook = usePermits(isValidBBL ? bbl : null);
   
   // Landmark status lookup - pass PLUTO histdist if available for quick detection
   const plutoHistDist = profile?.raw?.histdist as string | undefined;
@@ -100,28 +101,84 @@ export default function Results() {
     plutoHistDist 
   });
   
-  // Track if we've fetched data for insights
-  const insightsFetchedRef = useRef(false);
+  // Track if we've fetched data for insights/risk snapshot
+  const dataFetchedRef = useRef(false);
   
-  // Fetch all data for Unit Insights when co-op is detected
+  // Fetch all data for Risk Snapshot and Unit Insights
   useEffect(() => {
-    if (!isCoop || !isValidBBL || insightsFetchedRef.current) return;
+    if (!isValidBBL || dataFetchedRef.current) return;
     if (!bbl || bbl.length !== 10) return;
 
     hpdViolations.fetch(bbl);
     hpdComplaints.fetch(bbl);
-    coopUnitRoster.fetch(bbl);
     dobViolationsHook.fetchViolations(bbl);
     ecbHook.fetchECB(bbl);
     permitsHook.fetchPermits(bbl);
+    
+    // Co-op specific data
+    if (isCoop) {
+      coopUnitRoster.fetch(bbl);
+    }
+    
     if (bin) {
       dobJobFilings.fetch(bin);
     }
     if (latitude !== undefined && longitude !== undefined) {
       threeOneOne.fetch(latitude, longitude);
     }
-    insightsFetchedRef.current = true;
-  }, [isCoop, isValidBBL, bbl, bin, latitude, longitude]);
+    dataFetchedRef.current = true;
+  }, [isValidBBL, bbl, bin, latitude, longitude, isCoop]);
+  
+  // Compute record counts for Risk Snapshot
+  const recordCounts: RecordCounts = useMemo(() => {
+    const countOpen = <T extends { status?: string }>(items: T[]) => 
+      items.filter(item => item.status === 'open').length;
+    
+    return {
+      dobViolations: dobViolationsHook.items.length,
+      dobViolationsOpen: countOpen(dobViolationsHook.items),
+      ecbViolations: ecbHook.items.length,
+      ecbViolationsOpen: countOpen(ecbHook.items),
+      hpdViolations: hpdViolations.items.length,
+      hpdViolationsOpen: hpdViolations.items.filter(item => item.status === 'open').length,
+      hpdComplaints: hpdComplaints.items.length,
+      hpdComplaintsOpen: hpdComplaints.items.filter(item => item.status === 'open').length,
+      serviceRequests: threeOneOne.items.length,
+      serviceRequestsOpen: threeOneOne.items.filter(item => item.status === 'open').length,
+      dobPermits: permitsHook.items.length,
+      salesRecords: coopUnitRoster.units.length,
+      dobFilingsUnits: dobJobFilings.units.length,
+    };
+  }, [
+    dobViolationsHook.items,
+    ecbHook.items,
+    hpdViolations.items,
+    hpdComplaints.items,
+    threeOneOne.items,
+    permitsHook.items,
+    coopUnitRoster.units,
+    dobJobFilings.units,
+  ]);
+  
+  const riskSnapshotLoading: LoadingStates = useMemo(() => ({
+    dobViolations: dobViolationsHook.loading,
+    ecbViolations: ecbHook.loading,
+    hpdViolations: hpdViolations.loading,
+    hpdComplaints: hpdComplaints.loading,
+    serviceRequests: threeOneOne.loading,
+    dobPermits: permitsHook.loading,
+    salesRecords: coopUnitRoster.loading,
+    dobFilingsUnits: dobJobFilings.loading,
+  }), [
+    dobViolationsHook.loading,
+    ecbHook.loading,
+    hpdViolations.loading,
+    hpdComplaints.loading,
+    threeOneOne.loading,
+    permitsHook.loading,
+    coopUnitRoster.loading,
+    dobJobFilings.loading,
+  ]);
 
   // State for passing keyword filter to tabs from "View in tab"
   const [tabKeywordFilter, setTabKeywordFilter] = useState<string | undefined>();
@@ -330,6 +387,12 @@ export default function Results() {
                 onCoopUnitContextChange={isCoop ? handleCoopUnitContextChange : undefined}
                 scope={scope}
                 onScopeChange={setScope}
+              />
+
+              {/* Risk Snapshot - Building-level risk signals summary */}
+              <RiskSnapshotCard 
+                counts={recordCounts} 
+                loading={riskSnapshotLoading} 
               />
 
               {/* Property Profile with embedded map */}
