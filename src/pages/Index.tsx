@@ -222,15 +222,17 @@ export default function Index() {
               <div className="flex items-start gap-5">
                 <div className="w-0.5 h-full min-h-[100px] bg-primary flex-shrink-0" />
                 <div>
-                  <p className="elk-case-header mb-3">About</p>
+                  <p className="elk-case-header mb-3">Platform Overview</p>
                   <h3 className="font-serif text-lg font-bold text-foreground mb-3 tracking-tight">
-                    Professional Building Records Access
+                    NYC Building Enforcement Intelligence
                   </h3>
                   <p className="text-sm text-muted-foreground leading-relaxed">
-                    ELK Solutions provides access to publicly available building records from 
-                    the New York City Department of Buildings and NYC Open Data. Designed for 
-                    attorneys, insurers, architects, inspectors, and property professionals 
-                    who require efficient access to violation and permit histories.
+                    ELK Solutions aggregates and structures official enforcement records from the 
+                    New York City Department of Buildings, OATH/ECB, and related municipal agencies. 
+                    The platform serves attorneys conducting litigation research, insurers evaluating 
+                    property risk exposure, compliance officers reviewing regulatory status, and 
+                    transaction professionals performing acquisition due diligence. All records are 
+                    sourced from NYC Open Data and official city databases.
                   </p>
                 </div>
               </div>
