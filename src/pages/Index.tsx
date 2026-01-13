@@ -153,13 +153,13 @@ export default function Index() {
         <section className="py-16 md:py-20 bg-background">
           <div className="container mx-auto px-4">
             <div className="text-center mb-12">
-              <p className="elk-case-header mb-3">Comprehensive Records</p>
+              <p className="elk-case-header mb-3">Record Categories</p>
               <h2 className="text-2xl md:text-3xl text-foreground mb-4">
-                Building Intelligence
+                Municipal Enforcement Records
               </h2>
               <p className="text-muted-foreground max-w-2xl mx-auto text-sm leading-relaxed">
-                Access detailed information from NYC Open Data and the Department of Buildings 
-                for due diligence, compliance, and legal research.
+                Consolidated building enforcement data from the New York City Department of Buildings 
+                and OATH/ECB, structured for legal review, underwriting, and regulatory compliance assessment.
               </p>
             </div>
             
