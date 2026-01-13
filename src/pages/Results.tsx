@@ -6,7 +6,7 @@ import { Footer } from '@/components/layout/Footer';
 import { ContextBanner, QueryScope } from '@/components/results/ContextBanner';
 import { PropertyOverview } from '@/components/results/PropertyOverview';
 import { PropertyProfileCard } from '@/components/results/PropertyProfileCard';
-import { RiskSnapshotCard, type RecordCounts, type LoadingStates } from '@/components/results/RiskSnapshotCard';
+import { RiskSnapshotCard, type RecordCounts, type LoadingStates, type RecordArrays } from '@/components/results/RiskSnapshotCard';
 import brooklynBridgeLines from '@/assets/brooklyn-bridge-lines.png';
 
 import { CondoUnitsCard } from '@/components/results/CondoUnitsCard';
@@ -178,6 +178,28 @@ export default function Results() {
     permitsHook.loading,
     coopUnitRoster.loading,
     dobJobFilings.loading,
+  ]);
+  
+  // Record arrays for trend analysis
+  const riskSnapshotRecords: RecordArrays = useMemo(() => ({
+    dobViolations: dobViolationsHook.items,
+    ecbViolations: ecbHook.items,
+    hpdViolations: hpdViolations.items,
+    hpdComplaints: hpdComplaints.items,
+    serviceRequests: threeOneOne.items,
+    dobPermits: permitsHook.items,
+    // Sales and filings use lastSeen as proxy for trend analysis
+    salesRecords: coopUnitRoster.units.map(u => ({ issueDate: u.lastSeen })),
+    dobFilingsUnits: dobJobFilings.units.map(u => ({ issueDate: u.lastSeen })),
+  }), [
+    dobViolationsHook.items,
+    ecbHook.items,
+    hpdViolations.items,
+    hpdComplaints.items,
+    threeOneOne.items,
+    permitsHook.items,
+    coopUnitRoster.units,
+    dobJobFilings.units,
   ]);
 
   // State for passing keyword filter to tabs from "View in tab"
@@ -393,6 +415,7 @@ export default function Results() {
               <RiskSnapshotCard 
                 counts={recordCounts} 
                 loading={riskSnapshotLoading}
+                records={riskSnapshotRecords}
                 onNavigateToSection={(tab) => {
                   handleTabChange(tab);
                 }}
