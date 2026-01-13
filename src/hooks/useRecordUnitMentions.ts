@@ -28,8 +28,35 @@ export interface UseRecordUnitMentionsResult<T> {
 }
 
 // ============================================================================
-// SORTING
+// HELPERS
 // ============================================================================
+
+/**
+ * Flatten an arbitrarily nested record into an array of strings.
+ * This is REQUIRED because NYC records store unit text inside
+ * nested objects and arrays.
+ */
+function flattenRecord(record: Record<string, unknown>): Array<{ text: string; field: string }> {
+  const out: Array<{ text: string; field: string }> = [];
+
+  const walk = (value: unknown, field: string) => {
+    if (typeof value === "string") {
+      out.push({ text: value, field });
+    } else if (Array.isArray(value)) {
+      for (const v of value) walk(v, field);
+    } else if (value && typeof value === "object") {
+      for (const [k, v] of Object.entries(value)) {
+        walk(v, `${field}.${k}`);
+      }
+    }
+  };
+
+  for (const [key, value] of Object.entries(record)) {
+    walk(value, key);
+  }
+
+  return out;
+}
 
 function naturalUnitSort(a: string, b: string) {
   return a.localeCompare(b, undefined, { numeric: true });
@@ -43,19 +70,24 @@ export function useRecordUnitMentions<T extends { raw: Record<string, unknown> }
   records: T[],
   coopUnitContext?: string | null,
 ): UseRecordUnitMentionsResult<T> {
+  // Normalize selected unit context (UI filter)
   const normalizedContext = useMemo(() => {
     return coopUnitContext ? normalizeUnit(coopUnitContext, false, true) : null;
   }, [coopUnitContext]);
+
+  // --------------------------------------------------------------------------
+  // Extract mentions from records
+  // --------------------------------------------------------------------------
 
   const recordsWithMentions = useMemo(() => {
     return records.map((record) => {
       const mentions: UnitMention[] = [];
       const seen = new Set<string>();
 
-      for (const [field, value] of Object.entries(record.raw)) {
-        if (typeof value !== "string") continue;
+      const flattened = flattenRecord(record.raw);
 
-        const candidates = extractUnitCandidatesFromText(value);
+      for (const { text, field } of flattened) {
+        const candidates = extractUnitCandidatesFromText(text);
 
         for (const { token, strong } of candidates) {
           const normalized = normalizeUnit(token, false, strong);
@@ -67,9 +99,9 @@ export function useRecordUnitMentions<T extends { raw: Record<string, unknown> }
           mentions.push({
             unit: normalized,
             sourceField: field,
-            snippet: value.slice(0, 200),
+            snippet: text.slice(0, 200),
             confidence: strong ? "high" : "medium",
-            confidenceReason: strong ? "Explicit apartment/unit reference" : "Unit-like token in text",
+            confidenceReason: strong ? "Explicit apartment/unit reference" : "Unit-like token in record text",
           });
         }
       }
@@ -84,6 +116,10 @@ export function useRecordUnitMentions<T extends { raw: Record<string, unknown> }
     });
   }, [records, normalizedContext]);
 
+  // --------------------------------------------------------------------------
+  // Aggregates
+  // --------------------------------------------------------------------------
+
   const allMentionedUnits = useMemo(() => {
     const set = new Set<string>();
     for (const r of recordsWithMentions) {
@@ -96,10 +132,15 @@ export function useRecordUnitMentions<T extends { raw: Record<string, unknown> }
     return recordsWithMentions.filter((r) => r.mentions.length > 0).length;
   }, [recordsWithMentions]);
 
+  // --------------------------------------------------------------------------
+  // Filters
+  // --------------------------------------------------------------------------
+
   const filterByUnit = (unit: string | null) => {
     if (!unit) return recordsWithMentions;
     const normalized = normalizeUnit(unit, false, true);
     if (!normalized) return recordsWithMentions;
+
     return recordsWithMentions.filter((r) => r.mentions.some((m) => m.unit === normalized));
   };
 
