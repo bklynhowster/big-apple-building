@@ -222,9 +222,58 @@ export function ContextBanner({
     );
   }
 
-  // CONDO UNIT VIEW - prominent banner with unit context
+  // CONDO UNIT VIEW - prominent banner with unit context and building info
+  // Format full building address
+  const fullBuildingAddress = address 
+    ? borough 
+      ? `${address} — ${borough.toUpperCase()}`
+      : address
+    : null;
+
   return (
     <div className="space-y-3">
+      {/* Building Context Banner - Prominent display of parent building */}
+      <div className="bg-muted/50 border border-border rounded-lg px-4 py-3">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="flex items-center justify-center w-9 h-9 bg-background border border-border rounded-lg shrink-0">
+              <Building2 className="h-4 w-4 text-muted-foreground" />
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">Building Context</p>
+              <p className="text-sm font-semibold text-foreground">
+                {fullBuildingAddress || 'Building Address Unavailable'}
+              </p>
+              <div className="flex items-center gap-2 mt-0.5">
+                {billingBbl && (
+                  <span className="text-xs text-muted-foreground font-mono">
+                    BBL: {billingBbl}
+                  </span>
+                )}
+                {bin && (
+                  <span className="text-xs text-muted-foreground font-mono">
+                    • BIN: {bin}
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+          
+          {/* Back to Building Button - with address */}
+          {buildingUrl && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-2 shrink-0 text-xs"
+              onClick={() => navigate(buildingUrl)}
+            >
+              <ArrowLeft className="h-3.5 w-3.5" />
+              {address ? `Back to building: ${address}` : 'Back to building overview'}
+            </Button>
+          )}
+        </div>
+      </div>
+
       {/* Pill-style Context Indicator - Impossible to miss */}
       <ContextIndicator 
         unitLabel={unitLabel} 
@@ -284,7 +333,7 @@ export function ContextBanner({
                 </div>
                 <p className="text-sm text-muted-foreground flex items-center gap-1">
                   <Building2 className="h-3.5 w-3.5" />
-                  Located in: {address || 'Building'} (Building)
+                  Located in: {fullBuildingAddress || 'Building'}
                 </p>
                 
                 {/* Identifiers - hierarchical */}
@@ -309,19 +358,6 @@ export function ContextBanner({
                 </div>
               </div>
             </div>
-
-            {/* Back to Building Button */}
-            {buildingUrl && (
-              <Button
-                variant="outline"
-                size="sm"
-                className="gap-2 shrink-0"
-                onClick={() => navigate(buildingUrl)}
-              >
-                <ArrowLeft className="h-4 w-4" />
-                Back to building overview
-              </Button>
-            )}
           </div>
 
           {/* Global Scope Toggle */}
