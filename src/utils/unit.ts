@@ -190,6 +190,7 @@ const UNIT_STOPLIST = new Set([
   "GOOD",
   "BAD",
   // ordinals as standalone words sometimes appear; keep them here (alpha-only)
+  "ST",
   "ND",
   "RD",
   "TH",
@@ -197,18 +198,7 @@ const UNIT_STOPLIST = new Set([
 
 const PENTHOUSE_TOKENS = new Set(["PH", "PHH", "PHS", "PHN", "PHE", "PHW", "TH", "GF", "LH", "RH", "BS"]);
 
-const STRIP_PREFIXES = [
-  "APARTMENT",
-  "APT\\.?", // APT / APT.
-  "UNIT",
-  "SUITE",
-  "STE\\.?", // STE / STE.
-  "ROOM",
-  "RM\\.?", // RM / RM.
-  "#",
-  "NO\\.?", // NO / NO.
-  "NUMBER",
-];
+const STRIP_PREFIXES = ["APARTMENT", "APT\\.?", "UNIT", "SUITE", "STE\\.?", "ROOM", "RM\\.?", "#", "NO\\.?", "NUMBER"];
 
 const FLOOR_ONLY_PATTERNS: RegExp[] = [
   /^(?:FLOOR|FL)\s*\d+$/i,
@@ -288,7 +278,7 @@ export function isLikelyUnitLabel(unit: string, hasStrongEvidence: boolean = fal
   // ZIP code
   if (/^\d{5}$/.test(upper)) return false;
 
-  // Ordinals like 6TH / 12TH / 1ST etc. (must be rejected even though they look like digit+letters)
+  // Ordinals like 6TH / 12TH / 1ST etc.
   if (/^\d{1,3}(ST|ND|RD|TH)$/.test(upper)) return false;
 
   // 1) ALWAYS allow digit+letter (1–3 digits + 1–2 letters)
@@ -298,7 +288,7 @@ export function isLikelyUnitLabel(unit: string, hasStrongEvidence: boolean = fal
     const m = upper.match(/^(\d{1,3})([A-Z]{1,2})$/);
     const suffix = m?.[2] ?? "";
     if (ADDRESS_SUFFIXES.includes(suffix)) return false;
-    if (ORDINAL_SUFFIXES.includes(suffix)) return false; // redundant safety
+    if (ORDINAL_SUFFIXES.includes(suffix)) return false;
     return true;
   }
 
@@ -317,7 +307,7 @@ export function isLikelyUnitLabel(unit: string, hasStrongEvidence: boolean = fal
     return isAllowedSpecialToken(upper);
   }
 
-  // 5) Stoplist: only meaningful for alpha-only tokens, but keep as safety
+  // 5) Stoplist: only meaningful for alpha-only tokens
   if (!/\d/.test(upper) && isStopword(upper)) return false;
 
   // 6) Rare pattern: A12 (letter+digits) – allow
@@ -402,10 +392,11 @@ function determineUnitTypeFromField(fieldName: string, normalizedUnit: string): 
 }
 
 function determineConfidence(
-  extractionMethod: "direct" | "pattern",
+  extractionMethod: "direct" | "pattern" | "fallback",
   reason: string,
 ): { confidence: UnitConfidence; reason: string } {
   if (extractionMethod === "direct") return { confidence: "high", reason };
+  if (extractionMethod === "fallback") return { confidence: "medium", reason };
   return { confidence: "medium", reason };
 }
 
@@ -453,20 +444,11 @@ const UNIT_EXTRACTION_PATTERNS: { pattern: RegExp; keyword: string; strong: bool
   { pattern: /\bPH\s*([A-Z0-9]{0,3})\b/i, keyword: "PH", strong: true },
 ];
 
-/**
- * Extract from free text.
- *
- * IMPORTANT CHANGE: We also support "bare" digit+letter tokens (6G, 12B, 100A, 12AA)
- * as weak evidence, because many datasets mention units without the APT/UNIT/# prefixes.
- *
- * This does NOT allow numeric-only tokens (12/100) because isLikelyUnitLabel blocks them
- * unless hasStrongEvidence is true.
- */
 function extractUnitFromText(text: string | null | undefined, fieldName: string): UnitExtractionResult | null {
   if (!text) return null;
   const s = String(text);
 
-  // 1) Strong evidence: explicit prefixes only
+  // 1) Explicit-prefix extraction (strong evidence)
   for (const { pattern, keyword, strong } of UNIT_EXTRACTION_PATTERNS) {
     const match = s.match(pattern);
     if (!match) continue;
@@ -476,7 +458,7 @@ function extractUnitFromText(text: string | null | undefined, fieldName: string)
 
     if (keyword === "PENTHOUSE" || keyword === "PH") {
       const suffix = rawToken ? rawToken.replace(/^PH/i, "") : "";
-      const ph = `PH${suffix}`.replace(/^PH$/, "PH");
+      const ph = `PH${suffix}`;
       if (!isLikelyUnitLabel(ph, true)) continue;
       normalized = ph;
     } else {
@@ -503,32 +485,36 @@ function extractUnitFromText(text: string | null | undefined, fieldName: string)
     };
   }
 
-  // 2) Weak evidence fallback: bare digit+letter tokens in free text (6G, 12B, 100A, 12AA)
-  const bareUnitRegex = /\b([1-9]\d{0,2}[A-Z]{1,2})\b/g;
-  let m: RegExpExecArray | null;
+  // 2) Fallback: bare digit+letter in text (medium confidence)
+  // This matches how NYC records are commonly written (e.g., "WINDOW IN 4J", "CEILING DAMAGE 12AA")
+  const bareMatches = s.match(/\b([1-9]\d{0,2}[A-Z]{1,2})\b/g);
+  if (bareMatches) {
+    for (const raw of bareMatches) {
+      const candidate = raw.toUpperCase();
 
-  while ((m = bareUnitRegex.exec(s)) !== null) {
-    const rawToken = (m[1] ?? "").toUpperCase();
-    const normalized = normalizeUnit(rawToken, false, false);
-    if (!normalized) continue;
+      // Validate WITHOUT strong evidence (numeric-only won't pass here)
+      if (!isLikelyUnitLabel(candidate, false)) continue;
 
-    const idx = m.index ?? 0;
-    const start = Math.max(0, idx - 30);
-    const end = Math.min(s.length, idx + rawToken.length + 30);
-    const snippet = (start > 0 ? "…" : "") + s.slice(start, end).trim() + (end < s.length ? "…" : "");
+      // Additional guard: skip address-ish suffixes already handled by isLikelyUnitLabel,
+      // but keep a defensive check for safety.
+      const m = candidate.match(/^(\d{1,3})([A-Z]{1,2})$/);
+      const suffix = m?.[2] ?? "";
+      if (ADDRESS_SUFFIXES.includes(suffix)) continue;
+      if (ORDINAL_SUFFIXES.includes(suffix)) continue;
 
-    debugLog("UnitExtract.accept_text_weak", { fieldName, rawToken, normalized });
+      debugLog("UnitExtract.accept_bare", { fieldName, candidate });
 
-    const { confidence, reason } = determineConfidence("pattern", "Bare digit+letter token in text");
-    return {
-      normalizedUnit: normalized,
-      asReported: rawToken,
-      sourceField: fieldName,
-      snippet,
-      unitType: "UNKNOWN",
-      confidence,
-      confidenceReason: reason,
-    };
+      const { confidence, reason } = determineConfidence("fallback", "Bare unit reference in text");
+      return {
+        normalizedUnit: candidate,
+        asReported: candidate,
+        sourceField: fieldName,
+        snippet: s.length > 180 ? s.slice(0, 180) + "…" : s,
+        unitType: "APT",
+        confidence,
+        confidenceReason: reason,
+      };
+    }
   }
 
   return null;
@@ -590,7 +576,7 @@ export function extractUnitFromRecordWithTrace(
     };
   }
 
-  // Pattern extraction from known text fields
+  // Pattern extraction from known text fields (explicit prefixes + bare digit+letter fallback)
   for (const field of TEXT_EXTRACTION_FIELDS) {
     const actualKey = lowerKeyMap.get(field.toLowerCase());
     if (!actualKey) continue;
@@ -601,7 +587,7 @@ export function extractUnitFromRecordWithTrace(
     if (extracted) return extracted;
   }
 
-  // Fallback: scan all fields
+  // Fallback: scan all fields (still explicit-prefix patterns + bare digit+letter fallback)
   for (const [k, v] of flat.entries()) {
     if (!v || v.length > 1500) continue;
     if (UNIT_FIELDS.some((f) => f.toLowerCase() === k.toLowerCase())) continue;
@@ -621,7 +607,6 @@ export function extractUnitFromRecord(record: Record<string, unknown> | null | u
 // ------------------------------
 // Candidate extraction (for diagnostics UI)
 // ------------------------------
-
 /**
  * Extract unit-like candidates from free text for diagnostics ONLY.
  * IMPORTANT:
