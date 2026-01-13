@@ -89,7 +89,7 @@ export default {
           'sans-serif'
         ],
         serif: [
-          'Source Serif 4',
+          'Libre Baskerville',
           'ui-serif',
           'Georgia',
           'Cambria',
@@ -108,6 +108,13 @@ export default {
           'Courier New',
           'monospace'
         ]
+      },
+      letterSpacing: {
+        'legal': '0.12em',
+        'municipal': '0.08em',
+      },
+      fontSize: {
+        'label': ['0.6875rem', { lineHeight: '1rem', letterSpacing: '0.12em' }],
       },
       keyframes: {
         'accordion-down': {
