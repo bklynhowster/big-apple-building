@@ -71,6 +71,7 @@ export default function Results() {
   const latitude = params.get('lat') ? parseFloat(params.get('lat')!) : undefined;
   const longitude = params.get('lon') ? parseFloat(params.get('lon')!) : undefined;
   const unitContextParam = params.get('unitContext') || null;
+  const normalizedStreet = params.get('normalized') || null; // Client-side normalization info
 
   const isValidBBL = bbl.length === 10;
 
@@ -295,6 +296,13 @@ export default function Results() {
               {/* Query Debug Panel - visible when ?debug=1 */}
               <QueryDebugPanel />
               
+              {/* Street Normalization Notice */}
+              {normalizedStreet && (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground bg-muted/50 border border-border/50 rounded-md px-3 py-2">
+                  <span className="text-primary">ℹ</span>
+                  <span>Street normalized to <span className="font-medium text-foreground">{normalizedStreet}</span></span>
+                </div>
+              )}
               {/* Context Banner - Primary navigation and scope control */}
               <ContextBanner
                 address={address}
