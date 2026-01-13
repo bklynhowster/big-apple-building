@@ -6,7 +6,7 @@ import { Footer } from '@/components/layout/Footer';
 import { ContextBanner, QueryScope } from '@/components/results/ContextBanner';
 import { PropertyOverview } from '@/components/results/PropertyOverview';
 import { PropertyProfileCard } from '@/components/results/PropertyProfileCard';
-import { LocationMap } from '@/components/results/LocationMap';
+
 import { CondoUnitsCard } from '@/components/results/CondoUnitsCard';
 import { ResidentialUnitsCard } from '@/components/results/ResidentialUnitsCard';
 import { UnitInsightsCard } from '@/components/results/UnitInsightsCard';
@@ -312,15 +312,14 @@ export default function Results() {
                 onScopeChange={setScope}
               />
 
-              {/* Location Map - contextual metadata below banner */}
-              <LocationMap lat={latitude} lon={longitude} address={address} />
-
-              {/* Property Profile */}
+              {/* Property Profile with embedded map */}
               <PropertyProfileCard 
                 bbl={bbl} 
                 unitLabel={currentUnitLabel}
                 parentAddress={address}
                 landmarkStatus={landmarkStatus}
+                lat={latitude}
+                lon={longitude}
               />
               
               {/* Condo Units Discovery - only show when NOT on a unit page and NOT a co-op */}

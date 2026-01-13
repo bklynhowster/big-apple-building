@@ -7,12 +7,15 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { usePropertyProfile, PropertyTypeLabel, PropertyTenure } from '@/hooks/usePropertyProfile';
 import { cn } from '@/lib/utils';
 import type { LandmarkStatus } from '@/hooks/useLandmarkStatus';
+import { LocationMap } from './LocationMap';
 
 interface PropertyProfileCardProps {
   bbl: string;
   unitLabel?: string | null;
   parentAddress?: string;
   landmarkStatus?: LandmarkStatus;
+  lat?: number;
+  lon?: number;
 }
 
 // Color mapping for property types
@@ -78,7 +81,7 @@ function formatSqFt(sqft: number | null): string {
   return `${sqft.toLocaleString()} sq ft`;
 }
 
-export function PropertyProfileCard({ bbl, unitLabel, parentAddress, landmarkStatus }: PropertyProfileCardProps) {
+export function PropertyProfileCard({ bbl, unitLabel, parentAddress, landmarkStatus, lat, lon }: PropertyProfileCardProps) {
   const { loading, error, profile, retry } = usePropertyProfile(bbl);
 
   // Determine if this is a unit page
@@ -194,7 +197,12 @@ export function PropertyProfileCard({ bbl, unitLabel, parentAddress, landmarkSta
           Property Profile
         </CardTitle>
       </CardHeader>
-      <CardContent>
+      <CardContent className="space-y-4">
+        {/* Embedded Location Map */}
+        {lat && lon && (
+          <LocationMap lat={lat} lon={lon} address={parentAddress} />
+        )}
+        
         <div className="flex flex-col lg:flex-row gap-6">
           {/* Property Type Badge - Large */}
           <div className="flex items-center gap-4">

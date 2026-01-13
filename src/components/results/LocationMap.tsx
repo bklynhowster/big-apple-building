@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { ExternalLink } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 
 // Fix default marker icon issue with bundlers
 import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png';
@@ -37,7 +38,7 @@ export function LocationMap({ lat, lon, address }: LocationMapProps) {
     // Create map centered on property
     const map = L.map(mapRef.current, {
       center: [lat, lon],
-      zoom: 16,
+      zoom: 15,
       scrollWheelZoom: false,
       zoomControl: true,
     });
@@ -75,33 +76,44 @@ export function LocationMap({ lat, lon, address }: LocationMapProps) {
   const googleMapsUrl = `https://www.google.com/maps/search/?api=1&query=${lat},${lon}`;
 
   return (
-    <div className="relative w-full rounded-lg border border-border overflow-hidden bg-card">
+    <div className="relative w-full rounded-xl overflow-hidden border border-border">
       {/* External links - positioned top-right */}
-      <div className="absolute top-2 right-2 z-[1000] flex items-center gap-2">
-        <a
-          href={osmUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="flex items-center gap-1 px-2 py-1 text-xs font-medium bg-background/90 backdrop-blur-sm rounded border border-border text-muted-foreground hover:text-foreground transition-colors"
+      <div className="absolute top-2 right-2 z-[1000] flex items-center gap-1.5">
+        <Button
+          variant="ghost"
+          size="sm"
+          asChild
+          className="h-6 px-2 text-xs bg-background/90 backdrop-blur-sm hover:bg-background border border-border/50"
         >
-          OpenStreetMap
-          <ExternalLink className="h-3 w-3" />
-        </a>
-        <a
-          href={googleMapsUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="flex items-center gap-1 px-2 py-1 text-xs font-medium bg-background/90 backdrop-blur-sm rounded border border-border text-muted-foreground hover:text-foreground transition-colors"
+          <a href={osmUrl} target="_blank" rel="noopener noreferrer">
+            OpenStreetMap
+            <ExternalLink className="h-3 w-3 ml-1" />
+          </a>
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          asChild
+          className="h-6 px-2 text-xs bg-background/90 backdrop-blur-sm hover:bg-background border border-border/50"
         >
-          Google Maps
-          <ExternalLink className="h-3 w-3" />
-        </a>
+          <a href={googleMapsUrl} target="_blank" rel="noopener noreferrer">
+            Google Maps
+            <ExternalLink className="h-3 w-3 ml-1" />
+          </a>
+        </Button>
       </div>
 
-      {/* Map container */}
+      {/* Coordinates overlay - bottom-left */}
+      <div className="absolute bottom-2 left-2 z-[1000]">
+        <span className="px-2 py-1 text-[10px] font-mono text-muted-foreground bg-background/90 backdrop-blur-sm rounded border border-border/50">
+          {lat.toFixed(6)}, {lon.toFixed(6)}
+        </span>
+      </div>
+
+      {/* Map container - responsive height */}
       <div
         ref={mapRef}
-        className="w-full h-[220px]"
+        className="w-full h-[160px] md:h-[180px]"
         role="img"
         aria-label={`Map showing location of ${address || 'property'}`}
       />
