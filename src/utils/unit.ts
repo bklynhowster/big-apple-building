@@ -1,7 +1,8 @@
 /* eslint-disable no-console */
+
 /**
  * Unit normalization + extraction utilities
- * STABLE VERSION — Lovable-safe
+ * STABLE + BACKWARD-COMPATIBLE (Lovable-safe)
  */
 
 export type UnitType = "APT" | "UNIT" | "PH" | "UNKNOWN";
@@ -18,7 +19,7 @@ export interface UnitExtractionResult {
 }
 
 // ============================================================
-// DEBUG (Lovable-safe)
+// DEBUG
 // ============================================================
 
 const DEBUG = typeof window !== "undefined" && window.location.search.includes("debug=1");
@@ -29,17 +30,15 @@ function debugLog(event: string, payload: unknown) {
 }
 
 // ============================================================
-// CONSTANTS
+// STOPWORDS (BACKWARD COMPATIBILITY FIX)
 // ============================================================
 
-const JUNK = new Set([
+const STOPWORDS = new Set([
   "",
   "N/A",
   "NA",
   "NONE",
   "UNKNOWN",
-  "0",
-  "-",
   "NULL",
   "BUILDING",
   "BLDG",
@@ -52,6 +51,18 @@ const JUNK = new Set([
   "ALL",
   "ENTIRE",
 ]);
+
+/**
+ * REQUIRED by existing imports elsewhere in the app
+ */
+export function isStopword(value: string | null | undefined): boolean {
+  if (!value) return true;
+  return STOPWORDS.has(value.toUpperCase().trim());
+}
+
+// ============================================================
+// CONSTANTS
+// ============================================================
 
 const ADDRESS_WORDS = [
   "STREET",
@@ -91,21 +102,21 @@ export function isLikelyUnitLabel(value: string, strong = false): boolean {
   const v = value.toUpperCase();
 
   if (!v || v.length > 8) return false;
-  if (JUNK.has(v)) return false;
+  if (isStopword(v)) return false;
 
-  // Ordinals (6TH, 12TH, etc.)
+  // Ordinals (6TH, 12TH)
   if (/^\d{1,3}(ST|ND|RD|TH)$/.test(v)) return false;
 
   // ZIP codes
   if (/^\d{5}$/.test(v)) return false;
 
-  // Digit + letter(s) — ALWAYS allowed
+  // Digit + letter(s)
   if (/^[1-9]\d{0,2}[A-Z]{1,2}$/.test(v)) return true;
 
-  // Numeric-only requires strong evidence
+  // Numeric-only requires strong signal
   if (/^[1-9]\d{0,2}$/.test(v)) return strong;
 
-  // PH / special
+  // PH
   if (/^PH[A-Z0-9]{0,2}$/.test(v)) return true;
 
   return false;
@@ -121,7 +132,7 @@ export function normalizeUnit(raw: string | null | undefined, _relaxed = false, 
   let v = String(raw).trim().toUpperCase();
   if (!v) return null;
 
-  if (JUNK.has(v)) return null;
+  if (isStopword(v)) return null;
 
   // Address-word guard
   for (const w of ADDRESS_WORDS) {
@@ -141,13 +152,10 @@ export function normalizeUnit(raw: string | null | undefined, _relaxed = false, 
 }
 
 // ============================================================
-// EXTRACTION (explicit prefixes only)
+// EXTRACTION — EXPLICIT REFERENCES ONLY
 // ============================================================
 
-const EXPLICIT_PATTERNS: Array<{
-  re: RegExp;
-  type: UnitType;
-}> = [
+const EXPLICIT_PATTERNS: Array<{ re: RegExp; type: UnitType }> = [
   { re: /\bAPT\.?\s*#?\s*([A-Z0-9]{1,6})\b/i, type: "APT" },
   { re: /\bAPARTMENT\s*#?\s*([A-Z0-9]{1,6})\b/i, type: "APT" },
   { re: /\bUNIT\s*#?\s*([A-Z0-9]{1,6})\b/i, type: "UNIT" },
@@ -198,7 +206,7 @@ export function extractUnitFromRecord(record: Record<string, unknown> | null | u
 }
 
 // ============================================================
-// DIAGNOSTICS: candidate extraction (NO validation)
+// DIAGNOSTIC TOKEN SCAN (NON-BINDING)
 // ============================================================
 
 const CANDIDATE_RE = /\b([1-9]\d{0,2}[A-Z]{0,2})\b/g;
@@ -219,61 +227,22 @@ export function extractUnitCandidatesFromText(text: string): Array<{ token: stri
 }
 
 // ============================================================
-// GROUPING / STATS
-// ============================================================
-
-export function groupRecordsByUnit<T extends Record<string, unknown>>(records: T[]): Map<string | null, T[]> {
-  const map = new Map<string | null, T[]>();
-  for (const r of records) {
-    const u = extractUnitFromRecord(r);
-    const arr = map.get(u) ?? [];
-    arr.push(r);
-    map.set(u, arr);
-  }
-  return map;
-}
-
-export function filterRecordsByUnit<T extends Record<string, unknown>>(records: T[], unitContext: string | null): T[] {
-  if (!unitContext) return records;
-  const norm = normalizeUnit(unitContext, false, true);
-  if (!norm) return records;
-  return records.filter((r) => extractUnitFromRecord(r) === norm);
-}
-
-export function recordMentionsUnit(
-  record: Record<string, unknown> | null | undefined,
-  unitContext: string | null,
-): boolean {
-  if (!record || !unitContext) return false;
-  const norm = normalizeUnit(unitContext, false, true);
-  if (!norm) return false;
-  return extractUnitFromRecord(record) === norm;
-}
-
-// ============================================================
-// DEBUG GLOBALS (Lovable-safe)
+// DEBUG GLOBALS
 // ============================================================
 
 declare global {
   interface Window {
     runUnitSanityChecks?: () => void;
-    __unitDebug?: unknown;
   }
 }
 
 if (typeof window !== "undefined" && DEBUG) {
   window.runUnitSanityChecks = () => {
     console.log("[UnitSanity]", {
-      "6G": isLikelyUnitLabel("6G", false),
-      "12": isLikelyUnitLabel("12", false),
+      "6G": isLikelyUnitLabel("6G"),
+      "12": isLikelyUnitLabel("12"),
       "12 strong": isLikelyUnitLabel("12", true),
       "6TH": isLikelyUnitLabel("6TH", true),
     });
-  };
-
-  window.__unitDebug = {
-    normalizeUnit,
-    extractUnitFromRecordWithTrace,
-    extractUnitCandidatesFromText,
   };
 }
