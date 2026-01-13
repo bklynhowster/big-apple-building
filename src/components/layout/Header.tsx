@@ -1,7 +1,12 @@
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
+import { Search } from 'lucide-react';
 import { SavedSearchesDropdown } from '@/components/SavedSearchesDropdown';
+import { Button } from '@/components/ui/button';
 
 export function Header() {
+  const location = useLocation();
+  const isResultsPage = location.pathname === '/results';
+
   return (
     <header className="bg-card border-b border-border">
       <div className="container mx-auto px-4">
@@ -20,12 +25,21 @@ export function Header() {
           </Link>
           <nav className="flex items-center gap-4">
             <SavedSearchesDropdown />
-            <Link 
-              to="/" 
-              className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors hidden md:inline"
-            >
-              Search
-            </Link>
+            {isResultsPage ? (
+              <Link to="/">
+                <Button variant="outline" size="sm" className="gap-2">
+                  <Search className="h-4 w-4" />
+                  <span className="hidden sm:inline">New Search</span>
+                </Button>
+              </Link>
+            ) : (
+              <Link 
+                to="/" 
+                className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors hidden md:inline"
+              >
+                Search
+              </Link>
+            )}
             <a 
               href="https://www1.nyc.gov/site/buildings/index.page" 
               target="_blank" 
