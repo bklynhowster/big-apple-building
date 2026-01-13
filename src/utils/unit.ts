@@ -272,8 +272,7 @@ function isAllowedSingleLetterUnit(token: string, hasStrongEvidence: boolean): b
 
 export function isLikelyUnitLabel(unit: string, hasStrongEvidence: boolean = false): boolean {
   if (!unit) return false;
-  const upper = unit.toUpperCase().trim();
-  if (!upper) return false;
+  const upper = unit.toUpperCase();
   if (upper.length > 8) return false;
 
   // Floor-only patterns
@@ -289,8 +288,8 @@ export function isLikelyUnitLabel(unit: string, hasStrongEvidence: boolean = fal
   // ZIP code
   if (/^\d{5}$/.test(upper)) return false;
 
-  // Reject ordinals like 6TH / 12TH / 1ST etc.
-  if (/^[1-9]\d{0,2}(ST|ND|RD|TH)$/.test(upper)) return false;
+  // Ordinals like 6TH / 12TH / 1ST etc. (must be rejected even though they look like digit+letters)
+  if (/^\d{1,3}(ST|ND|RD|TH)$/.test(upper)) return false;
 
   // 1) ALWAYS allow digit+letter (1–3 digits + 1–2 letters)
   // Examples: 6G, 4J, 12B, 100A, 12AA
@@ -299,7 +298,7 @@ export function isLikelyUnitLabel(unit: string, hasStrongEvidence: boolean = fal
     const m = upper.match(/^(\d{1,3})([A-Z]{1,2})$/);
     const suffix = m?.[2] ?? "";
     if (ADDRESS_SUFFIXES.includes(suffix)) return false;
-    if (ORDINAL_SUFFIXES.includes(suffix)) return false;
+    if (ORDINAL_SUFFIXES.includes(suffix)) return false; // redundant safety
     return true;
   }
 
@@ -379,9 +378,11 @@ export function normalizeUnit(
     return reject("stopword_alpha_only", { value });
   }
 
-  // 9) Validate (relaxed currently maps to same strict validator to keep behavior stable)
+  // 9) Validate
   const ok = isLikelyUnitLabel(value, hasStrongEvidence);
-  if (!ok) return reject("failed_validation", { value });
+  if (!ok) {
+    return reject("failed_validation", { value });
+  }
 
   debugLog("UnitNormalize.accept", { raw: rawStr.slice(0, 80), value, hasStrongEvidence });
   return value;
@@ -437,7 +438,7 @@ const TEXT_EXTRACTION_FIELDS = [
   "ecb_violation_description",
 ];
 
-// Explicit "strong evidence" patterns only (APT/UNIT/#/RM/STE/etc.)
+// Explicit "strong evidence" patterns (APT/UNIT/#/RM/STE/etc.)
 const UNIT_EXTRACTION_PATTERNS: { pattern: RegExp; keyword: string; strong: boolean }[] = [
   { pattern: /\bAPT\.?\s*#?\s*([A-Z0-9]{1,8})\b/i, keyword: "APT", strong: true },
   { pattern: /\bAPARTMENT\s*#?\s*([A-Z0-9]{1,8})\b/i, keyword: "APARTMENT", strong: true },
@@ -452,10 +453,20 @@ const UNIT_EXTRACTION_PATTERNS: { pattern: RegExp; keyword: string; strong: bool
   { pattern: /\bPH\s*([A-Z0-9]{0,3})\b/i, keyword: "PH", strong: true },
 ];
 
+/**
+ * Extract from free text.
+ *
+ * IMPORTANT CHANGE: We also support "bare" digit+letter tokens (6G, 12B, 100A, 12AA)
+ * as weak evidence, because many datasets mention units without the APT/UNIT/# prefixes.
+ *
+ * This does NOT allow numeric-only tokens (12/100) because isLikelyUnitLabel blocks them
+ * unless hasStrongEvidence is true.
+ */
 function extractUnitFromText(text: string | null | undefined, fieldName: string): UnitExtractionResult | null {
   if (!text) return null;
   const s = String(text);
 
+  // 1) Strong evidence: explicit prefixes only
   for (const { pattern, keyword, strong } of UNIT_EXTRACTION_PATTERNS) {
     const match = s.match(pattern);
     if (!match) continue;
@@ -487,6 +498,34 @@ function extractUnitFromText(text: string | null | undefined, fieldName: string)
       sourceField: fieldName,
       snippet,
       unitType: keyword === "UNIT" ? "UNIT" : keyword === "PH" || keyword === "PENTHOUSE" ? "PH" : "APT",
+      confidence,
+      confidenceReason: reason,
+    };
+  }
+
+  // 2) Weak evidence fallback: bare digit+letter tokens in free text (6G, 12B, 100A, 12AA)
+  const bareUnitRegex = /\b([1-9]\d{0,2}[A-Z]{1,2})\b/g;
+  let m: RegExpExecArray | null;
+
+  while ((m = bareUnitRegex.exec(s)) !== null) {
+    const rawToken = (m[1] ?? "").toUpperCase();
+    const normalized = normalizeUnit(rawToken, false, false);
+    if (!normalized) continue;
+
+    const idx = m.index ?? 0;
+    const start = Math.max(0, idx - 30);
+    const end = Math.min(s.length, idx + rawToken.length + 30);
+    const snippet = (start > 0 ? "…" : "") + s.slice(start, end).trim() + (end < s.length ? "…" : "");
+
+    debugLog("UnitExtract.accept_text_weak", { fieldName, rawToken, normalized });
+
+    const { confidence, reason } = determineConfidence("pattern", "Bare digit+letter token in text");
+    return {
+      normalizedUnit: normalized,
+      asReported: rawToken,
+      sourceField: fieldName,
+      snippet,
+      unitType: "UNKNOWN",
       confidence,
       confidenceReason: reason,
     };
@@ -551,7 +590,7 @@ export function extractUnitFromRecordWithTrace(
     };
   }
 
-  // Pattern extraction from known text fields (explicit prefixes only)
+  // Pattern extraction from known text fields
   for (const field of TEXT_EXTRACTION_FIELDS) {
     const actualKey = lowerKeyMap.get(field.toLowerCase());
     if (!actualKey) continue;
@@ -562,7 +601,7 @@ export function extractUnitFromRecordWithTrace(
     if (extracted) return extracted;
   }
 
-  // Fallback: scan all fields (still explicit-prefix patterns only)
+  // Fallback: scan all fields
   for (const [k, v] of flat.entries()) {
     if (!v || v.length > 1500) continue;
     if (UNIT_FIELDS.some((f) => f.toLowerCase() === k.toLowerCase())) continue;
@@ -582,6 +621,7 @@ export function extractUnitFromRecord(record: Record<string, unknown> | null | u
 // ------------------------------
 // Candidate extraction (for diagnostics UI)
 // ------------------------------
+
 /**
  * Extract unit-like candidates from free text for diagnostics ONLY.
  * IMPORTANT:
@@ -699,12 +739,10 @@ export function getUnitStats<T extends Record<string, unknown>>(
  */
 export function filterRecordsByUnit<T extends Record<string, unknown>>(records: T[], unitContext: string | null): T[] {
   if (!unitContext) return records;
-
   // IMPORTANT: unit context is a user-selected filter; treat as "strong evidence"
   // so numeric-only contexts (e.g., "12") can still function in the UI.
   const normalizedContext = normalizeUnit(unitContext, false, true);
   if (!normalizedContext) return records;
-
   return records.filter((record) => extractUnitFromRecord(record) === normalizedContext);
 }
 
@@ -716,11 +754,41 @@ export function recordMentionsUnit(
   unitContext: string | null,
 ): boolean {
   if (!record || !unitContext) return false;
-
   // Same rationale as filterRecordsByUnit: UI context should be treated as strong.
   const normalizedContext = normalizeUnit(unitContext, false, true);
   if (!normalizedContext) return false;
-
   const recordUnit = extractUnitFromRecord(record);
   return recordUnit === normalizedContext;
+}
+
+// ------------------------------
+// DEV globals for sanity / tests
+// ------------------------------
+
+function runSanity(): Record<string, unknown> {
+  const cases: Array<{ name: string; got: boolean; want: boolean }> = [
+    { name: "6G digit+letter allowed", got: isLikelyUnitLabel("6G", false), want: true },
+    { name: "12B digit+letter allowed", got: isLikelyUnitLabel("12B", false), want: true },
+    { name: "12AA digit+letter allowed", got: isLikelyUnitLabel("12AA", false), want: true },
+    { name: "12 numeric-only requires evidence (false)", got: isLikelyUnitLabel("12", false), want: false },
+    { name: "12 numeric-only requires evidence (true)", got: isLikelyUnitLabel("12", true), want: true },
+    { name: "6TH ordinal rejected", got: isLikelyUnitLabel("6TH", true), want: false },
+    { name: "12TH ordinal rejected", got: isLikelyUnitLabel("12TH", true), want: false },
+  ];
+  const failures = cases.filter((c) => c.got !== c.want);
+  return { ok: failures.length === 0, failures, cases };
+}
+
+declare global {
+  interface Window {
+    runUnitSanityChecks?: () => void;
+    runUnitExtractionTests?: () => void;
+  }
+}
+
+if (typeof window !== "undefined" && (import.meta as any)?.env?.DEV) {
+  window.runUnitSanityChecks = () => {
+    const res = runSanity();
+    console.log("[UnitSanity]", res);
+  };
 }
