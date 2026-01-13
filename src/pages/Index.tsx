@@ -2,6 +2,7 @@ import { FileText, Shield, AlertTriangle, Hammer, Scale, FileSearch } from 'luci
 import { Header } from '@/components/layout/Header';
 import { Footer } from '@/components/layout/Footer';
 import { SearchForm } from '@/components/search/SearchForm';
+import nycArchitecturalLines from '@/assets/nyc-architectural-lines.png';
 
 const features = [
   {
@@ -32,9 +33,21 @@ export default function Index() {
       <Header />
       
       <main className="flex-1">
-        {/* Hero Section - Architectural, restrained */}
-        <section className="relative bg-primary py-14 md:py-20">
-          <div className="container mx-auto px-4">
+        {/* Hero Section - Architectural, with NYC line art background */}
+        <section className="relative bg-primary py-14 md:py-20 overflow-hidden">
+          {/* NYC Architectural Line Art Background */}
+          <div 
+            className="absolute inset-0 opacity-[0.04] pointer-events-none"
+            style={{
+              backgroundImage: `url(${nycArchitecturalLines})`,
+              backgroundSize: 'cover',
+              backgroundPosition: 'center',
+              backgroundRepeat: 'no-repeat',
+              filter: 'brightness(0.3) sepia(0.2)',
+            }}
+          />
+          
+          <div className="container mx-auto px-4 relative z-10">
             <div className="max-w-3xl mx-auto text-center mb-10">
               {/* Vertical accent lines - architectural motif */}
               <div className="flex justify-center items-center gap-3 mb-6">
@@ -104,9 +117,20 @@ export default function Index() {
           </div>
         </section>
 
-        {/* Info Section */}
-        <section className="py-10 border-t border-border">
-          <div className="container mx-auto px-4">
+        {/* Info Section with subtle architectural fragment */}
+        <section className="py-10 border-t border-border relative overflow-hidden">
+          {/* Subtle architectural fragment - diagonal lines only */}
+          <div 
+            className="absolute right-0 top-0 w-1/3 h-full opacity-[0.03] pointer-events-none"
+            style={{
+              backgroundImage: `url(${nycArchitecturalLines})`,
+              backgroundSize: 'cover',
+              backgroundPosition: 'left center',
+              filter: 'brightness(0.2)',
+            }}
+          />
+          
+          <div className="container mx-auto px-4 relative z-10">
             <div className="max-w-3xl mx-auto">
               <div className="flex items-start gap-4">
                 <div className="w-0.5 h-full min-h-[80px] bg-primary rounded-full flex-shrink-0" />
