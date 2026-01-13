@@ -37,7 +37,7 @@ import { QueryScope } from './ScopeSelector';
 import { BuildingLevelBanner } from './BuildingLevelBanner';
 import { UnitMentionBadges } from './UnitMentionBadges';
 import { UnitMentionFilter } from './UnitMentionFilter';
-import { normalizeUnit } from '@/utils/unit';
+import { normalizeUnit } from '@/utils/unitExports';
 
 interface ViolationsTabProps {
   bbl: string;

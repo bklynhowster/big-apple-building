@@ -4,7 +4,7 @@ import {
   normalizeUnit,
   type UnitExtractionResult,
   type UnitConfidence 
-} from '@/utils/unit';
+} from '@/utils/unitExports';
 
 // ============================================================================
 // TYPES

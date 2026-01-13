@@ -17,7 +17,7 @@ import {
   type UnitStats,
   type UnitConfidence,
   type UnitType
-} from '@/utils/unit';
+} from '@/utils/unitExports';
 import { 
   useUnitMentions,
   type CombinedUnitStats,
