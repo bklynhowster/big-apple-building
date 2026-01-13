@@ -8,7 +8,7 @@ import { usePropertyProfile, PropertyTypeLabel, PropertyTenure } from '@/hooks/u
 import { cn } from '@/lib/utils';
 import type { LandmarkStatus } from '@/hooks/useLandmarkStatus';
 import { LocationMap } from './LocationMap';
-import { HistoricPhotographSection } from './HistoricPhotographSection';
+
 
 interface PropertyProfileCardProps {
   bbl: string;
@@ -351,14 +351,6 @@ export function PropertyProfileCard({ bbl, unitLabel, parentAddress, landmarkSta
           </div>
         </div>
 
-        {/* Historic Municipal Photograph Section */}
-        <HistoricPhotographSection 
-          block={profile.block} 
-          lot={profile.lot} 
-          borough={profile.borough}
-          landUse={profile.landUse}
-          bbl={bbl}
-        />
 
         {/* Co-op disclaimer */}
         {isCoop && (
