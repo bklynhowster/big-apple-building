@@ -24,24 +24,19 @@ export interface UnitExtractionResult {
 }
 
 // ------------------------------
-// Debug helpers (single gate)
+// Debug helpers (safe ordering)
 // ------------------------------
 
-function isDebugEnabled(): boolean {
-  if (typeof window === 'undefined') return false;
-  if (!import.meta.env.DEV) return false;
-  // Support both BrowserRouter (?debug=1) and HashRouter (#/path?debug=1)
-  const search = window.location.search || '';
-  const hash = window.location.hash || '';
-  return search.includes('debug=1') || hash.includes('debug=1');
-}
+const EXTRACTION_DEBUG =
+  typeof window !== 'undefined' &&
+  window.location?.search?.includes('debug=1') &&
+  (import.meta as any)?.env?.DEV;
 
-const EXTRACTION_DEBUG = isDebugEnabled();
-
-function debugLog(event: string, data?: Record<string, unknown>) {
+function debugLog(event: string, payload: Record<string, unknown>) {
   if (!EXTRACTION_DEBUG) return;
-  // keep log compact; no huge blobs
-  console.log(`[UnitExtract] ${event}`, data ?? {});
+  // keep logs small to avoid spam
+  const safe = JSON.parse(JSON.stringify(payload, (_, v) => (typeof v === 'string' && v.length > 180 ? v.slice(0, 180) + '…' : v)));
+  console.log(`[${event}]`, safe);
 }
 
 // ------------------------------
@@ -317,7 +312,6 @@ function extractUnitFromText(text: string | null | undefined, fieldName: string)
   if (!text) return null;
   const s = String(text);
 
-  // First try explicit prefix patterns (strong evidence)
   for (const { pattern, keyword, strong } of UNIT_EXTRACTION_PATTERNS) {
     const match = s.match(pattern);
     if (!match) continue;
@@ -340,7 +334,7 @@ function extractUnitFromText(text: string | null | undefined, fieldName: string)
     const end = Math.min(s.length, idx + match[0].length + 30);
     const snippet = (start > 0 ? '…' : '') + s.slice(start, end).trim() + (end < s.length ? '…' : '');
 
-    debugLog('UnitExtract.accept', { asReported: match[0].trim(), normalized, sourceField: fieldName, strong });
+    debugLog('UnitExtract.accept_text', { fieldName, keyword, rawToken, normalized, strong });
 
     const { confidence, reason } = determineConfidence('pattern', `Explicit ${keyword} prefix`);
     return {
@@ -350,36 +344,6 @@ function extractUnitFromText(text: string | null | undefined, fieldName: string)
       snippet,
       unitType: keyword === 'UNIT' ? 'UNIT' : keyword === 'PH' || keyword === 'PENTHOUSE' ? 'PH' : 'APT',
       confidence,
-      confidenceReason: reason
-    };
-  }
-
-  // Fallback: iterate candidates from extractUnitCandidatesFromText
-  // This catches bare digit+letter tokens like 6G, 4J, 12B without explicit prefix
-  const candidates = extractUnitCandidatesFromText(s);
-  for (const { token, strong } of candidates) {
-    const normalized = normalizeUnit(token, false, strong);
-    if (!normalized) continue;
-
-    // Find the token in the original text for snippet
-    const tokenIndex = s.toUpperCase().indexOf(token);
-    let snippet: string | null = null;
-    if (tokenIndex >= 0) {
-      const start = Math.max(0, tokenIndex - 30);
-      const end = Math.min(s.length, tokenIndex + token.length + 30);
-      snippet = (start > 0 ? '…' : '') + s.slice(start, end).trim() + (end < s.length ? '…' : '');
-    }
-
-    debugLog('UnitExtract.accept', { asReported: token, normalized, sourceField: fieldName, strong });
-
-    const { confidence, reason } = determineConfidence('pattern', strong ? 'Explicit prefix' : 'Bare digit+letter token');
-    return {
-      normalizedUnit: normalized,
-      asReported: token,
-      sourceField: fieldName,
-      snippet,
-      unitType: 'UNKNOWN',
-      confidence: strong ? confidence : 'low',
       confidenceReason: reason
     };
   }
@@ -405,10 +369,6 @@ function flattenRecordToStrings(record: Record<string, unknown>): Map<string, st
   return out;
 }
 
-// Track debug logging to limit spam
-let debugNoUnitLogCount = 0;
-const DEBUG_NO_UNIT_LOG_LIMIT = 3;
-
 export function extractUnitFromRecordWithTrace(record: Record<string, unknown> | null | undefined): UnitExtractionResult | null {
   if (!record) return null;
 
@@ -431,7 +391,7 @@ export function extractUnitFromRecordWithTrace(record: Record<string, unknown> |
       continue;
     }
 
-    debugLog('UnitExtract.accept', { asReported: value.trim().toUpperCase(), normalized, sourceField: actualKey, strong: true });
+    debugLog('UnitExtract.accept_direct', { field: actualKey, value, normalized });
 
     const { confidence, reason } = determineConfidence('direct', 'Direct apartment/unit field');
     return {
@@ -445,7 +405,7 @@ export function extractUnitFromRecordWithTrace(record: Record<string, unknown> |
     };
   }
 
-  // Pattern extraction from known text fields
+  // Pattern extraction from known text fields (explicit prefixes only)
   for (const field of TEXT_EXTRACTION_FIELDS) {
     const actualKey = lowerKeyMap.get(field.toLowerCase());
     if (!actualKey) continue;
@@ -456,7 +416,7 @@ export function extractUnitFromRecordWithTrace(record: Record<string, unknown> |
     if (extracted) return extracted;
   }
 
-  // Fallback: scan all fields
+  // Fallback: scan all fields (still explicit-prefix patterns only)
   for (const [k, v] of flat.entries()) {
     if (!v || v.length > 1500) continue;
     if (UNIT_FIELDS.some(f => f.toLowerCase() === k.toLowerCase())) continue;
@@ -464,33 +424,6 @@ export function extractUnitFromRecordWithTrace(record: Record<string, unknown> |
 
     const extracted = extractUnitFromText(v, k);
     if (extracted) return extracted;
-  }
-
-  // Debug: log first few records that produce no unit
-  if (isDebugEnabled() && debugNoUnitLogCount < DEBUG_NO_UNIT_LOG_LIMIT) {
-    debugNoUnitLogCount++;
-    const fieldsChecked: string[] = [];
-    const allCandidates: Array<{ field: string; token: string; strong: boolean }> = [];
-
-    for (const [k, v] of flat.entries()) {
-      if (!v || v.length > 500) continue;
-      fieldsChecked.push(k);
-      const candidates = extractUnitCandidatesFromText(v);
-      for (const c of candidates.slice(0, 5)) {
-        allCandidates.push({ field: k, ...c });
-      }
-    }
-
-    console.log('[UnitExtract.noUnit]', {
-      fieldsChecked: fieldsChecked.slice(0, 10),
-      candidates: allCandidates.slice(0, 10),
-      sampleValues: Object.fromEntries(
-        Array.from(flat.entries())
-          .filter(([, v]) => v && v.length < 200)
-          .slice(0, 5)
-          .map(([k, v]) => [k, v.slice(0, 100)])
-      )
-    });
   }
 
   return null;
@@ -647,3 +580,34 @@ export function recordMentionsUnit(
   return recordUnit === normalizedContext;
 }
 
+// ------------------------------
+// DEV globals for sanity / tests
+// ------------------------------
+
+function runSanity(): Record<string, unknown> {
+  const cases: Array<{ name: string; got: boolean; want: boolean }> = [
+    { name: '6G digit+letter allowed', got: isLikelyUnitLabel('6G', false), want: true },
+    { name: '12B digit+letter allowed', got: isLikelyUnitLabel('12B', false), want: true },
+    { name: '12AA digit+letter allowed', got: isLikelyUnitLabel('12AA', false), want: true },
+    { name: '12 numeric-only requires evidence (false)', got: isLikelyUnitLabel('12', false), want: false },
+    { name: '12 numeric-only requires evidence (true)', got: isLikelyUnitLabel('12', true), want: true },
+    { name: '6TH ordinal rejected', got: isLikelyUnitLabel('6TH', true), want: false },
+    { name: '12TH ordinal rejected', got: isLikelyUnitLabel('12TH', true), want: false }
+  ];
+  const failures = cases.filter(c => c.got !== c.want);
+  return { ok: failures.length === 0, failures, cases };
+}
+
+declare global {
+  interface Window {
+    runUnitSanityChecks?: () => void;
+    runUnitExtractionTests?: () => void;
+  }
+}
+
+if (typeof window !== 'undefined' && (import.meta as any)?.env?.DEV) {
+  window.runUnitSanityChecks = () => {
+    const res = runSanity();
+    console.log('[UnitSanity]', res);
+  };
+}

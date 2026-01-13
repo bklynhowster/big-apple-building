@@ -101,60 +101,6 @@ const SUFFIX_MAP: Record<string, string> = {
   'hwy': 'Hwy',
 };
 
-// Common NYC streets with overwhelmingly dominant suffixes
-// Only includes streets where one suffix is used 95%+ of the time
-const STREET_SUFFIX_HINTS: Record<string, string> = {
-  'WYKOFF': 'Ave',
-  'WYCKOFF': 'Ave',
-  'BROADWAY': '', // Special case - no suffix needed for Broadway
-  'FLATBUSH': 'Ave',
-  'ATLANTIC': 'Ave',
-  'BEDFORD': 'Ave',
-  'FULTON': 'St',
-  'MYRTLE': 'Ave',
-  'NOSTRAND': 'Ave',
-  'UTICA': 'Ave',
-  'EASTERN': 'Pkwy',
-  'OCEAN': 'Ave',
-  'CONEY ISLAND': 'Ave',
-  'KINGS': 'Hwy',
-  'LINDEN': 'Blvd',
-  'PENNSYLVANIA': 'Ave',
-  'LIBERTY': 'Ave',
-  'PITKIN': 'Ave',
-  'ROCKAWAY': 'Ave',
-  'RALPH': 'Ave',
-  'BUSHWICK': 'Ave',
-  'DEKALB': 'Ave',
-  'WILLOUGHBY': 'Ave',
-  'VERNON': 'Blvd',
-  'QUEENS': 'Blvd',
-  'NORTHERN': 'Blvd',
-  'JAMAICA': 'Ave',
-  'HILLSIDE': 'Ave',
-  'MERRICK': 'Blvd',
-  'LEFFERTS': 'Blvd',
-  'GRAND': 'Ave', // In Brooklyn/Queens context
-  'METROPOLITAN': 'Ave',
-  'FLUSHING': 'Ave',
-  'KNICKERBOCKER': 'Ave',
-  'CENTRAL': 'Ave',
-  'ST NICHOLAS': 'Ave',
-  'ADAM CLAYTON POWELL': 'Blvd',
-  'MALCOLM X': 'Blvd',
-  'FREDERICK DOUGLASS': 'Blvd',
-  'LENOX': 'Ave',
-  'AMSTERDAM': 'Ave',
-  'COLUMBUS': 'Ave',
-  'LEXINGTON': 'Ave',
-  'MADISON': 'Ave',
-  'PARK': 'Ave',
-  'FIFTH': 'Ave',
-  'THIRD': 'Ave',
-  'SECOND': 'Ave',
-  'FIRST': 'Ave',
-};
-
 // Extract suffix from street name if present
 function extractSuffix(streetName: string): { name: string; type: string } {
   const trimmed = streetName.trim();
@@ -174,12 +120,6 @@ function extractSuffix(streetName: string): { name: string; type: string } {
   }
   
   return { name: trimmed, type: '' };
-}
-
-// Try to get a hinted suffix for a street name (case-insensitive)
-function getHintedSuffix(streetName: string): string | null {
-  const normalized = streetName.trim().toUpperCase();
-  return STREET_SUFFIX_HINTS[normalized] ?? null;
 }
 
 export function SearchForm() {
@@ -232,33 +172,17 @@ export function SearchForm() {
     
     // Convert UI street type to request value (sentinel -> empty string)
     const requestStreetType = getRequestStreetType(streetType);
-    const userExplicitlySelectedType = streetType !== STREET_TYPE_NONE;
     
     // Auto-detect suffix if streetType not explicitly set
     let finalStreetName = streetName.trim();
     let finalStreetType = requestStreetType;
-    let wasNormalized = false;
-    let normalizedTo = '';
     
-    // If no street type selected, try to extract from street name first
+    // If no street type selected, try to extract from street name
     if (!requestStreetType) {
       const extracted = extractSuffix(streetName);
       if (extracted.type) {
         finalStreetName = extracted.name;
         finalStreetType = extracted.type;
-      }
-    }
-    
-    // If still no suffix and user didn't explicitly select, try hint lookup
-    if (!finalStreetType && !userExplicitlySelectedType) {
-      const hintedSuffix = getHintedSuffix(finalStreetName);
-      if (hintedSuffix !== null) {
-        finalStreetType = hintedSuffix;
-        wasNormalized = true;
-        // Format display string: "Wykoff Ave" or just "Broadway" if no suffix
-        normalizedTo = hintedSuffix 
-          ? `${finalStreetName.trim()} ${hintedSuffix}`
-          : finalStreetName.trim();
       }
     }
     
@@ -276,7 +200,7 @@ export function SearchForm() {
       }
       
       const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/geocode?${params.toString()}`;
-      if (import.meta.env.DEV) console.log('[geocode] url:', url);
+      console.log('[geocode] url:', url);
       
       const response = await fetch(url, {
         headers: {
@@ -287,19 +211,9 @@ export function SearchForm() {
 
       const data = await response.json().catch(() => ({}));
 
-      // Handle true HTTP errors (500, etc.)
       if (!response.ok) {
-        if (import.meta.env.DEV) console.log('[search] geocode HTTP error:', response.status, data);
-        setAddressError({ 
-          message: data.userMessage || 'Search service temporarily unavailable. Please try again.' 
-        });
-        setLoading(false);
-        return;
-      }
-
-      // Handle logical failures (ok: false) - address not found but not a server error
-      if (data.ok === false) {
-        if (import.meta.env.DEV) console.log('[search] geocode address not found:', data);
+        // Handle 404 gracefully - this is a "not found" result, not an exception
+        console.log('[search] geocode returned error:', data);
         
         const errorState: SearchError = {
           message: data.userMessage || data.error || 'Address not found. Check spelling and try again.',
@@ -316,14 +230,14 @@ export function SearchForm() {
       const bbl = data.bbl;
 
       if (!bbl) {
-        if (import.meta.env.DEV) console.error('[search] geocode response missing bbl:', data);
+        console.error('[search] geocode response missing bbl:', data);
         setAddressError({ message: 'Geocoding succeeded but no BBL was returned. Please try again.' });
         setLoading(false);
         return;
       }
 
       const bbl10 = String(bbl).padStart(10, '0');
-      if (import.meta.env.DEV) console.log('[search] geocode success bbl:', bbl10);
+      console.log('[search] geocode success bbl:', bbl10);
 
       // Navigate with BBL (and optional address for display)
       const address = data.address || '';
@@ -341,15 +255,10 @@ export function SearchForm() {
         resultParams.set('lon', String(data.longitude));
       }
       resultParams.set('borough', data.borough || borough);
-      
-      // Pass normalization info to results page for display
-      if (wasNormalized && normalizedTo) {
-        resultParams.set('normalized', normalizedTo);
-      }
 
       navigate(`/results?${resultParams.toString()}`);
     } catch (err) {
-      if (import.meta.env.DEV) console.error('[search] geocode error:', err);
+      console.error('[search] geocode error:', err);
       setAddressError({ 
         message: err instanceof Error ? err.message : 'Search failed. Please try again.' 
       });
@@ -374,7 +283,7 @@ export function SearchForm() {
       });
       
       const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/geocode?${params.toString()}`;
-      if (import.meta.env.DEV) console.log('[geocode] url:', url);
+      console.log('[geocode] url:', url);
       
       const response = await fetch(url, {
         headers: {
@@ -383,34 +292,25 @@ export function SearchForm() {
         },
       });
 
-      // Handle true HTTP errors (500, etc.)
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
-        setBblError(errorData.userMessage || 'BBL lookup service temporarily unavailable.');
+        setBblError(errorData.userMessage || errorData.error || 'BBL lookup failed');
         setLoading(false);
         return;
       }
 
       const geocodeData = await response.json();
-
-      // Handle logical failures (ok: false)
-      if (geocodeData.ok === false) {
-        setBblError(geocodeData.userMessage || geocodeData.error || 'BBL not found.');
-        setLoading(false);
-        return;
-      }
-
       const bbl = geocodeData.bbl;
 
       if (!bbl) {
-        if (import.meta.env.DEV) console.error('[search] BBL geocode response missing bbl:', geocodeData);
+        console.error('[search] BBL geocode response missing bbl:', geocodeData);
         setBblError('BBL lookup succeeded but no BBL was returned. Please try again.');
         setLoading(false);
         return;
       }
 
       const bbl10 = String(bbl).padStart(10, '0');
-      if (import.meta.env.DEV) console.log('[search] geocode success bbl:', bbl10);
+      console.log('[search] geocode success bbl:', bbl10);
 
       // Navigate with BBL
       const resultParams = new URLSearchParams({ bbl: bbl10 });
@@ -432,7 +332,7 @@ export function SearchForm() {
 
       navigate(`/results?${resultParams.toString()}`);
     } catch (err) {
-      if (import.meta.env.DEV) console.error('[search] BBL geocode error:', err);
+      console.error('[search] BBL geocode error:', err);
       setBblError(err instanceof Error ? err.message : 'Search failed. Please try again.');
     } finally {
       setLoading(false);

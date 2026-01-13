@@ -105,8 +105,7 @@ export function use311(lat?: number, lon?: number): Use311Return {
       const urlParams = new URLSearchParams(queryParams);
       const fullUrl = `${baseUrl}?${urlParams.toString()}`;
 
-      // DEV-only logging
-      if (import.meta.env.DEV && !loggedUrlsRef.current.has(fullUrl)) {
+      if (!loggedUrlsRef.current.has(fullUrl)) {
         console.log('[use311] fetching:', fullUrl);
         loggedUrlsRef.current.add(fullUrl);
       }

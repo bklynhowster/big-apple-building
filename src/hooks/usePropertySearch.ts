@@ -79,7 +79,7 @@ export function usePropertySearch(): UsePropertySearchResult {
       }
 
       const fullUrl = `${baseUrl}?${queryParams.toString()}`;
-      if (import.meta.env.DEV) console.log('Calling geocode API:', fullUrl);
+      console.log('Calling geocode API:', fullUrl);
 
       const response = await fetch(fullUrl, {
         method: 'GET',
@@ -100,27 +100,18 @@ export function usePropertySearch(): UsePropertySearchResult {
         throw new Error(`Failed to parse response: HTTP ${response.status}`);
       }
 
-      // Handle true HTTP errors (500, etc.)
       if (!response.ok) {
         throw new Error(
-          (responseData.userMessage as string) || 
-          'Search service temporarily unavailable. Please try again.'
-        );
-      }
-
-      // Handle logical failures (ok: false) - address not found
-      if (responseData.ok === false) {
-        throw new Error(
-          (responseData.userMessage as string) || 
           (responseData.error as string) || 
-          'Address not found. Check spelling and try again.'
+          (responseData.details as string) || 
+          `HTTP ${response.status}`
         );
       }
 
       // Check if still mounted
       if (!isMountedRef.current) return;
 
-      if (import.meta.env.DEV) console.log('Geocode result:', responseData);
+      console.log('Geocode result:', responseData);
 
       // Normalize BBL to ensure 10 digits
       const normalizedBBL = normalizeBBL(responseData.bbl as string);

@@ -3,7 +3,7 @@ import {
   extractUnitFromRecordWithTrace,
   type UnitConfidence,
   type UnitType,
-} from '@/utils/unitExports';
+} from '@/utils/unit';
 import type { HPDComplaintRecord, HPDViolationRecord } from '@/hooks/useHPD';
 import type { ServiceRequestRecord } from '@/hooks/use311';
 import type { UnitRosterEntry } from '@/hooks/useCoopUnitRoster';

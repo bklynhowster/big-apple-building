@@ -682,12 +682,9 @@ serve(async (req) => {
       const geocodeResult = await geocodeWithFallback(houseNumber, streetName, streetType, titleCaseBorough);
 
       if (!geocodeResult.success) {
-        console.log('Geocode address not found:', geocodeResult.error, geocodeResult.details);
-        // Return 200 with ok: false for address-not-found (not a server error)
+        console.error('Geocode failed:', geocodeResult.error, geocodeResult.details);
         return new Response(
           JSON.stringify({ 
-            ok: false,
-            code: 'ADDRESS_NOT_FOUND',
             error: geocodeResult.error,
             details: geocodeResult.details,
             attemptedStreets: geocodeResult.attemptedStreets,
@@ -698,7 +695,7 @@ serve(async (req) => {
             receivedStreetType: streetType,
             receivedBorough: borough,
           }),
-          { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
 
@@ -785,7 +782,6 @@ serve(async (req) => {
     const streetName = params.get('streetName') || '';
     const streetType = params.get('streetType') || '';
     const responseData = {
-      ok: true,
       ...propertyInfo,
       receivedHouseNumber: params.get('house') || '',
       receivedStreetName: streetName,
