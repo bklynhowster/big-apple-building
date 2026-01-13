@@ -101,6 +101,60 @@ const SUFFIX_MAP: Record<string, string> = {
   'hwy': 'Hwy',
 };
 
+// Common NYC streets with overwhelmingly dominant suffixes
+// Only includes streets where one suffix is used 95%+ of the time
+const STREET_SUFFIX_HINTS: Record<string, string> = {
+  'WYKOFF': 'Ave',
+  'WYCKOFF': 'Ave',
+  'BROADWAY': '', // Special case - no suffix needed for Broadway
+  'FLATBUSH': 'Ave',
+  'ATLANTIC': 'Ave',
+  'BEDFORD': 'Ave',
+  'FULTON': 'St',
+  'MYRTLE': 'Ave',
+  'NOSTRAND': 'Ave',
+  'UTICA': 'Ave',
+  'EASTERN': 'Pkwy',
+  'OCEAN': 'Ave',
+  'CONEY ISLAND': 'Ave',
+  'KINGS': 'Hwy',
+  'LINDEN': 'Blvd',
+  'PENNSYLVANIA': 'Ave',
+  'LIBERTY': 'Ave',
+  'PITKIN': 'Ave',
+  'ROCKAWAY': 'Ave',
+  'RALPH': 'Ave',
+  'BUSHWICK': 'Ave',
+  'DEKALB': 'Ave',
+  'WILLOUGHBY': 'Ave',
+  'VERNON': 'Blvd',
+  'QUEENS': 'Blvd',
+  'NORTHERN': 'Blvd',
+  'JAMAICA': 'Ave',
+  'HILLSIDE': 'Ave',
+  'MERRICK': 'Blvd',
+  'LEFFERTS': 'Blvd',
+  'GRAND': 'Ave', // In Brooklyn/Queens context
+  'METROPOLITAN': 'Ave',
+  'FLUSHING': 'Ave',
+  'KNICKERBOCKER': 'Ave',
+  'CENTRAL': 'Ave',
+  'ST NICHOLAS': 'Ave',
+  'ADAM CLAYTON POWELL': 'Blvd',
+  'MALCOLM X': 'Blvd',
+  'FREDERICK DOUGLASS': 'Blvd',
+  'LENOX': 'Ave',
+  'AMSTERDAM': 'Ave',
+  'COLUMBUS': 'Ave',
+  'LEXINGTON': 'Ave',
+  'MADISON': 'Ave',
+  'PARK': 'Ave',
+  'FIFTH': 'Ave',
+  'THIRD': 'Ave',
+  'SECOND': 'Ave',
+  'FIRST': 'Ave',
+};
+
 // Extract suffix from street name if present
 function extractSuffix(streetName: string): { name: string; type: string } {
   const trimmed = streetName.trim();
@@ -120,6 +174,12 @@ function extractSuffix(streetName: string): { name: string; type: string } {
   }
   
   return { name: trimmed, type: '' };
+}
+
+// Try to get a hinted suffix for a street name (case-insensitive)
+function getHintedSuffix(streetName: string): string | null {
+  const normalized = streetName.trim().toUpperCase();
+  return STREET_SUFFIX_HINTS[normalized] ?? null;
 }
 
 export function SearchForm() {
@@ -172,17 +232,33 @@ export function SearchForm() {
     
     // Convert UI street type to request value (sentinel -> empty string)
     const requestStreetType = getRequestStreetType(streetType);
+    const userExplicitlySelectedType = streetType !== STREET_TYPE_NONE;
     
     // Auto-detect suffix if streetType not explicitly set
     let finalStreetName = streetName.trim();
     let finalStreetType = requestStreetType;
+    let wasNormalized = false;
+    let normalizedTo = '';
     
-    // If no street type selected, try to extract from street name
+    // If no street type selected, try to extract from street name first
     if (!requestStreetType) {
       const extracted = extractSuffix(streetName);
       if (extracted.type) {
         finalStreetName = extracted.name;
         finalStreetType = extracted.type;
+      }
+    }
+    
+    // If still no suffix and user didn't explicitly select, try hint lookup
+    if (!finalStreetType && !userExplicitlySelectedType) {
+      const hintedSuffix = getHintedSuffix(finalStreetName);
+      if (hintedSuffix !== null) {
+        finalStreetType = hintedSuffix;
+        wasNormalized = true;
+        // Format display string: "Wykoff Ave" or just "Broadway" if no suffix
+        normalizedTo = hintedSuffix 
+          ? `${finalStreetName.trim()} ${hintedSuffix}`
+          : finalStreetName.trim();
       }
     }
     
@@ -265,6 +341,11 @@ export function SearchForm() {
         resultParams.set('lon', String(data.longitude));
       }
       resultParams.set('borough', data.borough || borough);
+      
+      // Pass normalization info to results page for display
+      if (wasNormalized && normalizedTo) {
+        resultParams.set('normalized', normalizedTo);
+      }
 
       navigate(`/results?${resultParams.toString()}`);
     } catch (err) {
