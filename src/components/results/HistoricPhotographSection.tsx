@@ -1,6 +1,6 @@
-import { ExternalLink, Search, ImageOff } from 'lucide-react';
+import { ExternalLink, Search, Loader2 } from 'lucide-react';
 import { useArchivesPhoto, getBlockLotFromBBL } from '@/hooks/useArchivesPhoto';
-import { Skeleton } from '@/components/ui/skeleton';
+import { Button } from '@/components/ui/button';
 
 interface HistoricPhotographSectionProps {
   block: string | null;
@@ -10,12 +10,9 @@ interface HistoricPhotographSectionProps {
   bbl?: string | null;
 }
 
-function isCondoLot(lot: string | null, landUse?: string | null): boolean {
-  if (!lot) return false;
-  const lotNum = parseInt(lot, 10);
-  if (lotNum >= 7500) return true;
-  if (landUse && landUse.toLowerCase().includes('condo')) return true;
-  return false;
+function buildArchiveSearchUrl(block: string, lot: string): string {
+  const query = `block=${block} AND lot=${lot}`;
+  return `https://nycrecords.access.preservica.com/?q=${encodeURIComponent(query)}`;
 }
 
 export function HistoricPhotographSection({ block, lot, borough, landUse, bbl }: HistoricPhotographSectionProps) {
@@ -31,7 +28,7 @@ export function HistoricPhotographSection({ block, lot, borough, landUse, bbl }:
     }
   }
   
-  // Fetch actual archive data
+  // Fetch archive data from edge function
   const { data, isLoading, error } = useArchivesPhoto(effectiveBlock, effectiveLot);
   
   // If we don't have block/lot, don't render
@@ -39,14 +36,10 @@ export function HistoricPhotographSection({ block, lot, borough, landUse, bbl }:
     return null;
   }
 
-  const isCondo = isCondoLot(effectiveLot, landUse);
-  
-  // Build fallback search URL
-  const fallbackSearchUrl = `https://nycrecords.access.preservica.com/?q=${encodeURIComponent(`block=${effectiveBlock} AND lot=${effectiveLot}`)}`;
-  
-  // Use resolved URLs or fallback to search
-  const viewUrl = data?.itemUrl || data?.searchUrl || fallbackSearchUrl;
-  const thumbnailUrl = data?.thumbnailUrl;
+  const query = `block=${effectiveBlock} AND lot=${effectiveLot}`;
+  const searchUrl = data?.searchUrl || buildArchiveSearchUrl(effectiveBlock, effectiveLot);
+  const itemUrl = data?.itemUrl;
+  const hasDirectMatch = !!itemUrl;
 
   return (
     <div className="border-t pt-4 mt-4">
@@ -57,75 +50,85 @@ export function HistoricPhotographSection({ block, lot, borough, landUse, bbl }:
         
         <p className="text-xs text-muted-foreground mb-3">
           NYC Department of Records & Information Services — Municipal Tax Photograph archive.
-          {isCondo && ' Condos may require searching the building lot.'}
-          {' '}Availability varies by property.
+          Availability varies by property.
         </p>
         
-        {/* Thumbnail area */}
-        <div className="mb-3">
-          {isLoading ? (
-            <Skeleton className="w-full max-w-[280px] h-[180px] rounded-md" />
-          ) : thumbnailUrl ? (
-            <a
-              href={viewUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="block w-fit"
-            >
-              <img
-                src={thumbnailUrl}
-                alt={`Historic tax photograph of Block ${effectiveBlock}, Lot ${effectiveLot}`}
-                className="max-h-[180px] w-auto max-w-full rounded-md border border-border object-cover grayscale hover:grayscale-0 transition-all duration-300 cursor-pointer hover:shadow-md"
-                onError={(e) => {
-                  // Hide image on error
-                  (e.target as HTMLImageElement).style.display = 'none';
-                }}
-              />
-            </a>
-          ) : !isLoading && !error ? (
-            <div className="flex items-center gap-2 text-xs text-muted-foreground/70 py-2">
-              <ImageOff className="h-4 w-4" />
-              <span>No photograph found in archives</span>
-            </div>
-          ) : null}
-        </div>
+        {/* Loading state */}
+        {isLoading && (
+          <div className="flex items-center gap-2 text-xs text-muted-foreground py-2 mb-3">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            <span>Searching Municipal Archives…</span>
+          </div>
+        )}
         
-        {/* Links */}
-        <div className="flex flex-wrap items-center gap-2 mb-2">
-          <a
-            href={viewUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-1.5 text-xs text-primary hover:text-primary/80 transition-colors"
-          >
-            {data?.itemUrl ? (
-              <ExternalLink className="h-3 w-3" />
+        {/* Results state */}
+        {!isLoading && (
+          <div className="space-y-3">
+            {hasDirectMatch ? (
+              /* State 1: Found a specific item URL */
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  variant="default"
+                  size="sm"
+                  asChild
+                  className="h-8"
+                >
+                  <a
+                    href={itemUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    <ExternalLink className="h-3.5 w-3.5 mr-1.5" />
+                    View photo
+                  </a>
+                </Button>
+                
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  asChild
+                  className="h-8 text-muted-foreground"
+                >
+                  <a
+                    href={searchUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    <Search className="h-3.5 w-3.5 mr-1.5" />
+                    Search archives
+                  </a>
+                </Button>
+              </div>
             ) : (
-              <Search className="h-3 w-3" />
+              /* State 2: Not found / resolver failed */
+              <div className="space-y-2">
+                <p className="text-xs text-muted-foreground/80">
+                  No direct match found (yet).
+                </p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  asChild
+                  className="h-8"
+                >
+                  <a
+                    href={searchUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    <Search className="h-3.5 w-3.5 mr-1.5" />
+                    Search archives for block/lot
+                  </a>
+                </Button>
+              </div>
             )}
-            View in NYC Municipal Archives
-          </a>
-          
-          {data?.itemUrl && (
-            <>
-              <span className="text-muted-foreground text-xs">•</span>
-              <a
-                href={data.itemUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
-              >
-                <ExternalLink className="h-3 w-3" />
-                Order archival print
-              </a>
-            </>
-          )}
-        </div>
-        
-        {/* Query disclosure */}
-        <div className="text-[10px] text-muted-foreground/70 font-mono">
-          Query: block={effectiveBlock} AND lot={effectiveLot}
-        </div>
+            
+            {/* Query disclosure */}
+            <div className="text-[10px] text-muted-foreground/70 font-mono">
+              {hasDirectMatch ? 'Matched query' : 'Query'}: {query}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
