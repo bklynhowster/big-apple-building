@@ -91,22 +91,22 @@ const features = [
   {
     icon: FileText,
     title: 'DOB Violations',
-    description: 'Department of Buildings violations issued against properties.',
+    description: 'Active and resolved violation history. Verify compliance status and outstanding enforcement actions.',
   },
   {
     icon: AlertTriangle,
     title: 'ECB Violations',
-    description: 'OATH/ECB violation records including penalties and hearing dates.',
+    description: 'OATH/ECB penalty records, hearing outcomes, and outstanding civil liabilities.',
   },
   {
     icon: Shield,
-    title: 'Safety Records',
-    description: 'Safety-related violations classified by severity level.',
+    title: 'Safety Classifications',
+    description: 'Hazardous and immediately hazardous designations. Identify elevated risk exposure.',
   },
   {
     icon: Hammer,
     title: 'Permits & Filings',
-    description: 'Building permits, filings, and current status tracking.',
+    description: 'Filed applications, issued permits, and work authorization status.',
   },
 ];
 
