@@ -1,4 +1,4 @@
-import { Building2, Home, Calendar, Maximize2, Layers, Users, AlertCircle, HelpCircle, Info, Landmark } from 'lucide-react';
+import { Building2, Home, Calendar, Maximize2, Layers, Users, MapPin, AlertCircle, Loader2, HelpCircle, Info } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -6,13 +6,11 @@ import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { usePropertyProfile, PropertyTypeLabel, PropertyTenure } from '@/hooks/usePropertyProfile';
 import { cn } from '@/lib/utils';
-import type { LandmarkStatus } from '@/hooks/useLandmarkStatus';
 
 interface PropertyProfileCardProps {
   bbl: string;
   unitLabel?: string | null;
   parentAddress?: string;
-  landmarkStatus?: LandmarkStatus;
 }
 
 // Color mapping for property types
@@ -78,7 +76,7 @@ function formatSqFt(sqft: number | null): string {
   return `${sqft.toLocaleString()} sq ft`;
 }
 
-export function PropertyProfileCard({ bbl, unitLabel, parentAddress, landmarkStatus }: PropertyProfileCardProps) {
+export function PropertyProfileCard({ bbl, unitLabel, parentAddress }: PropertyProfileCardProps) {
   const { loading, error, profile, retry } = usePropertyProfile(bbl);
 
   // Determine if this is a unit page
@@ -285,60 +283,6 @@ export function PropertyProfileCard({ bbl, unitLabel, parentAddress, landmarkSta
                 {profile.numFloors ? formatNumber(profile.numFloors) : <span className="text-muted-foreground">—</span>}
               </div>
             </div>
-
-            {/* Landmark Status */}
-            {landmarkStatus && !landmarkStatus.isLoading && (
-              <div className="space-y-1">
-                <div className="flex items-center gap-1 text-sm text-muted-foreground">
-                  <Landmark className="h-3.5 w-3.5" />
-                  <span>Landmark</span>
-                </div>
-                <div className="font-medium">
-                  {landmarkStatus.status === 'yes' && (
-                    <TooltipProvider>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <span className="inline-flex items-center gap-1.5 rounded-md bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-200 px-2 py-0.5 text-sm font-semibold cursor-help">
-                            <Building2 className="h-3.5 w-3.5" />
-                            Yes
-                          </span>
-                        </TooltipTrigger>
-                        <TooltipContent side="bottom" className="max-w-xs">
-                          {landmarkStatus.isIndividual && landmarkStatus.individualName && (
-                            <p className="mb-1">
-                              <span className="font-medium">Individual Landmark:</span> {landmarkStatus.individualName}
-                              {landmarkStatus.individualDate && (
-                                <span className="text-muted-foreground"> (Designated {landmarkStatus.individualDate})</span>
-                              )}
-                            </p>
-                          )}
-                          {landmarkStatus.isHistoricDistrict && landmarkStatus.districtName && (
-                            <p>
-                              <span className="font-medium">Historic District:</span> {landmarkStatus.districtName}
-                            </p>
-                          )}
-                          {!landmarkStatus.individualName && !landmarkStatus.districtName && (
-                            <p>This property is landmarked</p>
-                          )}
-                        </TooltipContent>
-                      </Tooltip>
-                    </TooltipProvider>
-                  )}
-                  {landmarkStatus.status === 'no' && !landmarkStatus.error && (
-                    <span className="inline-flex items-center gap-1.5 rounded-md bg-muted text-muted-foreground px-2 py-0.5 text-sm">
-                      <Building2 className="h-3.5 w-3.5" />
-                      No
-                    </span>
-                  )}
-                  {landmarkStatus.status === 'unknown' && (
-                    <span className="inline-flex items-center gap-1.5 rounded-md border border-muted bg-background text-muted-foreground px-2 py-0.5 text-sm">
-                      <HelpCircle className="h-3.5 w-3.5" />
-                      Unknown
-                    </span>
-                  )}
-                </div>
-              </div>
-            )}
           </div>
         </div>
 
