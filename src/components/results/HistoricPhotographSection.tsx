@@ -1,5 +1,5 @@
-import { ExternalLink, Search, Loader2 } from 'lucide-react';
-import { useArchivesPhoto, getBlockLotFromBBL } from '@/hooks/useArchivesPhoto';
+import { ExternalLink, Search } from 'lucide-react';
+import { getBlockLotFromBBL } from '@/hooks/useArchivesPhoto';
 import { Button } from '@/components/ui/button';
 
 interface HistoricPhotographSectionProps {
@@ -28,18 +28,13 @@ export function HistoricPhotographSection({ block, lot, borough, landUse, bbl }:
     }
   }
   
-  // Fetch archive data from edge function
-  const { data, isLoading, error } = useArchivesPhoto(effectiveBlock, effectiveLot);
-  
   // If we don't have block/lot, don't render
   if (!effectiveBlock || !effectiveLot) {
     return null;
   }
 
   const query = `block=${effectiveBlock} AND lot=${effectiveLot}`;
-  const searchUrl = data?.searchUrl || buildArchiveSearchUrl(effectiveBlock, effectiveLot);
-  const itemUrl = data?.itemUrl;
-  const hasDirectMatch = !!itemUrl;
+  const searchUrl = buildArchiveSearchUrl(effectiveBlock, effectiveLot);
 
   return (
     <div className="border-t pt-4 mt-4">
@@ -53,82 +48,28 @@ export function HistoricPhotographSection({ block, lot, borough, landUse, bbl }:
           Availability varies by property.
         </p>
         
-        {/* Loading state */}
-        {isLoading && (
-          <div className="flex items-center gap-2 text-xs text-muted-foreground py-2 mb-3">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            <span>Searching Municipal Archives…</span>
+        <div className="space-y-3">
+          <Button
+            variant="outline"
+            size="sm"
+            asChild
+            className="h-8"
+          >
+            <a
+              href={searchUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              <Search className="h-3.5 w-3.5 mr-1.5" />
+              Search Municipal Archives
+            </a>
+          </Button>
+          
+          {/* Query disclosure */}
+          <div className="text-[10px] text-muted-foreground/70 font-mono">
+            Query: {query}
           </div>
-        )}
-        
-        {/* Results state */}
-        {!isLoading && (
-          <div className="space-y-3">
-            {hasDirectMatch ? (
-              /* State 1: Found a specific item URL */
-              <div className="flex flex-wrap items-center gap-2">
-                <Button
-                  variant="default"
-                  size="sm"
-                  asChild
-                  className="h-8"
-                >
-                  <a
-                    href={itemUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    <ExternalLink className="h-3.5 w-3.5 mr-1.5" />
-                    View photo
-                  </a>
-                </Button>
-                
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  asChild
-                  className="h-8 text-muted-foreground"
-                >
-                  <a
-                    href={searchUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    <Search className="h-3.5 w-3.5 mr-1.5" />
-                    Search archives
-                  </a>
-                </Button>
-              </div>
-            ) : (
-              /* State 2: Not found / resolver failed */
-              <div className="space-y-2">
-                <p className="text-xs text-muted-foreground/80">
-                  No direct match found (yet).
-                </p>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  asChild
-                  className="h-8"
-                >
-                  <a
-                    href={searchUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    <Search className="h-3.5 w-3.5 mr-1.5" />
-                    Search archives for block/lot
-                  </a>
-                </Button>
-              </div>
-            )}
-            
-            {/* Query disclosure */}
-            <div className="text-[10px] text-muted-foreground/70 font-mono">
-              {hasDirectMatch ? 'Matched query' : 'Query'}: {query}
-            </div>
-          </div>
-        )}
+        </div>
       </div>
     </div>
   );
