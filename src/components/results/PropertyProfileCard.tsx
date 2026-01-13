@@ -355,7 +355,9 @@ export function PropertyProfileCard({ bbl, unitLabel, parentAddress, landmarkSta
         <HistoricPhotographSection 
           block={profile.block} 
           lot={profile.lot} 
-          borough={profile.borough} 
+          borough={profile.borough}
+          landUse={profile.landUse}
+          bbl={bbl}
         />
 
         {/* Co-op disclaimer */}
