@@ -6,6 +6,7 @@ import { Footer } from '@/components/layout/Footer';
 import { ContextBanner, QueryScope } from '@/components/results/ContextBanner';
 import { PropertyOverview } from '@/components/results/PropertyOverview';
 import { PropertyProfileCard } from '@/components/results/PropertyProfileCard';
+import brooklynBridgeLines from '@/assets/brooklyn-bridge-lines.png';
 
 import { CondoUnitsCard } from '@/components/results/CondoUnitsCard';
 import { ResidentialUnitsCard } from '@/components/results/ResidentialUnitsCard';
@@ -273,8 +274,27 @@ export default function Results() {
     <div className="flex flex-col min-h-screen">
       <Header />
       
-      <main className="flex-1 bg-muted/30">
-        <div className="container mx-auto px-4 py-6">
+      <main className="flex-1 bg-muted/30 relative">
+        {/* Subtle Brooklyn Bridge fragment - header area only */}
+        <div 
+          className="absolute top-0 left-0 right-0 h-48 pointer-events-none overflow-hidden"
+          aria-hidden="true"
+        >
+          <div 
+            className="absolute inset-0"
+            style={{
+              backgroundImage: `url(${brooklynBridgeLines})`,
+              backgroundSize: 'cover',
+              backgroundPosition: 'center top',
+              opacity: 0.025,
+              filter: 'grayscale(0.3)',
+              maskImage: 'linear-gradient(to bottom, black 0%, transparent 100%)',
+              WebkitMaskImage: 'linear-gradient(to bottom, black 0%, transparent 100%)',
+            }}
+          />
+        </div>
+        
+        <div className="container mx-auto px-4 py-6 relative z-10">
 
           {/* Missing/Invalid BBL State */}
           {!isValidBBL && (
