@@ -1,10 +1,5 @@
-import { useMemo } from 'react';
-import { 
-  extractUnitFromRecordWithTrace, 
-  normalizeUnit,
-  type UnitExtractionResult,
-  type UnitConfidence 
-} from '@/utils/unit';
+import { useMemo } from "react";
+import { extractUnitFromRecordWithTrace, normalizeUnit, type UnitConfidence } from "@/utils/unit";
 
 // ============================================================================
 // TYPES
@@ -25,15 +20,10 @@ export interface RecordWithMentions<T> {
 }
 
 export interface UseRecordUnitMentionsResult<T> {
-  /** Records with their extracted unit mentions */
   recordsWithMentions: RecordWithMentions<T>[];
-  /** All unique units mentioned across all records (sorted naturally) */
   allMentionedUnits: string[];
-  /** Count of records that mention at least one unit */
   recordsWithMentionsCount: number;
-  /** Filter records by a specific unit */
   filterByUnit: (unit: string | null) => RecordWithMentions<T>[];
-  /** Filter to only records that mention any unit */
   filterToMentionsOnly: () => RecordWithMentions<T>[];
 }
 
@@ -41,69 +31,78 @@ export interface UseRecordUnitMentionsResult<T> {
 // NATURAL UNIT SORTING
 // ============================================================================
 
-const SPECIAL_UNITS = ['PH', 'PHA', 'PHB', 'PHC', 'PHD', 'PENTHOUSE', 'BSMT', 'BASEMENT', 'G', 'GF', 'L', 'LL', 'R', 'REAR', 'ROOF'];
+const SPECIAL_UNITS = [
+  "PH",
+  "PHA",
+  "PHB",
+  "PHC",
+  "PHD",
+  "PENTHOUSE",
+  "BSMT",
+  "BASEMENT",
+  "G",
+  "GF",
+  "L",
+  "LL",
+  "R",
+  "REAR",
+  "ROOF",
+];
 
-function parseUnitForSort(unit: string): { isSpecial: boolean; numericPart: number; alphaPart: string; original: string } {
-  const upperUnit = unit.toUpperCase().trim();
-  const isSpecial = SPECIAL_UNITS.some(s => upperUnit === s || upperUnit.startsWith(s));
-  
-  const match = upperUnit.match(/^(\d+)([A-Z]*)$/);
-  if (match) {
+function parseUnitForSort(unit: string) {
+  const upper = unit.toUpperCase();
+  const isSpecial = SPECIAL_UNITS.some((s) => upper === s || upper.startsWith(s));
+
+  const m = upper.match(/^(\d+)([A-Z]*)$/);
+  if (m) {
     return {
       isSpecial: false,
-      numericPart: parseInt(match[1], 10),
-      alphaPart: match[2] || '',
-      original: upperUnit
+      numeric: parseInt(m[1], 10),
+      alpha: m[2] ?? "",
+      original: upper,
     };
   }
-  
+
   return {
     isSpecial,
-    numericPart: isSpecial ? Number.MAX_SAFE_INTEGER : 0,
-    alphaPart: upperUnit,
-    original: upperUnit
+    numeric: isSpecial ? Number.MAX_SAFE_INTEGER : 0,
+    alpha: upper,
+    original: upper,
   };
 }
 
 function compareUnitsNatural(a: string, b: string): number {
-  const parsedA = parseUnitForSort(a);
-  const parsedB = parseUnitForSort(b);
-  
-  if (parsedA.isSpecial && !parsedB.isSpecial) return 1;
-  if (!parsedA.isSpecial && parsedB.isSpecial) return -1;
-  if (parsedA.isSpecial && parsedB.isSpecial) return parsedA.original.localeCompare(parsedB.original);
-  
-  if (parsedA.numericPart !== parsedB.numericPart) return parsedA.numericPart - parsedB.numericPart;
-  return parsedA.alphaPart.localeCompare(parsedB.alphaPart);
+  const A = parseUnitForSort(a);
+  const B = parseUnitForSort(b);
+
+  if (A.isSpecial && !B.isSpecial) return 1;
+  if (!A.isSpecial && B.isSpecial) return -1;
+  if (A.numeric !== B.numeric) return A.numeric - B.numeric;
+  return A.alpha.localeCompare(B.alpha);
 }
 
 // ============================================================================
 // HOOK
 // ============================================================================
 
-/**
- * Hook to extract unit mentions from a list of records.
- * Memoizes extraction results by record to avoid re-parsing.
- * 
- * @param records Array of records with `raw` property containing the original data
- * @param coopUnitContext Optional unit context for highlighting matches
- * @returns Object with records enriched with mentions, and filtering utilities
- */
 export function useRecordUnitMentions<T extends { raw: Record<string, unknown> }>(
   records: T[],
-  coopUnitContext?: string | null
+  coopUnitContext?: string | null,
 ): UseRecordUnitMentionsResult<T> {
-  
-  const normalizedContext = useMemo(() => {
-    return coopUnitContext ? normalizeUnit(coopUnitContext) : null;
-  }, [coopUnitContext]);
-  
-  // Extract mentions from all records (memoized)
+  const normalizedContext = useMemo(
+    () => (coopUnitContext ? normalizeUnit(coopUnitContext, false, true) : null),
+    [coopUnitContext],
+  );
+
+  // ------------------------------------------------------------
+  // Extract mentions per record
+  // ------------------------------------------------------------
+
   const recordsWithMentions = useMemo(() => {
-    return records.map(record => {
+    return records.map((record) => {
       const extraction = extractUnitFromRecordWithTrace(record.raw);
       const mentions: UnitMention[] = [];
-      
+
       if (extraction) {
         mentions.push({
           unit: extraction.normalizedUnit,
@@ -113,54 +112,58 @@ export function useRecordUnitMentions<T extends { raw: Record<string, unknown> }
           confidenceReason: extraction.confidenceReason,
         });
       }
-      
-      const matchesContext = normalizedContext 
-        ? mentions.some(m => m.unit === normalizedContext)
-        : false;
-      
-      return {
-        record,
-        mentions,
-        matchesContext,
-      };
+
+      const matchesContext = normalizedContext ? mentions.some((m) => m.unit === normalizedContext) : false;
+
+      return { record, mentions, matchesContext };
     });
   }, [records, normalizedContext]);
-  
-  // All unique mentioned units (sorted naturally)
+
+  // ------------------------------------------------------------
+  // All mentioned units (global list)
+  // ------------------------------------------------------------
+
   const allMentionedUnits = useMemo(() => {
-    const unitSet = new Set<string>();
-    for (const rwm of recordsWithMentions) {
-      for (const mention of rwm.mentions) {
-        unitSet.add(mention.unit);
-      }
+    const set = new Set<string>();
+    for (const r of recordsWithMentions) {
+      for (const m of r.mentions) set.add(m.unit);
     }
-    return Array.from(unitSet).sort(compareUnitsNatural);
+    return Array.from(set).sort(compareUnitsNatural);
   }, [recordsWithMentions]);
-  
-  // Count of records with at least one mention
+
+  // ------------------------------------------------------------
+  // FIXED: Context-aware count
+  // ------------------------------------------------------------
+
   const recordsWithMentionsCount = useMemo(() => {
-    return recordsWithMentions.filter(rwm => rwm.mentions.length > 0).length;
-  }, [recordsWithMentions]);
-  
-  // Filter by specific unit
+    if (!normalizedContext) {
+      return recordsWithMentions.filter((r) => r.mentions.length > 0).length;
+    }
+    return recordsWithMentions.filter((r) => r.matchesContext).length;
+  }, [recordsWithMentions, normalizedContext]);
+
+  // ------------------------------------------------------------
+  // Filter helpers
+  // ------------------------------------------------------------
+
   const filterByUnit = useMemo(() => {
-    return (unit: string | null): RecordWithMentions<T>[] => {
+    return (unit: string | null) => {
       if (!unit) return recordsWithMentions;
-      const normalizedUnit = normalizeUnit(unit);
-      if (!normalizedUnit) return recordsWithMentions;
-      return recordsWithMentions.filter(rwm => 
-        rwm.mentions.some(m => m.unit === normalizedUnit)
-      );
+      const normalized = normalizeUnit(unit, false, true);
+      if (!normalized) return recordsWithMentions;
+      return recordsWithMentions.filter((r) => r.mentions.some((m) => m.unit === normalized));
     };
   }, [recordsWithMentions]);
-  
-  // Filter to mentions only
+
   const filterToMentionsOnly = useMemo(() => {
-    return (): RecordWithMentions<T>[] => {
-      return recordsWithMentions.filter(rwm => rwm.mentions.length > 0);
+    return () => {
+      if (!normalizedContext) {
+        return recordsWithMentions.filter((r) => r.mentions.length > 0);
+      }
+      return recordsWithMentions.filter((r) => r.matchesContext);
     };
-  }, [recordsWithMentions]);
-  
+  }, [recordsWithMentions, normalizedContext]);
+
   return {
     recordsWithMentions,
     allMentionedUnits,
