@@ -91,13 +91,42 @@ export default function Results() {
   // Get property profile to detect co-op status (for current BBL)
   const { profile } = usePropertyProfile(isValidBBL ? bbl : null);
   
-  // Derive isCoop from new two-layer ownership system:
+  // Derive isCoopInferred from new two-layer ownership system:
   // Show as co-op if ownership.type === 'Cooperative' AND score >= 8
-  const isInferredCoop = profile?.ownership?.type === 'Cooperative' && 
-    profile?.ownership?.coopLikelihoodScore >= 8;
+  const isCoopInferred = profile?.ownership?.type === 'Cooperative' && 
+    (profile?.ownership?.coopLikelihoodScore ?? 0) >= 8;
   
-  // Legacy fallback for propertyTenure (for backward compatibility during transition)
-  const isCoop = isInferredCoop || profile?.propertyTenure === 'COOP';
+  // Manual override state - synced from PropertyProfileCard
+  const [isCoopEffective, setIsCoopEffective] = useState(false);
+  
+  // Update isCoopEffective when profile loads (initial state from inferred)
+  useEffect(() => {
+    if (profile) {
+      // Check localStorage for override
+      const storageKey = `elk_override:${bbl}`;
+      try {
+        const stored = localStorage.getItem(storageKey);
+        if (stored === 'COOP') {
+          setIsCoopEffective(true);
+        } else if (stored === 'NOT_COOP') {
+          setIsCoopEffective(false);
+        } else {
+          setIsCoopEffective(isCoopInferred);
+        }
+      } catch {
+        setIsCoopEffective(isCoopInferred);
+      }
+    }
+  }, [profile, bbl, isCoopInferred]);
+  
+  // Handler for when PropertyProfileCard changes override
+  const handleOwnershipOverrideChange = useCallback((effective: boolean) => {
+    setIsCoopEffective(effective);
+  }, []);
+  
+  // IMPORTANT: Mentioned Units visibility is NOT dependent on co-op status
+  // isCoop is only used for co-op-specific UI (banners, unit context navigation)
+  const isCoop = isCoopEffective;
   
   // For unit pages, also fetch building profile using buildingBblParam
   const buildingBblForProfile = isUnitLotEarly && buildingBblParam ? buildingBblParam : null;
@@ -469,6 +498,7 @@ export default function Results() {
                 landmarkStatus={landmarkStatus}
                 lat={latitude}
                 lon={longitude}
+                onOwnershipOverrideChange={handleOwnershipOverrideChange}
               />
               
               {/* Condo Units Discovery - only show when NOT on a unit page and NOT a co-op */}
