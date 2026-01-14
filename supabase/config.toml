@@ -41,3 +41,6 @@ verify_jwt = false
 
 [functions.explain-record]
 verify_jwt = false
+
+[functions.explain-unit-mention]
+verify_jwt = false

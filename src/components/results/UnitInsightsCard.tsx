@@ -24,6 +24,7 @@ import {
   type ScanProgress,
 } from '@/hooks/useUnitMentions';
 import { UnitExtractionDiagnostics } from './UnitExtractionDiagnostics';
+import { UnitMentionExplanation } from './UnitMentionExplanation';
 import type { HPDComplaintRecord, HPDViolationRecord } from '@/hooks/useHPD';
 import type { ServiceRequestRecord } from '@/hooks/use311';
 import type { UnitRosterEntry } from '@/hooks/useCoopUnitRoster';
@@ -279,6 +280,53 @@ interface EvidenceRecord {
   description: string | null;
   snippet?: string | null;
   status?: string | null;
+}
+
+/**
+ * Build a readable text representation of a record for AI explanation.
+ */
+function buildRawTextFromRecord(record: Record<string, unknown>): string {
+  const raw = (record.raw as Record<string, unknown>) || record;
+  const lines: string[] = [];
+  
+  if (raw.description || raw.full_description || record.description) {
+    lines.push(`Description: ${raw.description || raw.full_description || record.description}`);
+  }
+  if (raw.status || record.status) {
+    lines.push(`Status: ${raw.status || record.status}`);
+  }
+  if (raw.category || record.category) {
+    lines.push(`Category: ${raw.category || record.category}`);
+  }
+  if (raw.violationclass || raw.violation_class || raw.class) {
+    lines.push(`Class: ${raw.violationclass || raw.violation_class || raw.class}`);
+  }
+  if (raw.novdescription) {
+    lines.push(`NOV Description: ${raw.novdescription}`);
+  }
+  if (raw.apartment || raw.unit) {
+    lines.push(`Unit/Apartment: ${raw.apartment || raw.unit}`);
+  }
+  if (raw.complaint_type || raw.complainttype) {
+    lines.push(`Complaint Type: ${raw.complaint_type || raw.complainttype}`);
+  }
+  if (raw.resolution_description) {
+    lines.push(`Resolution: ${raw.resolution_description}`);
+  }
+  
+  // If we have very little, stringify key parts
+  if (lines.length < 2) {
+    const subset: Record<string, unknown> = {};
+    for (const key of ['description', 'status', 'category', 'novdescription', 'apartment', 'class', 'complaint_type']) {
+      if (raw[key]) subset[key] = raw[key];
+    }
+    if (Object.keys(subset).length > 0) {
+      return JSON.stringify(subset, null, 2);
+    }
+    return JSON.stringify(raw, null, 2);
+  }
+  
+  return lines.join('\n');
 }
 
 function combineUnitStats(
@@ -1111,6 +1159,16 @@ function EvidenceDrawer({
                       {record.issueDate && (
                         <p className="text-muted-foreground text-xs mt-1">Date: {record.issueDate}</p>
                       )}
+                      {/* AI Explanation for HPD Violation */}
+                      <UnitMentionExplanation
+                        agency="HPD"
+                        recordId={record.recordId}
+                        recordDate={record.issueDate}
+                        recordStatus={record.status}
+                        unitContext={unit}
+                        rawText={buildRawTextFromRecord(record.raw)}
+                        compact
+                      />
                     </div>
                   ))}
                   {matchingHpdComplaints.map((record, idx) => (
@@ -1130,6 +1188,16 @@ function EvidenceDrawer({
                       {record.issueDate && (
                         <p className="text-muted-foreground text-xs mt-1">Date: {record.issueDate}</p>
                       )}
+                      {/* AI Explanation for HPD Complaint */}
+                      <UnitMentionExplanation
+                        agency="HPD"
+                        recordId={record.recordId}
+                        recordDate={record.issueDate}
+                        recordStatus={record.status}
+                        unitContext={unit}
+                        rawText={buildRawTextFromRecord(record.raw)}
+                        compact
+                      />
                     </div>
                   ))}
                 </CollapsibleContent>
@@ -1167,6 +1235,16 @@ function EvidenceDrawer({
                       {record.issueDate && (
                         <p className="text-muted-foreground text-xs mt-1">Date: {record.issueDate}</p>
                       )}
+                      {/* AI Explanation for 311 Request */}
+                      <UnitMentionExplanation
+                        agency="311"
+                        recordId={record.recordId}
+                        recordDate={record.issueDate}
+                        recordStatus={record.status}
+                        unitContext={unit}
+                        rawText={buildRawTextFromRecord(record.raw)}
+                        compact
+                      />
                     </div>
                   ))}
                 </CollapsibleContent>
