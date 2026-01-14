@@ -209,13 +209,13 @@ export function PermitsTab({ bbl, bin, scope = 'building', isCoop, coopUnitConte
         datasetName="DOB Permits (ipu4-2vj7)"
       />
 
-      {/* Unit mention disclaimer for co-ops */}
-      {isCoop && recordsWithMentionsCount > 0 && (
+      {/* Unit mention disclaimer - show whenever there are mentions (not gated by ownership) */}
+      {recordsWithMentionsCount > 0 && (
         <Alert variant="default" className="border-primary/20 bg-primary/5">
           <Info className="h-4 w-4" />
           <AlertDescription className="text-sm">
             <strong>{recordsWithMentionsCount}</strong> of {totalItems} permits mention specific unit(s). 
-            Unit mentions are inferred from permit text; not proof of unit-level enforcement.
+            Mentioned Unit means the unit appears in city records text; it does not imply unit-level enforcement, responsibility, or issuance.
           </AlertDescription>
         </Alert>
       )}
@@ -243,8 +243,8 @@ export function PermitsTab({ bbl, bin, scope = 'building', isCoop, coopUnitConte
         </div>
       </div>
 
-      {/* Unit mention filter (only for co-ops) */}
-      {isCoop && (
+      {/* Unit mention filter - show whenever there are unit mentions (not gated by ownership) */}
+      {recordsWithMentionsCount > 0 && (
         <UnitMentionFilter
           allMentionedUnits={allMentionedUnits}
           mentionCount={recordsWithMentionsCount}
@@ -291,7 +291,7 @@ export function PermitsTab({ bbl, bin, scope = 'building', isCoop, coopUnitConte
               <TableRow className="bg-muted/50">
                 {isVisible('issueDate') && <TableHead className="font-semibold">Issue Date</TableHead>}
                 {isVisible('status') && <TableHead className="font-semibold">Status</TableHead>}
-                {isCoop && isVisible('mentions') && <TableHead className="font-semibold">Mentions</TableHead>}
+                {isVisible('mentions') && recordsWithMentionsCount > 0 && <TableHead className="font-semibold">Mentions</TableHead>}
                 {isVisible('permitType') && <TableHead className="font-semibold">Type</TableHead>}
                 {isVisible('workType') && <TableHead className="font-semibold">Work Type</TableHead>}
                 {isVisible('description') && <TableHead className="font-semibold">Description</TableHead>}
@@ -314,7 +314,7 @@ export function PermitsTab({ bbl, bin, scope = 'building', isCoop, coopUnitConte
                   >
                     {isVisible('issueDate') && <TableCell className="text-sm">{item.issueDate ? new Date(item.issueDate).toLocaleDateString() : '-'}</TableCell>}
                     {isVisible('status') && <TableCell><StatusBadge status={item.status} /></TableCell>}
-                    {isCoop && isVisible('mentions') && (
+                    {isVisible('mentions') && recordsWithMentionsCount > 0 && (
                       <TableCell>
                         <UnitMentionBadges 
                           mentions={mentions}
