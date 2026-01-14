@@ -304,8 +304,11 @@ export function PropertyProfileCard({ bbl, unitLabel, parentAddress, landmarkSta
                   >
                     {profile.ownership.confidence === 'Unverified' 
                       ? 'Unverified' 
-                      : `${formatConfidenceLabel(profile.ownership.confidence)}: ${profile.ownership.type}`}
+                      : profile.ownership.type === 'Cooperative'
+                        ? 'Co-op (inferred)'
+                        : `${formatConfidenceLabel(profile.ownership.confidence)}: ${profile.ownership.type}`}
                   </Badge>
+                  
                   
                   {/* Confidence badge for Market-known */}
                   {profile.ownership.confidence === 'Market-known' && (
@@ -369,8 +372,8 @@ export function PropertyProfileCard({ bbl, unitLabel, parentAddress, landmarkSta
                       
                       {/* Score thresholds explanation */}
                       <div className="text-xs text-muted-foreground border-t border-border pt-2">
-                        <p>Score ≥7 = Market-known (unverified)</p>
-                        <p>Score ≥9 = High confidence</p>
+                        <p>Score ≥8 = Co-op (inferred)</p>
+                        <p>Score ≥9 = High confidence, Score 8 = Medium confidence</p>
                       </div>
                     </div>
                   </CollapsibleContent>
@@ -378,9 +381,11 @@ export function PropertyProfileCard({ bbl, unitLabel, parentAddress, landmarkSta
 
                 {/* Disclaimer based on confidence */}
                 <p className="text-xs text-muted-foreground">
-                  {profile.ownership.disclaimerKey === 'market-known' 
-                    ? 'Based on structural indicators (unit count, tax lot structure, and record text). Not a legal confirmation. Confirm via ACRIS / offering plan / corporate filings.'
-                    : 'Municipal datasets do not reliably indicate cooperative ownership. Confirm via external records.'}
+                  {profile.ownership.type === 'Cooperative'
+                    ? 'Inferred from structural indicators (unit count, tax lot structure, and record text). Not legal confirmation. Verify via ACRIS / offering plan / corporate filings.'
+                    : profile.ownership.disclaimerKey === 'market-known' 
+                      ? 'Based on structural indicators (unit count, tax lot structure, and record text). Not a legal confirmation. Confirm via ACRIS / offering plan / corporate filings.'
+                      : 'Municipal datasets do not reliably indicate cooperative ownership. Confirm via external records.'}
                 </p>
               </div>
             </div>

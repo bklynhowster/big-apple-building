@@ -394,7 +394,8 @@ function computeOwnershipStructure(
   }
 
   // Determine confidence and structure based on score
-  if (score >= 7) {
+  // Threshold: score >= 8 shows as "Co-op (inferred)"
+  if (score >= 8) {
     return {
       type: 'Cooperative',
       confidence: 'Market-known',
