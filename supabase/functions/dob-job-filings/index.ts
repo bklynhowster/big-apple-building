@@ -73,16 +73,22 @@ function normalizeUnit(raw: string | null | undefined): string | null {
 }
 
 // Extract unit tokens from free text (job description, work on floors, etc.)
+// CRITICAL: Use negative lookahead (?!S\b) to prevent matching plurals like "UNITS" -> "S"
 const UNIT_EXTRACTION_PATTERNS = [
-  /\bAPT\.?\s*([A-Z0-9]{1,6})\b/gi,
-  /\bAPARTMENT\s*([A-Z0-9]{1,6})\b/gi,
-  /\bUNIT\s*([A-Z0-9]{1,6})\b/gi,
+  /\bAPT\.?(?!S\b)\s*([A-Z0-9]{1,6})\b/gi,
+  /\bAPARTMENT(?!S\b)\s*([A-Z0-9]{1,6})\b/gi,
+  /\bUNIT(?!S\b)\s*([A-Z0-9]{1,6})\b/gi,
   /\b#\s*([A-Z0-9]{1,6})\b/g,
   /\bPENTHOUSE\s*([A-Z0-9]{0,3})\b/gi,
   /\bPH[\s\-]?([A-Z0-9]{0,3})\b/gi,
-  /\bRM\.?\s*([A-Z0-9]{1,6})\b/gi,
-  /\bROOM\s*([A-Z0-9]{1,6})\b/gi,
+  /\bRM\.?(?!S\b)\s*([A-Z0-9]{1,6})\b/gi,
+  /\bROOM(?!S\b)\s*([A-Z0-9]{1,6})\b/gi,
+  /\bSTE\.?(?!S\b)\s*([A-Z0-9]{1,6})\b/gi,
+  /\bSUITE(?!S\b)\s*([A-Z0-9]{1,6})\b/gi,
 ];
+
+// Single letters that are almost never real units (common false positives)
+const BANNED_SINGLE_LETTERS = new Set(['S', 'I', 'A', 'E', 'O']);
 
 function extractUnitTokensFromText(text: string | null | undefined): string[] {
   if (!text) return [];
@@ -95,7 +101,8 @@ function extractUnitTokensFromText(text: string | null | undefined): string[] {
     pattern.lastIndex = 0;
     let match;
     while ((match = pattern.exec(upperText)) !== null) {
-      const candidate = match[1] || '';
+      const candidate = (match[1] || '').trim();
+      
       // For penthouse without number, use "PH"
       if (pattern.source.includes('PENTHOUSE') && !candidate) {
         const normalized = normalizeUnit('PH');
@@ -104,6 +111,19 @@ function extractUnitTokensFromText(text: string | null | undefined): string[] {
         const normalized = normalizeUnit('PH');
         if (normalized) units.add(normalized);
       } else {
+        // CRITICAL: Reject single-letter extractions that are common false positives
+        // unless the source text literally contains "UNIT <letter>" with explicit spacing
+        if (/^[A-Z]$/.test(candidate)) {
+          if (BANNED_SINGLE_LETTERS.has(candidate)) {
+            continue; // Skip common false positives like "S" from "UNITS"
+          }
+          // For other single letters, require explicit "UNIT X" pattern
+          const explicitPattern = new RegExp(`\\bUNIT\\s+${candidate}\\b`, 'i');
+          if (!explicitPattern.test(upperText)) {
+            continue;
+          }
+        }
+        
         const normalized = normalizeUnit(candidate);
         if (normalized) units.add(normalized);
       }
