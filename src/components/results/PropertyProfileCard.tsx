@@ -200,9 +200,10 @@ export function PropertyProfileCard({ bbl, unitLabel, parentAddress, landmarkSta
                   profile.residentialUnits !== null ||
                   profile.yearBuilt !== null;
 
-  // Use ownership classification instead of old isCoop check
-  const isLikelyCoop = profile.ownershipConfidence === 'medium' && 
-    profile.ownershipTypeLabel.includes('Co-op');
+  // Only show co-op disclaimer for HIGH confidence explicit co-ops
+  // (not for medium/low confidence or "Likely Co-op" which we no longer use)
+  const isConfirmedCoop = profile.ownershipConfidence === 'high' && 
+    profile.ownershipTypeLabel === 'Co-op';
 
   return (
     <Card>
@@ -407,13 +408,12 @@ export function PropertyProfileCard({ bbl, unitLabel, parentAddress, landmarkSta
         </div>
 
 
-        {/* Likely Co-op disclaimer - shown for medium confidence co-op classification */}
-        {isLikelyCoop && (
+        {/* Co-op disclaimer - ONLY shown for high-confidence explicit co-ops */}
+        {isConfirmedCoop && (
           <div className="elk-info-box flex items-start gap-2 mt-4">
-            <Info className="h-4 w-4 mt-0.5 shrink-0 text-warning" />
+            <Info className="h-4 w-4 mt-0.5 shrink-0 text-primary" />
             <p>
-              This building's DOF tax classification suggests it may be a co-op. Co-op units do not have individual tax lots/BBLs—most NYC regulatory records are issued at the building level. 
-              <span className="text-muted-foreground"> Confirm via offering plan or corporate records if needed.</span>
+              Co-op units do not have individual tax lots/BBLs. Most NYC regulatory records are issued at the building level.
             </p>
           </div>
         )}

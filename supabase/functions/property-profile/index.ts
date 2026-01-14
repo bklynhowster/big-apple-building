@@ -203,13 +203,15 @@ type OwnershipConfidence = 'high' | 'medium' | 'low';
 
 // Building class codes reference: https://www.nyc.gov/assets/finance/jump/hlpbldgcode.html
 const CONDO_CLASSES = ['R0', 'R1', 'R2', 'R3', 'R4', 'R5', 'R6', 'R7', 'R8', 'R9', 'RR', 'RS'];
-// DOF tax classification classes that MAY indicate co-op (but are NOT definitive):
-// C0-C9: Walk-up apartments, D0-D9: Elevator apartments
-// These reflect DOF tax classification, NOT legal ownership structure
-const COOP_TAX_CLASS_PREFIXES = ['C', 'D'];
 const ONE_TWO_FAMILY_CLASSES = ['A0', 'A1', 'A2', 'A3', 'A4', 'A5', 'A6', 'A7', 'A8', 'A9', 'B1', 'B2', 'B3', 'B9'];
 const MIXED_USE_LAND_USES = ['04']; // Mixed residential/commercial
 const COMMERCIAL_LAND_USES = ['05', '06', '07', '08', '09', '10', '11'];
+
+// Known BBL overrides for ownership classification (admin corrections)
+const OWNERSHIP_OVERRIDES: Record<string, { label: string; confidence: OwnershipConfidence; evidence: string[] }> = {
+  // Add known false positives here as needed
+  // '3064110045': { label: 'Rental Building', confidence: 'high', evidence: ['Manual override: confirmed not a co-op'] },
+};
 
 interface PropertyClassification {
   propertyTypeLabel: PropertyTypeLabel;
@@ -224,14 +226,47 @@ interface OwnershipProfile {
 }
 
 /**
- * Computes ownership profile with confidence and evidence.
- * IMPORTANT: DOF building classification reflects tax status, NOT legal ownership.
+ * Checks if text contains explicit co-op keywords (not just "CO-" prefix).
+ * Only matches "COOPERATIVE", "CO-OP", "COOP" as distinct words.
+ */
+function hasExplicitCoopText(text: string | null | undefined): boolean {
+  if (!text) return false;
+  const upper = text.toUpperCase();
+  // Match explicit co-op terms, not just "CO-" prefix
+  return /\bCOOPERATIVE\b/.test(upper) || 
+         /\bCO-OP\b/.test(upper) || 
+         /\bCOOP\b/.test(upper);
+}
+
+/**
+ * Computes ownership profile with STRICT confidence and evidence.
+ * 
+ * IMPORTANT: We do NOT infer co-op from building class codes like C0-C9 or D0-D9.
+ * These are DOF tax classifications that do NOT confirm cooperative ownership.
+ * 
+ * Rules (strict - assertion only when explicit):
+ * A) High confidence Condo: condoNo present OR condo building class
+ * B) High confidence Co-op: ONLY if explicit "Cooperative/Co-op" text exists
+ * C) Otherwise: "Ownership type: Not specified in municipal data" (low confidence)
  */
 function computeOwnershipProfile(
   buildingClass: string | null,
   condoNo: string | number | null,
-  landUse: string | null
+  landUse: string | null,
+  bbl: string,
+  rawData?: Record<string, unknown>
 ): OwnershipProfile {
+  // Check for admin override first
+  if (OWNERSHIP_OVERRIDES[bbl]) {
+    const override = OWNERSHIP_OVERRIDES[bbl];
+    return {
+      ownershipTypeLabel: override.label,
+      ownershipConfidence: override.confidence,
+      ownershipEvidence: override.evidence,
+      ownershipWarnings: [],
+    };
+  }
+
   const bc = (buildingClass || '').toUpperCase().trim();
   const evidence: string[] = [];
   const warnings: string[] = [];
@@ -257,33 +292,44 @@ function computeOwnershipProfile(
     };
   }
 
-  // ============ B) MEDIUM CONFIDENCE: Likely Co-op (DOF tax classification) ============
-  const bcFirstChar = bc.charAt(0);
-  const isCoopTaxClass = COOP_TAX_CLASS_PREFIXES.includes(bcFirstChar) && bc.length >= 2;
+  // ============ B) HIGH CONFIDENCE: Co-op (ONLY with explicit text) ============
+  // Check all available text fields for explicit "Cooperative" / "Co-op" wording
+  const textFieldsToCheck: string[] = [];
   
-  if (isCoopTaxClass) {
-    evidence.push(`DOF Building Classification: ${bc}`);
-    warnings.push(
-      'DOB notes that DOF classification reflects tax status and may not confirm legal ownership structure. ' +
-      'Confirm via offering plan or corporate records if needed.'
-    );
+  if (bc) textFieldsToCheck.push(bc);
+  
+  // Check raw data for any field containing explicit co-op text
+  if (rawData) {
+    for (const [key, value] of Object.entries(rawData)) {
+      if (typeof value === 'string') {
+        textFieldsToCheck.push(value);
+      }
+    }
+  }
 
+  const hasExplicitCoop = textFieldsToCheck.some(text => hasExplicitCoopText(text));
+  
+  if (hasExplicitCoop) {
+    evidence.push('Explicit "Cooperative" or "Co-op" text found in property data');
+    if (bc) evidence.push(`Building Class: ${bc}`);
+    
     return {
-      ownershipTypeLabel: 'Likely Co-op (DOF tax classification)',
-      ownershipConfidence: 'medium',
+      ownershipTypeLabel: 'Co-op',
+      ownershipConfidence: 'high',
       ownershipEvidence: evidence,
-      ownershipWarnings: warnings,
+      ownershipWarnings: [],
     };
   }
 
-  // ============ C) LOW CONFIDENCE: Indeterminate ============
+  // ============ C) LOW CONFIDENCE: Not specified ============
+  // Collect whatever evidence we have for transparency
   if (bc) {
     evidence.push(`Building Class: ${bc}`);
   } else {
     evidence.push('Building Class: Not available');
   }
 
-  if (!hasCondoNo) {
+  if (condoNo === null || condoNo === undefined || String(condoNo).trim() === '' || String(condoNo) === '0') {
     evidence.push('Condo indicator: No');
   }
 
@@ -291,11 +337,21 @@ function computeOwnershipProfile(
     evidence.push(`Land Use: ${landUse}`);
   }
 
+  // Note: We explicitly do NOT infer co-op from C/D building classes
+  const bcFirstChar = bc.charAt(0);
+  if ((bcFirstChar === 'C' || bcFirstChar === 'D') && bc.length >= 2) {
+    warnings.push(
+      `Building class ${bc} is a DOF tax classification for apartment buildings. ` +
+      'This does NOT confirm cooperative ownership. ' +
+      'Many rental buildings share these classifications.'
+    );
+  }
+
   return {
-    ownershipTypeLabel: 'Ownership type: Indeterminate',
+    ownershipTypeLabel: 'Ownership type: Not specified in municipal data',
     ownershipConfidence: 'low',
     ownershipEvidence: evidence,
-    ownershipWarnings: [],
+    ownershipWarnings: warnings,
   };
 }
 
@@ -316,12 +372,8 @@ function classifyProperty(
     return { propertyTypeLabel: 'Condo', propertyTenure: 'CONDO' };
   }
 
-  // DOF tax class C/D may indicate co-op but we keep the old label for backward compat
-  // The new ownershipProfile provides the nuanced classification
-  const bcFirstChar = bc.charAt(0);
-  if (COOP_TAX_CLASS_PREFIXES.includes(bcFirstChar) && bc.length >= 2) {
-    return { propertyTypeLabel: 'Co-op', propertyTenure: 'COOP' };
-  }
+  // NOTE: We no longer infer Co-op from C/D building classes
+  // Only explicit "Cooperative" text would trigger this in ownership profile
 
   // Check for commercial land use
   if (COMMERCIAL_LAND_USES.includes(lu)) {
@@ -420,7 +472,7 @@ function normalizeProfile(raw: Record<string, unknown>, bbl: string, schema: Sch
     : null;
 
   const classification = classifyProperty(buildingClass, landUse, unitsRes, condoNo);
-  const ownership = computeOwnershipProfile(buildingClass, condoNo, landUse);
+  const ownership = computeOwnershipProfile(buildingClass, condoNo, landUse, bbl, raw);
 
   const fieldsUsed = Object.entries(schema.columnMap)
     .filter(([_, col]) => col !== null)
