@@ -74,6 +74,10 @@ export default function Results() {
   const latitude = params.get('lat') ? parseFloat(params.get('lat')!) : undefined;
   const longitude = params.get('lon') ? parseFloat(params.get('lon')!) : undefined;
   const unitContextParam = params.get('unitContext') || null;
+  
+  // Building context params (passed when navigating from building to unit)
+  const buildingAddressParam = params.get('buildingAddress') || '';
+  const buildingBblParam = params.get('buildingBbl') || '';
 
   const isValidBBL = bbl.length === 10;
 
@@ -400,9 +404,10 @@ export default function Results() {
                 address={address}
                 unitLabel={currentUnitLabel}
                 unitBbl={bbl}
-                billingBbl={billingBbl}
+                billingBbl={billingBbl || buildingBblParam}
                 bin={bin}
                 borough={borough}
+                buildingAddress={buildingAddressParam}
                 isCondoUnit={hasCondoUnits && isUnitLot && !isCoop}
                 isCoop={isCoop}
                 coopUnitContext={coopUnitContext}
@@ -434,7 +439,10 @@ export default function Results() {
               {/* Condo Units Discovery - only show when NOT on a unit page and NOT a co-op */}
               {!isUnitLot && !isCoop && (
                 <CondoUnitsCard 
-                  bbl={bbl} 
+                  bbl={bbl}
+                  buildingAddress={address}
+                  borough={borough}
+                  bin={bin}
                   onUnitLabelResolved={setCurrentUnitLabel}
                   onBillingBblResolved={handleBillingBblResolved}
                 />
@@ -443,7 +451,10 @@ export default function Results() {
               {/* Hidden component to resolve billing BBL when on unit page */}
               {isUnitLot && !isCoop && (
                 <CondoUnitsCard 
-                  bbl={bbl} 
+                  bbl={bbl}
+                  buildingAddress={buildingAddressParam || address}
+                  borough={borough}
+                  bin={bin}
                   onUnitLabelResolved={setCurrentUnitLabel}
                   onBillingBblResolved={handleBillingBblResolved}
                   hidden

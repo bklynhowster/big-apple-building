@@ -26,6 +26,9 @@ import { useCondoUnits } from '@/hooks/useCondoUnits';
 
 interface CondoUnitsCardProps {
   bbl: string;
+  buildingAddress?: string;
+  borough?: string;
+  bin?: string;
   onUnitLabelResolved?: (unitLabel: string | null) => void;
   onBillingBblResolved?: (billingBbl: string) => void;
   hidden?: boolean;
@@ -69,7 +72,15 @@ function formatLot(lot: string): string {
   return lot;
 }
 
-export function CondoUnitsCard({ bbl, onUnitLabelResolved, onBillingBblResolved, hidden }: CondoUnitsCardProps) {
+export function CondoUnitsCard({ 
+  bbl, 
+  buildingAddress, 
+  borough: buildingBorough, 
+  bin: buildingBin,
+  onUnitLabelResolved, 
+  onBillingBblResolved, 
+  hidden 
+}: CondoUnitsCardProps) {
   const navigate = useNavigate();
   const { loading, loadingMore, error, data, fetchFirstPage, fetchNextPage, retry } = useCondoUnits();
   const [searchQuery, setSearchQuery] = useState('');
@@ -127,12 +138,37 @@ export function CondoUnitsCard({ bbl, onUnitLabelResolved, onBillingBblResolved,
   const currentUnitBbl = data?.inputRole === 'unit' ? data.inputBbl : null;
 
   const handleOpenUnit = (unitBbl: string) => {
-    navigate(`/results?bbl=${unitBbl}&borough=${encodeURIComponent(boroughNameFromBbl(unitBbl))}`);
+    // Build URL with building context for the unit page
+    const params = new URLSearchParams();
+    params.set('bbl', unitBbl);
+    params.set('borough', buildingBorough || boroughNameFromBbl(unitBbl));
+    
+    // Pass building context so unit page can display it
+    if (buildingAddress) {
+      params.set('buildingAddress', buildingAddress);
+    }
+    if (data?.billingBbl) {
+      params.set('buildingBbl', data.billingBbl);
+    }
+    if (buildingBin) {
+      params.set('bin', buildingBin);
+    }
+    
+    navigate(`/results?${params.toString()}`);
   };
 
   const handleBackToBuilding = () => {
     if (!data?.billingBbl) return;
-    navigate(`/results?bbl=${data.billingBbl}&borough=${encodeURIComponent(boroughNameFromBbl(data.billingBbl))}`);
+    const params = new URLSearchParams();
+    params.set('bbl', data.billingBbl);
+    params.set('borough', buildingBorough || boroughNameFromBbl(data.billingBbl));
+    if (buildingAddress) {
+      params.set('address', buildingAddress);
+    }
+    if (buildingBin) {
+      params.set('bin', buildingBin);
+    }
+    navigate(`/results?${params.toString()}`);
   };
 
   if (loading) return hidden ? null : <LoadingSkeleton />;
