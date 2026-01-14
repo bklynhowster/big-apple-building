@@ -90,7 +90,14 @@ export default function Results() {
 
   // Get property profile to detect co-op status (for current BBL)
   const { profile } = usePropertyProfile(isValidBBL ? bbl : null);
-  const isCoop = profile?.propertyTenure === 'COOP';
+  
+  // Derive isCoop from new two-layer ownership system:
+  // Show as co-op if ownership.type === 'Cooperative' AND score >= 8
+  const isInferredCoop = profile?.ownership?.type === 'Cooperative' && 
+    profile?.ownership?.coopLikelihoodScore >= 8;
+  
+  // Legacy fallback for propertyTenure (for backward compatibility during transition)
+  const isCoop = isInferredCoop || profile?.propertyTenure === 'COOP';
   
   // For unit pages, also fetch building profile using buildingBblParam
   const buildingBblForProfile = isUnitLotEarly && buildingBblParam ? buildingBblParam : null;
@@ -490,6 +497,7 @@ export default function Results() {
               )}
 
               {/* Residential Units Card - Co-ops only (informational unit enumeration) */}
+              {/* Residential Units Card - Co-ops only (informational unit enumeration) */}
               {isCoop && (
                 <ResidentialUnitsCard
                   buildingBbl={bbl}
@@ -498,37 +506,36 @@ export default function Results() {
                 />
               )}
 
-              {/* Mentioned Units Card - Co-ops only (derived from DOB Filings + HPD + 311 + Sales + Violations + Permits) */}
-              {isCoop && (
-                <UnitInsightsCard
-                  buildingBbl={bbl}
-                  bin={bin}
-                  hpdViolations={hpdViolations.items}
-                  hpdComplaints={hpdComplaints.items}
-                  serviceRequests={threeOneOne.items}
-                  salesUnits={coopUnitRoster.units}
-                  dobFilingsUnits={dobJobFilings.units}
-                  dobFilings={dobJobFilings.filings}
-                  dobViolations={dobViolationsHook.items}
-                  ecbViolations={ecbHook.items}
-                  dobPermits={permitsHook.items}
-                  selectedUnit={coopUnitContext}
-                  onUnitSelect={handleUnitInsightSelect}
-                  onClearUnitFilter={() => handleCoopUnitContextChange(null)}
-                  loadingStates={{
-                    filings: dobJobFilings.loading || coopUnitRoster.loading,
-                    permits: permitsHook.loading,
-                    hpd: hpdViolations.loading || hpdComplaints.loading,
-                    threeOneOne: threeOneOne.loading,
-                    violations: dobViolationsHook.loading,
-                    ecb: ecbHook.loading,
-                  }}
-                  rosterError={coopUnitRoster.error}
-                  salesWarning={coopUnitRoster.warning}
-                  dobNowUrl={dobJobFilings.dobNowUrl}
-                  fallbackMode={dobJobFilings.fallbackMode}
-                />
-              )}
+              {/* Mentioned Units Card - Shows whenever unit mentions exist (NOT gated by ownership) */}
+              <UnitInsightsCard
+                buildingBbl={bbl}
+                bin={bin}
+                hpdViolations={hpdViolations.items}
+                hpdComplaints={hpdComplaints.items}
+                serviceRequests={threeOneOne.items}
+                salesUnits={coopUnitRoster.units}
+                dobFilingsUnits={dobJobFilings.units}
+                dobFilings={dobJobFilings.filings}
+                dobViolations={dobViolationsHook.items}
+                ecbViolations={ecbHook.items}
+                dobPermits={permitsHook.items}
+                selectedUnit={coopUnitContext}
+                onUnitSelect={handleUnitInsightSelect}
+                onClearUnitFilter={() => handleCoopUnitContextChange(null)}
+                loadingStates={{
+                  filings: dobJobFilings.loading || coopUnitRoster.loading,
+                  permits: permitsHook.loading,
+                  hpd: hpdViolations.loading || hpdComplaints.loading,
+                  threeOneOne: threeOneOne.loading,
+                  violations: dobViolationsHook.loading,
+                  ecb: ecbHook.loading,
+                }}
+                rosterError={coopUnitRoster.error}
+                salesWarning={coopUnitRoster.warning}
+                dobNowUrl={dobJobFilings.dobNowUrl}
+                fallbackMode={dobJobFilings.fallbackMode}
+                hideWhenEmpty={true}
+              />
 
               <Tabs ref={tabsRef} value={activeTab} onValueChange={handleTabChange} className="w-full">
                 <div className="flex items-center justify-between bg-card border-b border-border">
