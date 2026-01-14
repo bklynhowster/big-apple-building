@@ -80,10 +80,21 @@ export default function Results() {
   const buildingBblParam = params.get('buildingBbl') || '';
 
   const isValidBBL = bbl.length === 10;
+  
+  // Determine if this is a unit lot early (needed for building profile fetch)
+  const isUnitLotEarly = useMemo(() => {
+    if (bbl.length !== 10) return false;
+    const lot = parseInt(bbl.slice(6), 10);
+    return lot >= 1001 && lot <= 6999;
+  }, [bbl]);
 
-  // Get property profile to detect co-op status
+  // Get property profile to detect co-op status (for current BBL)
   const { profile } = usePropertyProfile(isValidBBL ? bbl : null);
   const isCoop = profile?.propertyTenure === 'COOP';
+  
+  // For unit pages, also fetch building profile using buildingBblParam
+  const buildingBblForProfile = isUnitLotEarly && buildingBblParam ? buildingBblParam : null;
+  const { profile: buildingProfile, loading: buildingProfileLoading } = usePropertyProfile(buildingBblForProfile);
 
   // Pre-fetch HPD, 311, Rolling Sales, DOB Filings, DOB Violations, ECB, and Permits for Risk Snapshot + Unit Insights
   const hpdViolations = useHPDViolations(isValidBBL ? bbl : null);
@@ -408,6 +419,16 @@ export default function Results() {
                 bin={bin}
                 borough={borough}
                 buildingAddress={buildingAddressParam}
+                buildingProfile={buildingProfile ? {
+                  yearBuilt: buildingProfile.yearBuilt,
+                  buildingClass: buildingProfile.buildingClass,
+                  totalUnits: buildingProfile.totalUnits,
+                  residentialUnits: buildingProfile.residentialUnits,
+                  numFloors: buildingProfile.numFloors,
+                  grossSqFt: buildingProfile.grossSqFt,
+                  propertyTypeLabel: buildingProfile.propertyTypeLabel,
+                } : null}
+                buildingProfileLoading={buildingProfileLoading}
                 isCondoUnit={hasCondoUnits && isUnitLot && !isCoop}
                 isCoop={isCoop}
                 coopUnitContext={coopUnitContext}
