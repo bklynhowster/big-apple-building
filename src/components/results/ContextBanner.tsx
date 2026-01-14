@@ -24,6 +24,7 @@ interface ContextBannerProps {
   billingBbl?: string | null;
   bin?: string;
   borough?: string;
+  buildingAddress?: string;
   isCondoUnit: boolean;
   isCoop?: boolean;
   coopUnitContext?: string | null;
@@ -39,6 +40,7 @@ export function ContextBanner({
   billingBbl,
   bin,
   borough,
+  buildingAddress,
   isCondoUnit,
   isCoop = false,
   coopUnitContext,
@@ -48,9 +50,13 @@ export function ContextBanner({
 }: ContextBannerProps) {
   const navigate = useNavigate();
   
+  // Determine the best building address to display
+  // Priority: buildingAddress (from URL when navigating to unit) > address (search param)
+  const effectiveBuildingAddress = buildingAddress || address;
+  
   // Build the building URL for "back to building" navigation
   const buildingUrl = billingBbl 
-    ? `/results?bbl=${billingBbl}&borough=${encodeURIComponent(borough || '')}&address=${encodeURIComponent(address || '')}`
+    ? `/results?bbl=${billingBbl}&borough=${encodeURIComponent(borough || '')}&address=${encodeURIComponent(effectiveBuildingAddress || '')}`
     : null;
 
   // CO-OP BUILDING VIEW - Different banner with unit context selector
@@ -223,11 +229,11 @@ export function ContextBanner({
   }
 
   // CONDO UNIT VIEW - prominent banner with unit context and building info
-  // Format full building address
-  const fullBuildingAddress = address 
+  // Format full building address using effective address (buildingAddress param takes priority)
+  const fullBuildingAddress = effectiveBuildingAddress 
     ? borough 
-      ? `${address} — ${borough.toUpperCase()}`
-      : address
+      ? `${effectiveBuildingAddress} — ${borough.toUpperCase()}`
+      : effectiveBuildingAddress
     : null;
 
   return (
@@ -268,7 +274,7 @@ export function ContextBanner({
               onClick={() => navigate(buildingUrl)}
             >
               <ArrowLeft className="h-3.5 w-3.5" />
-              {address ? `Back to building: ${address}` : 'Back to building overview'}
+              {effectiveBuildingAddress ? `Back to building: ${effectiveBuildingAddress}` : 'Back to building overview'}
             </Button>
           )}
         </div>
@@ -298,11 +304,11 @@ export function ContextBanner({
                 {buildingUrl ? (
                   <BreadcrumbLink asChild>
                     <Link to={buildingUrl} className="text-muted-foreground hover:text-foreground">
-                      {address || 'Building'}
+                      {effectiveBuildingAddress || 'Building'}
                     </Link>
                   </BreadcrumbLink>
                 ) : (
-                  <span className="text-muted-foreground">{address || 'Building'}</span>
+                  <span className="text-muted-foreground">{effectiveBuildingAddress || 'Building'}</span>
                 )}
               </BreadcrumbItem>
               <BreadcrumbSeparator>
