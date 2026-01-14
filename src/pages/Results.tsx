@@ -12,6 +12,7 @@ import brooklynBridgeLines from '@/assets/brooklyn-bridge-lines.png';
 import { CondoUnitsCard } from '@/components/results/CondoUnitsCard';
 import { ResidentialUnitsCard } from '@/components/results/ResidentialUnitsCard';
 import { UnitInsightsCard } from '@/components/results/UnitInsightsCard';
+import { TaxesCard } from '@/components/results/TaxesCard';
 import { SummaryTab } from '@/components/results/SummaryTab';
 import { ViolationsTab } from '@/components/results/ViolationsTab';
 import { ECBTab } from '@/components/results/ECBTab';
@@ -535,6 +536,14 @@ export default function Results() {
                 lat={latitude}
                 lon={longitude}
                 onOwnershipOverrideChange={handleOwnershipOverrideChange}
+              />
+              
+              {/* Taxes Card - NYC DOF property tax links */}
+              <TaxesCard 
+                viewBbl={bbl}
+                buildingBbl={buildingBblParam || billingBbl || undefined}
+                address={address}
+                isUnitPage={isUnitLot}
               />
               
               {/* Condo Units Discovery - only show when NOT on a unit page and NOT a co-op */}
