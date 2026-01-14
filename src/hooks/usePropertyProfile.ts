@@ -13,15 +13,19 @@ export interface MunicipalClassification {
   source: string;
 }
 
-// Layer 2: Ownership Structure
+// Layer 2: Ownership Structure with scoring
 export type OwnershipConfidenceLevel = 'Confirmed' | 'Market-known' | 'Unverified';
-export type OwnershipStructureType = 'Condominium' | 'Cooperative' | 'Rental' | 'Owner-Occupied' | 'Unknown';
+export type InferredConfidenceLevel = 'Low' | 'Medium' | 'High';
+export type OwnershipStructureType = 'Condominium' | 'Cooperative' | 'Unknown';
 
 export interface OwnershipStructure {
   type: OwnershipStructureType;
   confidence: OwnershipConfidenceLevel;
-  evidence: string[];
+  inferredConfidence: InferredConfidenceLevel;
+  coopLikelihoodScore: number;
+  indicators: string[];
   sources: string[];
+  disclaimerKey: 'unverified' | 'market-known';
 }
 
 export interface PropertyProfile {
