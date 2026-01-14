@@ -25,7 +25,7 @@ export interface MunicipalClassification {
 
 // ============ SECTION B: Ownership Structure ============
 
-export type OwnershipConfidenceLevel = 'Confirmed' | 'Likely' | 'Unverified';
+export type OwnershipConfidenceLevel = 'Confirmed' | 'Market-known' | 'Unverified';
 
 export type OwnershipStructureType = 
   | 'Condominium'
@@ -175,7 +175,7 @@ function computeOwnershipStructure(
     
     return {
       type: 'Cooperative',
-      confidence: 'Likely',
+      confidence: 'Market-known',
       evidence,
       sources,
     };
@@ -187,7 +187,7 @@ function computeOwnershipStructure(
     
     return {
       type: 'Condominium',
-      confidence: 'Likely',
+      confidence: 'Market-known',
       evidence,
       sources,
     };
@@ -238,7 +238,7 @@ export function getConfidenceStyles(confidence: OwnershipConfidenceLevel): {
         badge: 'bg-accent text-accent-foreground',
         text: 'text-accent-foreground',
       };
-    case 'Likely':
+    case 'Market-known':
       return {
         badge: 'bg-warning/10 text-warning border border-warning/20',
         text: 'text-warning',

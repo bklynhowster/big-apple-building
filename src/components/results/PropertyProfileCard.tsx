@@ -48,11 +48,19 @@ function getConfidenceStyles(confidence: OwnershipConfidenceLevel): string {
   switch (confidence) {
     case 'Confirmed':
       return 'bg-accent text-accent-foreground';
-    case 'Likely':
+    case 'Market-known':
       return 'bg-warning/10 text-warning border border-warning/30';
     case 'Unverified':
       return 'bg-muted text-muted-foreground';
   }
+}
+
+// Format confidence label for display
+function formatConfidenceLabel(confidence: OwnershipConfidenceLevel): string {
+  if (confidence === 'Market-known') {
+    return 'Market-known (unverified)';
+  }
+  return confidence;
 }
 
 function LoadingSkeleton() {
@@ -272,57 +280,60 @@ export function PropertyProfileCard({ bbl, unitLabel, parentAddress, landmarkSta
                 <Users className="h-3.5 w-3.5" />
                 Ownership Structure (External)
               </div>
-              {profile.ownership.confidence === 'Unverified' ? (
-                <div className="space-y-2">
+              <div className="space-y-2">
+                {profile.ownership.confidence === 'Unverified' ? (
                   <Badge variant="outline" className="bg-muted text-muted-foreground">
                     Unverified
                   </Badge>
-                  <p className="text-xs text-muted-foreground">
-                    Verify via ACRIS / offering plan / corporate filings.
-                  </p>
-                </div>
-              ) : (
-                <TooltipProvider>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <div className="inline-flex items-center gap-1.5 cursor-help">
-                        <Badge 
-                          variant="outline" 
-                          className={cn(
-                            "text-xs",
-                            getConfidenceStyles(profile.ownership.confidence)
+                ) : (
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <div className="inline-flex items-center gap-1.5 cursor-help">
+                          <Badge 
+                            variant="outline" 
+                            className={cn(
+                              "text-xs",
+                              getConfidenceStyles(profile.ownership.confidence)
+                            )}
+                          >
+                            {formatConfidenceLabel(profile.ownership.confidence)}: {profile.ownership.type}
+                          </Badge>
+                          <Info className="h-3 w-3 text-muted-foreground" />
+                        </div>
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom" className="max-w-sm">
+                        <div className="space-y-2">
+                          {profile.ownership.sources.length > 0 && (
+                            <p className="text-xs text-muted-foreground">
+                              Sources: {profile.ownership.sources.join(', ')}
+                            </p>
                           )}
-                        >
-                          {profile.ownership.confidence}: {profile.ownership.type}
-                        </Badge>
-                        <Info className="h-3 w-3 text-muted-foreground" />
-                      </div>
-                    </TooltipTrigger>
-                    <TooltipContent side="bottom" className="max-w-sm">
-                      <div className="space-y-2">
-                        {profile.ownership.sources.length > 0 && (
-                          <p className="text-xs text-muted-foreground">
-                            Sources: {profile.ownership.sources.join(', ')}
-                          </p>
-                        )}
-                        {profile.ownership.evidence.length > 0 && (
-                          <div>
-                            <p className="font-medium text-xs mb-1">Evidence:</p>
-                            <ul className="text-xs space-y-0.5">
-                              {profile.ownership.evidence.map((item, i) => (
-                                <li key={i} className="flex items-start gap-1">
-                                  <span className="text-muted-foreground">•</span>
-                                  <span>{item}</span>
-                                </li>
-                              ))}
-                            </ul>
-                          </div>
-                        )}
-                      </div>
-                    </TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
-              )}
+                          {profile.ownership.evidence.length > 0 && (
+                            <div>
+                              <p className="font-medium text-xs mb-1">Evidence:</p>
+                              <ul className="text-xs space-y-0.5">
+                                {profile.ownership.evidence.map((item, i) => (
+                                  <li key={i} className="flex items-start gap-1">
+                                    <span className="text-muted-foreground">•</span>
+                                    <span>{item}</span>
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                        </div>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                )}
+                {/* Always show disclaimer for ownership structure section */}
+                <p className="text-xs text-muted-foreground">
+                  {profile.ownership.confidence === 'Unverified' 
+                    ? 'Verify via ACRIS / offering plan / corporate filings.'
+                    : 'Ownership structure is not reliably indicated by DOB or PLUTO data. Verification requires ACRIS, offering plans, or corporate filings.'}
+                </p>
+              </div>
             </div>
 
             {/* Building class for reference */}
