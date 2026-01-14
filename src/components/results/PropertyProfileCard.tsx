@@ -4,7 +4,7 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { usePropertyProfile, PropertyTypeLabel, OwnershipConfidence, OwnershipLabel } from '@/hooks/usePropertyProfile';
+import { usePropertyProfile, PropertyTypeLabel, OwnershipConfidenceLevel } from '@/hooks/usePropertyProfile';
 import { cn } from '@/lib/utils';
 import type { LandmarkStatus } from '@/hooks/useLandmarkStatus';
 import { LocationMap } from './LocationMap';
@@ -19,7 +19,7 @@ interface PropertyProfileCardProps {
   lon?: number;
 }
 
-// Color mapping for property types - using ELK theme tokens
+// Color mapping for property types
 const PROPERTY_TYPE_COLORS: Record<PropertyTypeLabel, string> = {
   'Condo': 'bg-accent text-accent-foreground',
   'Co-op': 'bg-primary/10 text-primary',
@@ -44,13 +44,13 @@ const PROPERTY_TYPE_ICONS: Record<PropertyTypeLabel, React.ReactNode> = {
 };
 
 // Styles for ownership confidence levels
-function getOwnershipStyles(confidence: OwnershipConfidence): string {
+function getConfidenceStyles(confidence: OwnershipConfidenceLevel): string {
   switch (confidence) {
-    case 'high':
+    case 'Confirmed':
       return 'bg-accent text-accent-foreground';
-    case 'medium':
+    case 'Likely':
       return 'bg-warning/10 text-warning border border-warning/30';
-    case 'low':
+    case 'Unverified':
       return 'bg-muted text-muted-foreground';
   }
 }
@@ -194,15 +194,15 @@ export function PropertyProfileCard({ bbl, unitLabel, parentAddress, landmarkSta
     );
   }
 
-  // BUILDING PAGE - Full display
+  // BUILDING PAGE - Full display with two-layer ownership
   const hasData = profile.propertyTypeLabel !== 'Unknown' || 
                   profile.buildingClass || 
                   profile.residentialUnits !== null ||
                   profile.yearBuilt !== null;
 
   // Only show co-op disclaimer for explicitly confirmed cooperatives
-  const isConfirmedCoop = profile.ownershipConfidence === 'high' && 
-    profile.ownershipTypeLabel === 'Cooperative';
+  const isConfirmedCoop = profile.ownership.confidence === 'Confirmed' && 
+    profile.ownership.type === 'Cooperative';
 
   return (
     <Card>
@@ -219,43 +219,49 @@ export function PropertyProfileCard({ bbl, unitLabel, parentAddress, landmarkSta
         )}
         
         <div className="flex flex-col lg:flex-row gap-6">
-          {/* Ownership Type Badge with Confidence Indicator */}
-          <div className="flex items-center gap-4">
+          {/* Two-Layer Ownership Display */}
+          <div className="flex items-start gap-4">
             <div className={cn(
               "flex items-center justify-center h-14 w-14 rounded-lg",
-              getOwnershipStyles(profile.ownershipConfidence)
+              getConfidenceStyles(profile.ownership.confidence)
             )}>
-              {profile.ownershipConfidence === 'high' ? (
+              {profile.ownership.confidence === 'Confirmed' ? (
                 PROPERTY_TYPE_ICONS[profile.propertyTypeLabel]
-              ) : profile.ownershipConfidence === 'medium' ? (
-                <Building2 className="h-5 w-5" />
               ) : (
                 <HelpCircle className="h-5 w-5" />
               )}
             </div>
-            <div>
-              <div className="flex items-center gap-2">
+            <div className="space-y-2">
+              {/* Layer 1: Municipal Classification */}
+              <div>
                 <TooltipProvider>
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <span className={cn(
-                        "text-lg font-semibold px-3 py-1 rounded-full cursor-help inline-flex items-center gap-1.5",
-                        getOwnershipStyles(profile.ownershipConfidence)
-                      )}>
-                        {profile.ownershipTypeLabel}
-                        <Info className="h-3.5 w-3.5 opacity-60" />
-                      </span>
+                      <div className="inline-flex items-center gap-1.5 cursor-help">
+                        <span className={cn(
+                          "text-base font-semibold px-3 py-1 rounded-full",
+                          profile.municipal.label === 'Condominium' 
+                            ? 'bg-accent text-accent-foreground'
+                            : 'bg-muted text-muted-foreground'
+                        )}>
+                          {profile.municipal.label}
+                        </span>
+                        <Info className="h-3.5 w-3.5 text-muted-foreground" />
+                      </div>
                     </TooltipTrigger>
                     <TooltipContent side="bottom" className="max-w-sm">
                       <div className="space-y-2">
                         <p className="font-medium text-xs uppercase tracking-wide text-muted-foreground">
-                          Confidence: {profile.ownershipConfidence}
+                          Municipal Classification
                         </p>
-                        {profile.ownershipEvidence.length > 0 && (
+                        <p className="text-xs text-muted-foreground">
+                          Source: {profile.municipal.source}
+                        </p>
+                        {profile.municipal.evidence.length > 0 && (
                           <div>
                             <p className="font-medium text-xs mb-1">Evidence:</p>
                             <ul className="text-xs space-y-0.5">
-                              {profile.ownershipEvidence.map((item, i) => (
+                              {profile.municipal.evidence.map((item, i) => (
                                 <li key={i} className="flex items-start gap-1">
                                   <span className="text-muted-foreground">•</span>
                                   <span>{item}</span>
@@ -264,24 +270,63 @@ export function PropertyProfileCard({ bbl, unitLabel, parentAddress, landmarkSta
                             </ul>
                           </div>
                         )}
-                        {profile.ownershipWarnings.length > 0 && (
-                          <div className="pt-1 border-t border-border/50">
-                            <p className="font-medium text-xs text-warning mb-1">Note:</p>
-                            {profile.ownershipWarnings.map((warning, i) => (
-                              <p key={i} className="text-xs text-muted-foreground">{warning}</p>
-                            ))}
-                          </div>
-                        )}
                       </div>
                     </TooltipContent>
                   </Tooltip>
                 </TooltipProvider>
               </div>
+
+              {/* Layer 2: Ownership Structure (only show if different from municipal or has external sources) */}
+              {profile.ownership.type !== 'Unknown' && profile.ownership.sources.length > 0 && (
+                <div>
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <div className="inline-flex items-center gap-1.5 cursor-help">
+                          <Badge variant="outline" className={cn(
+                            "text-xs",
+                            getConfidenceStyles(profile.ownership.confidence)
+                          )}>
+                            {profile.ownership.confidence}: {profile.ownership.type}
+                          </Badge>
+                          <Info className="h-3 w-3 text-muted-foreground" />
+                        </div>
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom" className="max-w-sm">
+                        <div className="space-y-2">
+                          <p className="font-medium text-xs uppercase tracking-wide text-muted-foreground">
+                            Ownership Structure
+                          </p>
+                          {profile.ownership.sources.length > 0 && (
+                            <p className="text-xs text-muted-foreground">
+                              Sources: {profile.ownership.sources.join(', ')}
+                            </p>
+                          )}
+                          {profile.ownership.evidence.length > 0 && (
+                            <div>
+                              <p className="font-medium text-xs mb-1">Evidence:</p>
+                              <ul className="text-xs space-y-0.5">
+                                {profile.ownership.evidence.map((item, i) => (
+                                  <li key={i} className="flex items-start gap-1">
+                                    <span className="text-muted-foreground">•</span>
+                                    <span>{item}</span>
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                        </div>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                </div>
+              )}
+
               {profile.buildingClass && (
                 <TooltipProvider>
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <span className="text-sm text-muted-foreground cursor-help mt-1 block">
+                      <span className="text-sm text-muted-foreground cursor-help block">
                         Building Class: <span className="font-mono font-medium">{profile.buildingClass}</span>
                         {profile.landUse && <span> • Land Use: {profile.landUse}</span>}
                       </span>
@@ -406,8 +451,19 @@ export function PropertyProfileCard({ bbl, unitLabel, parentAddress, landmarkSta
           </div>
         </div>
 
+        {/* Ownership Warnings */}
+        {profile.ownershipWarnings.length > 0 && (
+          <div className="flex items-start gap-2 p-3 rounded-md bg-muted/50 text-sm text-muted-foreground">
+            <Info className="h-4 w-4 mt-0.5 shrink-0" />
+            <div>
+              {profile.ownershipWarnings.map((warning, i) => (
+                <p key={i}>{warning}</p>
+              ))}
+            </div>
+          </div>
+        )}
 
-        {/* Co-op disclaimer - ONLY shown for high-confidence explicit co-ops */}
+        {/* Co-op disclaimer - ONLY shown for explicitly confirmed cooperatives */}
         {isConfirmedCoop && (
           <div className="elk-info-box flex items-start gap-2 mt-4">
             <Info className="h-4 w-4 mt-0.5 shrink-0 text-primary" />

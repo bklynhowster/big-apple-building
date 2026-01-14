@@ -3,13 +3,26 @@ import { parseApiError, type ApiError } from '@/types/api-error';
 
 export type PropertyTypeLabel = 'Condo' | 'Co-op' | '1-2 Family' | '3+ Family' | 'Mixed-Use' | 'Commercial' | 'Other' | 'Unknown';
 export type PropertyTenure = 'CONDO' | 'COOP' | 'RENTAL_OR_OTHER' | 'UNKNOWN';
-export type OwnershipConfidence = 'high' | 'medium' | 'low';
 
-// Conservative ownership labels - never infer co-op from DOB/PLUTO
-export type OwnershipLabel = 
-  | 'Condominium'
-  | 'Cooperative'
-  | 'Ownership type not specified in municipal data';
+// Layer 1: Municipal Classification
+export type MunicipalOwnershipLabel = 'Condominium' | 'Ownership type not specified in municipal data';
+
+export interface MunicipalClassification {
+  label: MunicipalOwnershipLabel;
+  evidence: string[];
+  source: string;
+}
+
+// Layer 2: Ownership Structure
+export type OwnershipConfidenceLevel = 'Confirmed' | 'Likely' | 'Unverified';
+export type OwnershipStructureType = 'Condominium' | 'Cooperative' | 'Rental' | 'Owner-Occupied' | 'Unknown';
+
+export interface OwnershipStructure {
+  type: OwnershipStructureType;
+  confidence: OwnershipConfidenceLevel;
+  evidence: string[];
+  sources: string[];
+}
 
 export interface PropertyProfile {
   bbl: string;
@@ -21,10 +34,9 @@ export interface PropertyProfile {
   buildingClass: string | null;
   propertyTypeLabel: PropertyTypeLabel;
   propertyTenure: PropertyTenure;
-  // Conservative ownership classification
-  ownershipTypeLabel: OwnershipLabel;
-  ownershipConfidence: OwnershipConfidence;
-  ownershipEvidence: string[];
+  // Two-layer ownership classification
+  municipal: MunicipalClassification;
+  ownership: OwnershipStructure;
   ownershipWarnings: string[];
   residentialUnits: number | null;
   totalUnits: number | null;
