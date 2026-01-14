@@ -1,12 +1,15 @@
-import { useState } from 'react';
-import { Building2, Home, Calendar, Maximize2, Layers, Users, AlertCircle, HelpCircle, Info, Landmark, ChevronDown, ChevronUp } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Building2, Home, Calendar, Maximize2, Layers, Users, AlertCircle, HelpCircle, Info, Landmark, ChevronDown, ChevronUp, Settings2 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { usePropertyProfile, PropertyTypeLabel, OwnershipConfidenceLevel, InferredConfidenceLevel } from '@/hooks/usePropertyProfile';
+import { useOwnershipOverride, OwnershipOverrideType } from '@/hooks/useOwnershipOverride';
 import { cn } from '@/lib/utils';
 import type { LandmarkStatus } from '@/hooks/useLandmarkStatus';
 import { LocationMap } from './LocationMap';
@@ -19,6 +22,7 @@ interface PropertyProfileCardProps {
   landmarkStatus?: LandmarkStatus;
   lat?: number;
   lon?: number;
+  onOwnershipOverrideChange?: (isCoopEffective: boolean) => void;
 }
 
 // Color mapping for property types
@@ -116,9 +120,34 @@ function formatSqFt(sqft: number | null): string {
   return `${sqft.toLocaleString()} sq ft`;
 }
 
-export function PropertyProfileCard({ bbl, unitLabel, parentAddress, landmarkStatus, lat, lon }: PropertyProfileCardProps) {
+export function PropertyProfileCard({ bbl, unitLabel, parentAddress, landmarkStatus, lat, lon, onOwnershipOverrideChange }: PropertyProfileCardProps) {
   const { loading, error, profile, retry } = usePropertyProfile(bbl);
   const [showWhyPanel, setShowWhyPanel] = useState(false);
+  
+  // Compute inferred co-op status
+  const isCoopInferred = profile?.ownership?.type === 'Cooperative' && 
+    (profile?.ownership?.coopLikelihoodScore ?? 0) >= 8;
+  
+  // Manual override hook
+  const { override, setOverride, isCoopEffective } = useOwnershipOverride(bbl, isCoopInferred);
+  
+  // Notify parent of effective co-op status changes
+  useEffect(() => {
+    if (onOwnershipOverrideChange && profile) {
+      onOwnershipOverrideChange(isCoopEffective);
+    }
+  }, [isCoopEffective, onOwnershipOverrideChange, profile]);
+  
+  // Handle override selection
+  const handleOverrideChange = (value: string) => {
+    if (value === 'clear') {
+      setOverride(null);
+    } else if (value === 'coop') {
+      setOverride('COOP');
+    } else if (value === 'not_coop') {
+      setOverride('NOT_COOP');
+    }
+  };
 
   // Determine if this is a unit page
   const lotNumber = parseInt(bbl.slice(6), 10);
@@ -286,45 +315,106 @@ export function PropertyProfileCard({ bbl, unitLabel, parentAddress, landmarkSta
               </TooltipProvider>
             </div>
 
-            {/* SECTION B: Ownership Structure (Inferred) */}
+            {/* SECTION B: Ownership Structure (Inferred/Manual) */}
             <div className="space-y-2">
               <div className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
                 <Users className="h-3.5 w-3.5" />
-                Ownership Structure (inferred)
+                Ownership Structure {override ? '(manual)' : '(inferred)'}
               </div>
               <div className="space-y-2">
                 <div className="flex items-center gap-2 flex-wrap">
-                  {/* Main ownership badge */}
-                  <Badge 
-                    variant="outline" 
-                    className={cn(
-                      "text-xs",
-                      getConfidenceStyles(profile.ownership.confidence)
-                    )}
-                  >
-                    {profile.ownership.confidence === 'Unverified' 
-                      ? 'Unverified' 
-                      : profile.ownership.type === 'Cooperative'
-                        ? 'Co-op (inferred)'
-                        : `${formatConfidenceLabel(profile.ownership.confidence)}: ${profile.ownership.type}`}
-                  </Badge>
-                  
-                  
-                  {/* Confidence badge for Market-known */}
-                  {profile.ownership.confidence === 'Market-known' && (
+                  {/* Manual override badge - takes priority */}
+                  {override && (
                     <Badge 
                       variant="outline" 
-                      className={cn(
-                        "text-xs",
-                        getInferredConfidenceStyles(profile.ownership.inferredConfidence)
-                      )}
+                      className="text-xs bg-primary/10 text-primary border-primary/30"
                     >
-                      {profile.ownership.inferredConfidence} confidence
+                      {override === 'COOP' ? 'Manual override: Co-op' : 'Manual override: Not a co-op'}
                     </Badge>
+                  )}
+                  
+                  {/* Inferred ownership badge - shown when no override */}
+                  {!override && (
+                    <>
+                      <Badge 
+                        variant="outline" 
+                        className={cn(
+                          "text-xs",
+                          getConfidenceStyles(profile.ownership.confidence)
+                        )}
+                      >
+                        {profile.ownership.confidence === 'Unverified' 
+                          ? 'Unverified' 
+                          : profile.ownership.type === 'Cooperative'
+                            ? 'Co-op (inferred)'
+                            : `${formatConfidenceLabel(profile.ownership.confidence)}: ${profile.ownership.type}`}
+                      </Badge>
+                      
+                      {/* Confidence badge for inferred co-op */}
+                      {profile.ownership.type === 'Cooperative' && profile.ownership.coopLikelihoodScore >= 8 && (
+                        <Badge 
+                          variant="outline" 
+                          className={cn(
+                            "text-xs",
+                            getInferredConfidenceStyles(profile.ownership.inferredConfidence)
+                          )}
+                        >
+                          {profile.ownership.inferredConfidence} confidence
+                        </Badge>
+                      )}
+                    </>
                   )}
                 </div>
 
-                {/* "Why" expandable disclosure */}
+                {/* Manual override control */}
+                <div className="flex items-center gap-2 pt-1">
+                  <Settings2 className="h-3.5 w-3.5 text-muted-foreground" />
+                  <Select
+                    value={override === 'COOP' ? 'coop' : override === 'NOT_COOP' ? 'not_coop' : 'none'}
+                    onValueChange={handleOverrideChange}
+                  >
+                    <SelectTrigger className="h-7 w-[180px] text-xs">
+                      <SelectValue placeholder="Manual override..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none" className="text-xs">No override (use inferred)</SelectItem>
+                      <SelectItem value="coop" className="text-xs">Override: Co-op</SelectItem>
+                      <SelectItem value="not_coop" className="text-xs">Override: Not a co-op</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  
+                  {/* Clear override with confirmation */}
+                  {override && (
+                    <AlertDialog>
+                      <AlertDialogTrigger asChild>
+                        <Button variant="ghost" size="sm" className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground">
+                          Clear
+                        </Button>
+                      </AlertDialogTrigger>
+                      <AlertDialogContent>
+                        <AlertDialogHeader>
+                          <AlertDialogTitle>Clear manual override?</AlertDialogTitle>
+                          <AlertDialogDescription>
+                            This will remove your manual ownership designation and revert to the inferred classification based on structural indicators.
+                          </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                          <AlertDialogCancel>Cancel</AlertDialogCancel>
+                          <AlertDialogAction onClick={() => setOverride(null)}>
+                            Clear override
+                          </AlertDialogAction>
+                        </AlertDialogFooter>
+                      </AlertDialogContent>
+                    </AlertDialog>
+                  )}
+                </div>
+                
+                {/* Override disclaimer */}
+                <p className="text-xs text-muted-foreground italic">
+                  Overrides only affect ELK display logic for unit-mentions and coop labeling. Not an official classification.
+                </p>
+
+                {/* "Why" expandable disclosure - show inference details even if override active */}
                 <Collapsible open={showWhyPanel} onOpenChange={setShowWhyPanel}>
                   <CollapsibleTrigger asChild>
                     <Button 
@@ -335,18 +425,27 @@ export function PropertyProfileCard({ bbl, unitLabel, parentAddress, landmarkSta
                       {showWhyPanel ? (
                         <>
                           <ChevronUp className="h-3.5 w-3.5 mr-1" />
-                          Hide details
+                          Hide inference details
                         </>
                       ) : (
                         <>
                           <ChevronDown className="h-3.5 w-3.5 mr-1" />
-                          Why?
+                          {override ? 'Inference (ignored)' : 'Why?'}
                         </>
                       )}
                     </Button>
                   </CollapsibleTrigger>
                   <CollapsibleContent className="mt-2">
-                    <div className="p-3 rounded-md bg-muted/50 space-y-3 text-sm">
+                    <div className={cn(
+                      "p-3 rounded-md space-y-3 text-sm",
+                      override ? "bg-muted/30 opacity-60" : "bg-muted/50"
+                    )}>
+                      {override && (
+                        <p className="text-xs font-medium text-muted-foreground italic">
+                          These inference details are currently ignored due to your manual override.
+                        </p>
+                      )}
+                      
                       {/* Score display */}
                       <div className="flex items-center gap-2">
                         <span className="text-muted-foreground">Co-op likelihood score:</span>
@@ -379,14 +478,16 @@ export function PropertyProfileCard({ bbl, unitLabel, parentAddress, landmarkSta
                   </CollapsibleContent>
                 </Collapsible>
 
-                {/* Disclaimer based on confidence */}
-                <p className="text-xs text-muted-foreground">
-                  {profile.ownership.type === 'Cooperative'
-                    ? 'Inferred from structural indicators (unit count, tax lot structure, and record text). Not legal confirmation. Verify via ACRIS / offering plan / corporate filings.'
-                    : profile.ownership.disclaimerKey === 'market-known' 
-                      ? 'Based on structural indicators (unit count, tax lot structure, and record text). Not a legal confirmation. Confirm via ACRIS / offering plan / corporate filings.'
-                      : 'Municipal datasets do not reliably indicate cooperative ownership. Confirm via external records.'}
-                </p>
+                {/* Inference disclaimer - only show when not overridden */}
+                {!override && (
+                  <p className="text-xs text-muted-foreground">
+                    {profile.ownership.type === 'Cooperative' && profile.ownership.coopLikelihoodScore >= 8
+                      ? 'Inferred from structural indicators (unit count, tax lot structure, and record text). Not legal confirmation. Verify via ACRIS / offering plan / corporate filings.'
+                      : profile.ownership.disclaimerKey === 'market-known' 
+                        ? 'Based on structural indicators (unit count, tax lot structure, and record text). Not a legal confirmation. Confirm via ACRIS / offering plan / corporate filings.'
+                        : 'Municipal datasets do not reliably indicate cooperative ownership. Confirm via external records.'}
+                  </p>
+                )}
               </div>
             </div>
 
