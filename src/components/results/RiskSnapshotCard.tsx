@@ -3,16 +3,19 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 import { useCallback, useMemo, useState } from 'react';
 
-// Mapping of chip keys to their anchor IDs and tab names
+// Dataset scope type
+export type DatasetScope = 'building' | 'unit';
+
+// Mapping of chip keys to their anchor IDs, tab names, and data scope
 const CHIP_CONFIG = {
-  dobViolations: { anchorId: 'dob-violations', tab: 'violations', label: 'DOB Violations' },
-  ecbViolations: { anchorId: 'ecb-violations', tab: 'ecb', label: 'ECB Violations' },
-  hpdViolations: { anchorId: 'hpd-violations', tab: 'hpd', label: 'HPD Violations' },
-  hpdComplaints: { anchorId: 'hpd-complaints', tab: 'hpd', label: 'HPD Complaints' },
-  serviceRequests: { anchorId: 'service-requests', tab: '311', label: '311 Requests' },
-  dobPermits: { anchorId: 'dob-permits', tab: 'permits', label: 'DOB Permits' },
-  salesRecords: { anchorId: 'sales-records', tab: 'all', label: 'Sales Records' },
-  dobFilingsUnits: { anchorId: 'dob-filings', tab: 'all', label: 'DOB Filings Units' },
+  dobViolations: { anchorId: 'dob-violations', tab: 'violations', label: 'DOB Violations', scope: 'building' as DatasetScope },
+  ecbViolations: { anchorId: 'ecb-violations', tab: 'ecb', label: 'ECB Violations', scope: 'building' as DatasetScope },
+  hpdViolations: { anchorId: 'hpd-violations', tab: 'hpd', label: 'HPD Violations', scope: 'building' as DatasetScope },
+  hpdComplaints: { anchorId: 'hpd-complaints', tab: 'hpd', label: 'HPD Complaints', scope: 'building' as DatasetScope },
+  serviceRequests: { anchorId: 'service-requests', tab: '311', label: '311 Requests', scope: 'building' as DatasetScope },
+  dobPermits: { anchorId: 'dob-permits', tab: 'permits', label: 'DOB Permits', scope: 'building' as DatasetScope },
+  salesRecords: { anchorId: 'sales-records', tab: 'all', label: 'Sales Records', scope: 'building' as DatasetScope },
+  dobFilingsUnits: { anchorId: 'dob-filings', tab: 'all', label: 'DOB Filings Units', scope: 'building' as DatasetScope },
 } as const;
 
 type ChipKey = keyof typeof CHIP_CONFIG;
@@ -280,11 +283,18 @@ export interface RecordArrays {
   dobFilingsUnits?: Array<{ issueDate?: string | null }>;
 }
 
+export interface NavigationInfo {
+  tab: string;
+  anchorId: string;
+  scope: DatasetScope;
+  expectedCount: number;
+}
+
 interface RiskSnapshotCardProps {
   counts: RecordCounts;
   loading?: LoadingStates;
   records?: RecordArrays;
-  onNavigateToSection?: (tab: string, anchorId: string) => void;
+  onNavigateToSection?: (info: NavigationInfo) => void;
 }
 
 export function RiskSnapshotCard({ counts, loading = {}, records = {}, onNavigateToSection }: RiskSnapshotCardProps) {
@@ -324,19 +334,19 @@ export function RiskSnapshotCard({ counts, loading = {}, records = {}, onNavigat
     };
   }, [records, counts]);
 
-  const scrollToSection = useCallback((anchorId: string, tab: string) => {
+  const scrollToSection = useCallback((info: NavigationInfo) => {
     // Update URL hash
-    const newUrl = `${window.location.pathname}${window.location.search}#${anchorId}`;
+    const newUrl = `${window.location.pathname}${window.location.search}#${info.anchorId}`;
     window.history.pushState(null, '', newUrl);
     
-    // Notify parent to switch tab first
+    // Notify parent to switch tab and scope
     if (onNavigateToSection) {
-      onNavigateToSection(tab, anchorId);
+      onNavigateToSection(info);
     }
     
     // Scroll after a short delay to allow tab switch
     setTimeout(() => {
-      const element = document.getElementById(anchorId);
+      const element = document.getElementById(info.anchorId);
       if (element) {
         element.scrollIntoView({ 
           behavior: prefersReducedMotion ? 'auto' : 'smooth', 
@@ -348,8 +358,14 @@ export function RiskSnapshotCard({ counts, loading = {}, records = {}, onNavigat
 
   const handleChipClick = useCallback((key: ChipKey) => {
     const config = CHIP_CONFIG[key];
-    scrollToSection(config.anchorId, config.tab);
-  }, [scrollToSection]);
+    const expectedCount = counts[key];
+    scrollToSection({
+      tab: config.tab,
+      anchorId: config.anchorId,
+      scope: config.scope,
+      expectedCount,
+    });
+  }, [scrollToSection, counts]);
 
   return (
     <Card>
