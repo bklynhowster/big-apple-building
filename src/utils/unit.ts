@@ -295,14 +295,17 @@ const TEXT_EXTRACTION_FIELDS = [
 ];
 
 // Explicit "strong evidence" patterns only (APT/UNIT/#/RM/STE/etc.)
+// CRITICAL: Use negative lookahead (?!S\b) to prevent matching plurals like "UNITS" -> "S"
 const UNIT_EXTRACTION_PATTERNS: { pattern: RegExp; keyword: string; strong: boolean }[] = [
-  { pattern: /\bAPT\.?\s*#?\s*([A-Z0-9]{1,8})\b/i, keyword: 'APT', strong: true },
-  { pattern: /\bAPARTMENT\s*#?\s*([A-Z0-9]{1,8})\b/i, keyword: 'APARTMENT', strong: true },
-  { pattern: /\bUNIT\s*#?\s*([A-Z0-9]{1,8})\b/i, keyword: 'UNIT', strong: true },
-  { pattern: /\bRM\.?\s*#?\s*([A-Z0-9]{1,8})\b/i, keyword: 'RM', strong: true },
-  { pattern: /\bROOM\s*#?\s*([A-Z0-9]{1,8})\b/i, keyword: 'ROOM', strong: true },
-  { pattern: /\bSTE\.?\s*#?\s*([A-Z0-9]{1,8})\b/i, keyword: 'STE', strong: true },
-  { pattern: /\bSUITE\s*#?\s*([A-Z0-9]{1,8})\b/i, keyword: 'SUITE', strong: true },
+  // APT/APARTMENT - must not match "APTS" plural
+  { pattern: /\bAPT\.?(?!S\b)\s*#?\s*([A-Z0-9]{1,8})\b/i, keyword: 'APT', strong: true },
+  { pattern: /\bAPARTMENT(?!S\b)\s*#?\s*([A-Z0-9]{1,8})\b/i, keyword: 'APARTMENT', strong: true },
+  // UNIT - must not match "UNITS" plural (the most common false positive source)
+  { pattern: /\bUNIT(?!S\b)\s*#?\s*([A-Z0-9]{1,8})\b/i, keyword: 'UNIT', strong: true },
+  { pattern: /\bRM\.?(?!S\b)\s*#?\s*([A-Z0-9]{1,8})\b/i, keyword: 'RM', strong: true },
+  { pattern: /\bROOM(?!S\b)\s*#?\s*([A-Z0-9]{1,8})\b/i, keyword: 'ROOM', strong: true },
+  { pattern: /\bSTE\.?(?!S\b)\s*#?\s*([A-Z0-9]{1,8})\b/i, keyword: 'STE', strong: true },
+  { pattern: /\bSUITE(?!S\b)\s*#?\s*([A-Z0-9]{1,8})\b/i, keyword: 'SUITE', strong: true },
   { pattern: /#\s*([A-Z0-9]{1,8})\b/i, keyword: '#', strong: true },
   // PH / PENTHOUSE are special tokens
   { pattern: /\bPENTHOUSE\s*([A-Z0-9]{0,3})\b/i, keyword: 'PENTHOUSE', strong: true },
@@ -317,7 +320,11 @@ function extractUnitFromText(text: string | null | undefined, fieldName: string)
     const match = s.match(pattern);
     if (!match) continue;
 
-    const rawToken = (match[1] ?? '').toUpperCase();
+    const rawToken = (match[1] ?? '').toUpperCase().trim();
+    
+    // Skip empty captures
+    if (!rawToken && keyword !== 'PENTHOUSE' && keyword !== 'PH') continue;
+    
     let normalized: string | null = null;
 
     if (keyword === 'PENTHOUSE' || keyword === 'PH') {
@@ -326,6 +333,20 @@ function extractUnitFromText(text: string | null | undefined, fieldName: string)
       if (!isLikelyUnitLabel(ph, true)) continue;
       normalized = ph;
     } else {
+      // CRITICAL: For single-letter units, verify exact phrase "UNIT <letter>" exists
+      // This prevents false positives from plurals like "UNITS" -> "S"
+      if (/^[A-Z]$/.test(rawToken)) {
+        // Check that the source text contains an explicit singular reference
+        const singleLetterPattern = new RegExp(
+          `\\b${keyword}\\.?\\s*#?\\s*${rawToken}\\b`,
+          'i'
+        );
+        if (!singleLetterPattern.test(s)) {
+          debugLog('UnitExtract.reject_single_letter', { fieldName, keyword, rawToken, reason: 'no_explicit_match' });
+          continue;
+        }
+      }
+      
       normalized = normalizeUnit(rawToken, false, strong);
       if (!normalized) continue;
     }
