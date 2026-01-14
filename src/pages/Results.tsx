@@ -6,7 +6,7 @@ import { Footer } from '@/components/layout/Footer';
 import { ContextBanner, QueryScope } from '@/components/results/ContextBanner';
 import { PropertyOverview } from '@/components/results/PropertyOverview';
 import { PropertyProfileCard } from '@/components/results/PropertyProfileCard';
-import { RiskSnapshotCard, type RecordCounts, type LoadingStates, type RecordArrays } from '@/components/results/RiskSnapshotCard';
+import { RiskSnapshotCard, type RecordCounts, type LoadingStates, type RecordArrays, type NavigationInfo } from '@/components/results/RiskSnapshotCard';
 import brooklynBridgeLines from '@/assets/brooklyn-bridge-lines.png';
 
 import { CondoUnitsCard } from '@/components/results/CondoUnitsCard';
@@ -442,8 +442,15 @@ export default function Results() {
                 counts={recordCounts} 
                 loading={riskSnapshotLoading}
                 records={riskSnapshotRecords}
-                onNavigateToSection={(tab) => {
-                  handleTabChange(tab);
+                onNavigateToSection={(info: NavigationInfo) => {
+                  // Set scope to match dataset requirement
+                  if (info.scope === 'building' && scope !== 'building') {
+                    setScope('building');
+                  } else if (info.scope === 'unit' && scope !== 'unit') {
+                    setScope('unit');
+                  }
+                  // Navigate to tab
+                  handleTabChange(info.tab);
                 }}
               />
 
