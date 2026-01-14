@@ -7,7 +7,6 @@ const corsHeaders = {
 };
 
 // NYC Open Data PLUTO (Primary Land Use Tax Lot Output) dataset
-// This is the canonical source for property characteristics
 const PLUTO_DATASET_ID = '64uk-42ks';
 const PLUTO_BASE_URL = `https://data.cityofnewyork.us/resource/${PLUTO_DATASET_ID}.json`;
 
@@ -157,7 +156,7 @@ function getClientIP(req: Request): string {
 }
 
 const responseCache = new Map<string, { data: unknown; expiresAt: number }>();
-const RESPONSE_CACHE_TTL = 60 * 60 * 1000; // 1 hour for property profiles (rarely change)
+const RESPONSE_CACHE_TTL = 60 * 60 * 1000;
 
 function getCached<T>(key: string): T | null {
   const entry = responseCache.get(key);
@@ -200,26 +199,18 @@ async function fetchWithRetry(url: string, options: RequestInit = {}): Promise<{
 type PropertyTypeLabel = 'Condo' | 'Co-op' | '1-2 Family' | '3+ Family' | 'Mixed-Use' | 'Commercial' | 'Other' | 'Unknown';
 type PropertyTenure = 'CONDO' | 'COOP' | 'RENTAL_OR_OTHER' | 'UNKNOWN';
 type OwnershipConfidence = 'high' | 'medium' | 'low';
+
+// CONSERVATIVE ownership labels - never say "Likely" or infer from CO/building class
 type OwnershipLabel = 
-  | 'Condo'
-  | 'Confirmed co-op'
-  | 'Likely co-op'
-  | 'Possible co-op (unconfirmed)'
-  | 'Not a co-op'
-  | 'Unknown / not specified';
+  | 'Condominium'
+  | 'Cooperative'
+  | 'Ownership type not specified in municipal data';
 
 // Building class codes reference: https://www.nyc.gov/assets/finance/jump/hlpbldgcode.html
 const CONDO_CLASSES = ['R0', 'R1', 'R2', 'R3', 'R4', 'R5', 'R6', 'R7', 'R8', 'R9', 'RR', 'RS'];
 const ONE_TWO_FAMILY_CLASSES = ['A0', 'A1', 'A2', 'A3', 'A4', 'A5', 'A6', 'A7', 'A8', 'A9', 'B1', 'B2', 'B3', 'B9'];
-const MIXED_USE_LAND_USES = ['04']; // Mixed residential/commercial
+const MIXED_USE_LAND_USES = ['04'];
 const COMMERCIAL_LAND_USES = ['05', '06', '07', '08', '09', '10', '11'];
-const RESIDENTIAL_LAND_USES = ['01', '02', '03', '04'];
-
-// Known BBL overrides for ownership classification (admin corrections)
-const OWNERSHIP_OVERRIDES: Record<string, { label: OwnershipLabel; confidence: OwnershipConfidence; score: number; evidence: string[] }> = {
-  // Add known false positives here as needed
-  // '3064110045': { label: 'Unknown / not specified', confidence: 'low', score: 0, evidence: ['Manual override: confirmed not a co-op'] },
-};
 
 interface PropertyClassification {
   propertyTypeLabel: PropertyTypeLabel;
@@ -229,38 +220,23 @@ interface PropertyClassification {
 interface OwnershipProfile {
   ownershipTypeLabel: OwnershipLabel;
   ownershipConfidence: OwnershipConfidence;
-  ownershipScore: number;
   ownershipEvidence: string[];
   ownershipWarnings: string[];
 }
 
 /**
- * Checks if text contains explicit co-op keywords (not just "CO-" prefix).
- * Only matches "COOPERATIVE", "CO-OP", "COOP" as distinct words.
- */
-function hasExplicitCoopText(text: string | null | undefined): boolean {
-  if (!text) return false;
-  const upper = text.toUpperCase();
-  // Match explicit co-op terms, not just "CO-" prefix
-  return /\bCOOPERATIVE\b/.test(upper) || 
-         /\bCO-OP\b/.test(upper) || 
-         /\bCOOP\b/.test(upper);
-}
-
-/**
- * Computes ownership profile with scoring system (0-100).
+ * CONSERVATIVE Ownership Classification
  * 
- * RULES:
- * - "Condo=NO" is NOT evidence of co-op
- * - Unit BBLs existence → Force Condo, NEVER co-op
- * - Explicit "Cooperative" or "Co-op" text → +80
- * - Residential >10 units + no unit BBLs → +20
+ * CRITICAL RULES:
+ * - "CO", "CO-" in DOB/BIS data = Certificate of Occupancy, NOT cooperative
+ * - Do NOT infer cooperative from DOB Profile, CO status, or Building Class
+ * - Do NOT infer cooperative from absence of condo units
+ * - Only assert "Cooperative" with explicit ownership records
  * 
- * LABEL MAPPING:
- * - Condo indicators → "Condo" (score=100)
- * - score >= 80 with explicit text → "Likely co-op"
- * - score 40-79 → "Possible co-op (unconfirmed)"
- * - else → "Unknown / not specified"
+ * CLASSIFICATION LOGIC:
+ * 1) Condo unit BBL pattern OR explicit condo indicator => "Condominium"
+ * 2) Explicit cooperative indicator (sales, ACRIS, offering plan) => "Cooperative"
+ * 3) Else => "Ownership type not specified in municipal data"
  */
 function computeOwnershipProfile(
   buildingClass: string | null,
@@ -269,47 +245,28 @@ function computeOwnershipProfile(
   residentialUnits: number | null,
   bbl: string,
   hasMultipleUnitBBLs: boolean,
-  unitBBLCount: number,
-  rawData?: Record<string, unknown>
+  unitBBLCount: number
 ): OwnershipProfile {
-  // Check for admin override first
-  if (OWNERSHIP_OVERRIDES[bbl]) {
-    const override = OWNERSHIP_OVERRIDES[bbl];
-    console.log(`[OwnershipClassifier] BBL ${bbl}: Admin override applied`, override);
-    return {
-      ownershipTypeLabel: override.label,
-      ownershipConfidence: override.confidence,
-      ownershipScore: override.score,
-      ownershipEvidence: override.evidence,
-      ownershipWarnings: [],
-    };
-  }
-
   const bc = (buildingClass || '').toUpperCase().trim();
-  const lu = (landUse || '').trim();
-  const units = residentialUnits || 0;
   const evidence: string[] = [];
   const warnings: string[] = [];
 
-  // ============ CONDO DETECTION (highest priority) ============
+  // ============ 1) CONDOMINIUM DETECTION ============
   const isCondoClass = CONDO_CLASSES.some(c => bc.startsWith(c));
   const hasCondoNo = condoNo !== null && condoNo !== undefined && 
     String(condoNo).trim() !== '' && String(condoNo) !== '0';
 
-  // If we have unit BBLs, it's definitely a condo, NEVER a co-op
+  // Condo via unit BBLs (strongest indicator)
   if (hasMultipleUnitBBLs && unitBBLCount > 0) {
     evidence.push(`Multiple unit BBLs present (${unitBBLCount} units)`);
     if (isCondoClass) evidence.push(`Building Class: ${bc} (condo class)`);
     if (hasCondoNo) evidence.push(`Condo Number: ${condoNo}`);
     
-    console.log(`[OwnershipClassifier] BBL ${bbl}: Condo detected via unit BBLs`, { 
-      unitBBLCount, bc, condoNo 
-    });
+    console.log(`[OwnershipClassifier] BBL ${bbl}: Condominium via unit BBLs`, { unitBBLCount });
     
     return {
-      ownershipTypeLabel: 'Condo',
+      ownershipTypeLabel: 'Condominium',
       ownershipConfidence: 'high',
-      ownershipScore: 100,
       ownershipEvidence: evidence,
       ownershipWarnings: [],
     };
@@ -320,119 +277,41 @@ function computeOwnershipProfile(
     if (isCondoClass) evidence.push(`Building Class: ${bc} (condo class)`);
     if (hasCondoNo) evidence.push(`Condo Number: ${condoNo}`);
     
-    console.log(`[OwnershipClassifier] BBL ${bbl}: Condo detected via class/condoNo`, { 
-      bc, condoNo 
-    });
+    console.log(`[OwnershipClassifier] BBL ${bbl}: Condominium via class/condoNo`, { bc, condoNo });
     
     return {
-      ownershipTypeLabel: 'Condo',
+      ownershipTypeLabel: 'Condominium',
       ownershipConfidence: 'high',
-      ownershipScore: 100,
       ownershipEvidence: evidence,
       ownershipWarnings: [],
     };
   }
 
-  // ============ CO-OP SCORING ============
-  let score = 0;
-  let hasExplicitCoopEvidence = false;
+  // ============ 2) COOPERATIVE - ONLY WITH EXPLICIT EVIDENCE ============
+  // NOTE: We do NOT have access to ACRIS/sales data in this endpoint.
+  // If we had explicit cooperative indicator, we would use it here.
+  // For now, we cannot confirm cooperative from PLUTO/DOB data alone.
 
-  // Check for explicit co-op text in raw data fields
-  const textFieldsToCheck: string[] = [];
-  if (bc) textFieldsToCheck.push(bc);
-  
-  // Check raw data for any field containing explicit co-op text
-  if (rawData) {
-    for (const [key, value] of Object.entries(rawData)) {
-      if (typeof value === 'string') {
-        textFieldsToCheck.push(value);
-      }
-    }
-  }
+  // ============ 3) DEFAULT: NOT SPECIFIED ============
+  // Collect diagnostic info for transparency
+  if (bc) evidence.push(`Building Class: ${bc}`);
+  if (landUse) evidence.push(`Land Use: ${landUse}`);
+  if (residentialUnits) evidence.push(`Residential Units: ${residentialUnits}`);
 
-  const explicitCoopField = textFieldsToCheck.find(text => hasExplicitCoopText(text));
-  
-  if (explicitCoopField) {
-    // +80 for explicit co-op text
-    score += 80;
-    hasExplicitCoopEvidence = true;
-    const truncated = explicitCoopField.length > 50 ? explicitCoopField.substring(0, 50) + '...' : explicitCoopField;
-    evidence.push(`Explicit "Cooperative" or "Co-op" text found: "${truncated}"`);
-    console.log(`[OwnershipClassifier] BBL ${bbl}: +80 for explicit co-op text`, { 
-      text: explicitCoopField.substring(0, 100) 
-    });
-  }
+  // Always add the helper warning about DOB/PLUTO limitations
+  warnings.push(
+    'DOB and PLUTO data do not reliably indicate cooperative ownership. ' +
+    'Confirm via offering plan, ACRIS records, or corporation filings.'
+  );
 
-  // +20 if residential with >10 units and NO unit BBLs
-  const isResidential = RESIDENTIAL_LAND_USES.includes(lu);
-  if (isResidential && units > 10 && !hasMultipleUnitBBLs) {
-    score += 20;
-    evidence.push(`Residential building with ${units} units and no individual unit BBLs`);
-    console.log(`[OwnershipClassifier] BBL ${bbl}: +20 for residential >10 units, no unit BBLs`, { 
-      units, landUse: lu 
-    });
-  }
-
-  // Collect diagnostic evidence
-  if (bc && !evidence.some(e => e.includes('Building Class'))) {
-    evidence.push(`Building Class: ${bc}`);
-  }
-  if (lu) evidence.push(`Land Use: ${lu}`);
-  if (units > 0) evidence.push(`Residential Units: ${units}`);
-
-  // Add warning about DOF codes if applicable
-  const bcFirstChar = bc.charAt(0);
-  if ((bcFirstChar === 'C' || bcFirstChar === 'D') && bc.length >= 2) {
-    warnings.push(
-      `Building class ${bc} is a DOF tax classification for apartment buildings. ` +
-      'This does NOT confirm cooperative ownership. Many rental buildings share these classifications.'
-    );
-  }
-
-  console.log(`[OwnershipClassifier] BBL ${bbl}: Final score computed`, { 
-    score, 
-    hasExplicitCoopEvidence, 
-    units, 
-    hasMultipleUnitBBLs,
-    bc,
-    landUse: lu 
+  console.log(`[OwnershipClassifier] BBL ${bbl}: Not specified (no explicit indicators)`, { 
+    bc, landUse, residentialUnits, hasMultipleUnitBBLs 
   });
 
-  // ============ LABEL MAPPING ============
-  if (score >= 80 && hasExplicitCoopEvidence) {
-    return {
-      ownershipTypeLabel: 'Likely co-op',
-      ownershipConfidence: 'high',
-      ownershipScore: score,
-      ownershipEvidence: evidence,
-      ownershipWarnings: warnings,
-    };
-  }
-
-  if (score >= 40) {
-    warnings.push(
-      'Based on municipal tax/record patterns; not definitive. ' +
-      'Confirm via offering plan / corporation records.'
-    );
-    return {
-      ownershipTypeLabel: 'Possible co-op (unconfirmed)',
-      ownershipConfidence: 'medium',
-      ownershipScore: score,
-      ownershipEvidence: evidence,
-      ownershipWarnings: warnings,
-    };
-  }
-
-  // Default: Unknown / not specified
-  if (evidence.length === 0) {
-    evidence.push('No ownership indicators found in municipal data');
-  }
-  
   return {
-    ownershipTypeLabel: 'Unknown / not specified',
+    ownershipTypeLabel: 'Ownership type not specified in municipal data',
     ownershipConfidence: 'low',
-    ownershipScore: score,
-    ownershipEvidence: evidence,
+    ownershipEvidence: evidence.length > 0 ? evidence : ['No ownership indicators found'],
     ownershipWarnings: warnings,
   };
 }
@@ -446,7 +325,7 @@ function classifyProperty(
   const bc = (buildingClass || '').toUpperCase().trim();
   const lu = (landUse || '').trim();
 
-  // Check for condo first (explicit condo class or condo number present)
+  // Check for condo first
   if (CONDO_CLASSES.some(c => bc.startsWith(c))) {
     return { propertyTypeLabel: 'Condo', propertyTenure: 'CONDO' };
   }
@@ -454,20 +333,19 @@ function classifyProperty(
     return { propertyTypeLabel: 'Condo', propertyTenure: 'CONDO' };
   }
 
-  // NOTE: We no longer infer Co-op from C/D building classes
-  // Only explicit "Cooperative" text would trigger this in ownership profile
+  // NOTE: We no longer infer Co-op from any source in this endpoint
 
-  // Check for commercial land use
+  // Commercial
   if (COMMERCIAL_LAND_USES.includes(lu)) {
     return { propertyTypeLabel: 'Commercial', propertyTenure: 'RENTAL_OR_OTHER' };
   }
 
-  // Check for mixed-use
+  // Mixed-use
   if (MIXED_USE_LAND_USES.includes(lu)) {
     return { propertyTypeLabel: 'Mixed-Use', propertyTenure: 'RENTAL_OR_OTHER' };
   }
 
-  // Check building class patterns for 1-2 family
+  // 1-2 family
   if (ONE_TWO_FAMILY_CLASSES.some(c => bc.startsWith(c))) {
     return { propertyTypeLabel: '1-2 Family', propertyTenure: 'RENTAL_OR_OTHER' };
   }
@@ -497,10 +375,8 @@ interface PropertyProfile {
   buildingClass: string | null;
   propertyTypeLabel: PropertyTypeLabel;
   propertyTenure: PropertyTenure;
-  // Ownership classification with confidence
   ownershipTypeLabel: OwnershipLabel;
   ownershipConfidence: OwnershipConfidence;
-  ownershipScore: number;
   ownershipEvidence: string[];
   ownershipWarnings: string[];
   residentialUnits: number | null;
@@ -556,17 +432,15 @@ function normalizeProfile(raw: Record<string, unknown>, bbl: string, schema: Sch
 
   const classification = classifyProperty(buildingClass, landUse, unitsRes, condoNo);
   
-  // Note: hasMultipleUnitBBLs and unitBBLCount should be passed in from frontend 
-  // if available. For now, we use 0/false as defaults.
+  // Note: hasMultipleUnitBBLs and unitBBLCount would need to come from frontend
   const ownership = computeOwnershipProfile(
     buildingClass, 
     condoNo, 
     landUse, 
     unitsRes,
     bbl, 
-    false, // hasMultipleUnitBBLs - would need to be passed from frontend
-    0,     // unitBBLCount - would need to be passed from frontend
-    raw
+    false, // hasMultipleUnitBBLs
+    0      // unitBBLCount
   );
 
   const fieldsUsed = Object.entries(schema.columnMap)
@@ -585,7 +459,6 @@ function normalizeProfile(raw: Record<string, unknown>, bbl: string, schema: Sch
     propertyTenure: classification.propertyTenure,
     ownershipTypeLabel: ownership.ownershipTypeLabel,
     ownershipConfidence: ownership.ownershipConfidence,
-    ownershipScore: ownership.ownershipScore,
     ownershipEvidence: ownership.ownershipEvidence,
     ownershipWarnings: ownership.ownershipWarnings,
     residentialUnits: unitsRes,
@@ -662,7 +535,6 @@ serve(async (req) => {
       });
     }
 
-    // Discover schema
     const schema = await discoverSchema(NYC_OPEN_DATA_APP_TOKEN);
     
     logRequest(ctx, 'Schema discovered', { 
@@ -676,7 +548,6 @@ serve(async (req) => {
         'Unable to query property profile—schema mismatch.');
     }
 
-    // Query PLUTO
     const dataUrl = new URL(PLUTO_BASE_URL);
     dataUrl.searchParams.set('$where', `${schema.columnMap.bbl}='${bbl}'`);
     dataUrl.searchParams.set('$limit', '1');
@@ -706,7 +577,6 @@ serve(async (req) => {
     const rawData = result.data as Record<string, unknown>[];
     
     if (rawData.length === 0) {
-      // No data found - return a minimal profile
       const emptyProfile: PropertyProfile = {
         bbl,
         borough: getBoroughName(bbl.charAt(0)),
@@ -717,11 +587,10 @@ serve(async (req) => {
         buildingClass: null,
         propertyTypeLabel: 'Unknown',
         propertyTenure: 'UNKNOWN',
-        ownershipTypeLabel: 'Unknown / not specified',
+        ownershipTypeLabel: 'Ownership type not specified in municipal data',
         ownershipConfidence: 'low',
-        ownershipScore: 0,
         ownershipEvidence: ['No property data available'],
-        ownershipWarnings: [],
+        ownershipWarnings: ['DOB and PLUTO data do not reliably indicate cooperative ownership.'],
         residentialUnits: null,
         totalUnits: null,
         yearBuilt: null,
@@ -747,7 +616,6 @@ serve(async (req) => {
     logRequest(ctx, 'Success', { 
       propertyType: profile.propertyTypeLabel,
       ownershipType: profile.ownershipTypeLabel,
-      ownershipScore: profile.ownershipScore,
       buildingClass: profile.buildingClass,
       units: profile.residentialUnits,
     });
