@@ -14,7 +14,7 @@ export interface MunicipalClassification {
 }
 
 // Layer 2: Ownership Structure
-export type OwnershipConfidenceLevel = 'Confirmed' | 'Likely' | 'Unverified';
+export type OwnershipConfidenceLevel = 'Confirmed' | 'Market-known' | 'Unverified';
 export type OwnershipStructureType = 'Condominium' | 'Cooperative' | 'Rental' | 'Owner-Occupied' | 'Unknown';
 
 export interface OwnershipStructure {

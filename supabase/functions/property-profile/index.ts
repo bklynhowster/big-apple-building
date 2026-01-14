@@ -199,7 +199,7 @@ type PropertyTenure = 'CONDO' | 'COOP' | 'RENTAL_OR_OTHER' | 'UNKNOWN';
 
 // Two-layer ownership types
 type MunicipalOwnershipLabel = 'Condominium' | 'Ownership type not specified in municipal data';
-type OwnershipConfidenceLevel = 'Confirmed' | 'Likely' | 'Unverified';
+type OwnershipConfidenceLevel = 'Confirmed' | 'Market-known' | 'Unverified';
 type OwnershipStructureType = 'Condominium' | 'Cooperative' | 'Rental' | 'Owner-Occupied' | 'Unknown';
 
 const CONDO_CLASSES = ['R0', 'R1', 'R2', 'R3', 'R4', 'R5', 'R6', 'R7', 'R8', 'R9', 'RR', 'RS'];
