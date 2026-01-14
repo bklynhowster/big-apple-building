@@ -200,10 +200,9 @@ export function PropertyProfileCard({ bbl, unitLabel, parentAddress, landmarkSta
                   profile.residentialUnits !== null ||
                   profile.yearBuilt !== null;
 
-  // Only show co-op disclaimer for HIGH confidence explicit co-ops
-  // ("Likely co-op" or "Confirmed co-op" with high confidence)
+  // Only show co-op disclaimer for explicitly confirmed cooperatives
   const isConfirmedCoop = profile.ownershipConfidence === 'high' && 
-    (profile.ownershipTypeLabel === 'Likely co-op' || profile.ownershipTypeLabel === 'Confirmed co-op');
+    profile.ownershipTypeLabel === 'Cooperative';
 
   return (
     <Card>
