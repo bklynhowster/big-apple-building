@@ -4,7 +4,7 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { usePropertyProfile, PropertyTypeLabel, OwnershipConfidence } from '@/hooks/usePropertyProfile';
+import { usePropertyProfile, PropertyTypeLabel, OwnershipConfidence, OwnershipLabel } from '@/hooks/usePropertyProfile';
 import { cn } from '@/lib/utils';
 import type { LandmarkStatus } from '@/hooks/useLandmarkStatus';
 import { LocationMap } from './LocationMap';
@@ -201,9 +201,9 @@ export function PropertyProfileCard({ bbl, unitLabel, parentAddress, landmarkSta
                   profile.yearBuilt !== null;
 
   // Only show co-op disclaimer for HIGH confidence explicit co-ops
-  // (not for medium/low confidence or "Likely Co-op" which we no longer use)
+  // ("Likely co-op" or "Confirmed co-op" with high confidence)
   const isConfirmedCoop = profile.ownershipConfidence === 'high' && 
-    profile.ownershipTypeLabel === 'Co-op';
+    (profile.ownershipTypeLabel === 'Likely co-op' || profile.ownershipTypeLabel === 'Confirmed co-op');
 
   return (
     <Card>

@@ -4,6 +4,13 @@ import { parseApiError, type ApiError } from '@/types/api-error';
 export type PropertyTypeLabel = 'Condo' | 'Co-op' | '1-2 Family' | '3+ Family' | 'Mixed-Use' | 'Commercial' | 'Other' | 'Unknown';
 export type PropertyTenure = 'CONDO' | 'COOP' | 'RENTAL_OR_OTHER' | 'UNKNOWN';
 export type OwnershipConfidence = 'high' | 'medium' | 'low';
+export type OwnershipLabel = 
+  | 'Condo'
+  | 'Confirmed co-op'
+  | 'Likely co-op'
+  | 'Possible co-op (unconfirmed)'
+  | 'Not a co-op'
+  | 'Unknown / not specified';
 
 export interface PropertyProfile {
   bbl: string;
@@ -15,9 +22,10 @@ export interface PropertyProfile {
   buildingClass: string | null;
   propertyTypeLabel: PropertyTypeLabel;
   propertyTenure: PropertyTenure;
-  // New ownership classification with confidence
-  ownershipTypeLabel: string;
+  // Ownership classification with confidence score
+  ownershipTypeLabel: OwnershipLabel;
   ownershipConfidence: OwnershipConfidence;
+  ownershipScore: number;
   ownershipEvidence: string[];
   ownershipWarnings: string[];
   residentialUnits: number | null;
