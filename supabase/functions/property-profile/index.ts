@@ -199,11 +199,14 @@ async function fetchWithRetry(url: string, options: RequestInit = {}): Promise<{
 
 type PropertyTypeLabel = 'Condo' | 'Co-op' | '1-2 Family' | '3+ Family' | 'Mixed-Use' | 'Commercial' | 'Other' | 'Unknown';
 type PropertyTenure = 'CONDO' | 'COOP' | 'RENTAL_OR_OTHER' | 'UNKNOWN';
+type OwnershipConfidence = 'high' | 'medium' | 'low';
 
 // Building class codes reference: https://www.nyc.gov/assets/finance/jump/hlpbldgcode.html
 const CONDO_CLASSES = ['R0', 'R1', 'R2', 'R3', 'R4', 'R5', 'R6', 'R7', 'R8', 'R9', 'RR', 'RS'];
-// Co-op building classes: C0-C9 are walkup apartments (commonly co-ops), D0-D9 are elevator apartments (very commonly co-ops)
-const COOP_CLASSES = ['C0', 'C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7', 'C8', 'C9', 'D0', 'D1', 'D2', 'D3', 'D4', 'D5', 'D6', 'D7', 'D8', 'D9'];
+// DOF tax classification classes that MAY indicate co-op (but are NOT definitive):
+// C0-C9: Walk-up apartments, D0-D9: Elevator apartments
+// These reflect DOF tax classification, NOT legal ownership structure
+const COOP_TAX_CLASS_PREFIXES = ['C', 'D'];
 const ONE_TWO_FAMILY_CLASSES = ['A0', 'A1', 'A2', 'A3', 'A4', 'A5', 'A6', 'A7', 'A8', 'A9', 'B1', 'B2', 'B3', 'B9'];
 const MIXED_USE_LAND_USES = ['04']; // Mixed residential/commercial
 const COMMERCIAL_LAND_USES = ['05', '06', '07', '08', '09', '10', '11'];
@@ -211,6 +214,89 @@ const COMMERCIAL_LAND_USES = ['05', '06', '07', '08', '09', '10', '11'];
 interface PropertyClassification {
   propertyTypeLabel: PropertyTypeLabel;
   propertyTenure: PropertyTenure;
+}
+
+interface OwnershipProfile {
+  ownershipTypeLabel: string;
+  ownershipConfidence: OwnershipConfidence;
+  ownershipEvidence: string[];
+  ownershipWarnings: string[];
+}
+
+/**
+ * Computes ownership profile with confidence and evidence.
+ * IMPORTANT: DOF building classification reflects tax status, NOT legal ownership.
+ */
+function computeOwnershipProfile(
+  buildingClass: string | null,
+  condoNo: string | number | null,
+  landUse: string | null
+): OwnershipProfile {
+  const bc = (buildingClass || '').toUpperCase().trim();
+  const evidence: string[] = [];
+  const warnings: string[] = [];
+
+  // ============ A) HIGH CONFIDENCE: Condominium ============
+  const isCondoClass = CONDO_CLASSES.some(c => bc.startsWith(c));
+  if (isCondoClass) {
+    evidence.push(`Building Class: ${bc} (condo class)`);
+  }
+
+  const hasCondoNo = condoNo !== null && condoNo !== undefined && 
+    String(condoNo).trim() !== '' && String(condoNo) !== '0';
+  if (hasCondoNo) {
+    evidence.push(`Condo Number: ${condoNo}`);
+  }
+
+  if (isCondoClass || hasCondoNo) {
+    return {
+      ownershipTypeLabel: 'Condominium',
+      ownershipConfidence: 'high',
+      ownershipEvidence: evidence,
+      ownershipWarnings: [],
+    };
+  }
+
+  // ============ B) MEDIUM CONFIDENCE: Likely Co-op (DOF tax classification) ============
+  const bcFirstChar = bc.charAt(0);
+  const isCoopTaxClass = COOP_TAX_CLASS_PREFIXES.includes(bcFirstChar) && bc.length >= 2;
+  
+  if (isCoopTaxClass) {
+    evidence.push(`DOF Building Classification: ${bc}`);
+    warnings.push(
+      'DOB notes that DOF classification reflects tax status and may not confirm legal ownership structure. ' +
+      'Confirm via offering plan or corporate records if needed.'
+    );
+
+    return {
+      ownershipTypeLabel: 'Likely Co-op (DOF tax classification)',
+      ownershipConfidence: 'medium',
+      ownershipEvidence: evidence,
+      ownershipWarnings: warnings,
+    };
+  }
+
+  // ============ C) LOW CONFIDENCE: Indeterminate ============
+  if (bc) {
+    evidence.push(`Building Class: ${bc}`);
+  } else {
+    evidence.push('Building Class: Not available');
+  }
+
+  if (!hasCondoNo) {
+    evidence.push('Condo indicator: No');
+  }
+
+  if (landUse) {
+    evidence.push(`Land Use: ${landUse}`);
+  }
+
+  return {
+    ownershipTypeLabel: 'Ownership type: Indeterminate',
+    ownershipConfidence: 'low',
+    ownershipEvidence: evidence,
+    ownershipWarnings: [],
+  };
 }
 
 function classifyProperty(
@@ -230,8 +316,10 @@ function classifyProperty(
     return { propertyTypeLabel: 'Condo', propertyTenure: 'CONDO' };
   }
 
-  // Check for co-op (C0-C9 walkups or D0-D9 elevator buildings)
-  if (COOP_CLASSES.some(c => bc.startsWith(c))) {
+  // DOF tax class C/D may indicate co-op but we keep the old label for backward compat
+  // The new ownershipProfile provides the nuanced classification
+  const bcFirstChar = bc.charAt(0);
+  if (COOP_TAX_CLASS_PREFIXES.includes(bcFirstChar) && bc.length >= 2) {
     return { propertyTypeLabel: 'Co-op', propertyTenure: 'COOP' };
   }
 
@@ -275,6 +363,11 @@ interface PropertyProfile {
   buildingClass: string | null;
   propertyTypeLabel: PropertyTypeLabel;
   propertyTenure: PropertyTenure;
+  // New ownership classification with confidence
+  ownershipTypeLabel: string;
+  ownershipConfidence: OwnershipConfidence;
+  ownershipEvidence: string[];
+  ownershipWarnings: string[];
   residentialUnits: number | null;
   totalUnits: number | null;
   yearBuilt: number | null;
@@ -327,6 +420,7 @@ function normalizeProfile(raw: Record<string, unknown>, bbl: string, schema: Sch
     : null;
 
   const classification = classifyProperty(buildingClass, landUse, unitsRes, condoNo);
+  const ownership = computeOwnershipProfile(buildingClass, condoNo, landUse);
 
   const fieldsUsed = Object.entries(schema.columnMap)
     .filter(([_, col]) => col !== null)
@@ -342,6 +436,10 @@ function normalizeProfile(raw: Record<string, unknown>, bbl: string, schema: Sch
     buildingClass,
     propertyTypeLabel: classification.propertyTypeLabel,
     propertyTenure: classification.propertyTenure,
+    ownershipTypeLabel: ownership.ownershipTypeLabel,
+    ownershipConfidence: ownership.ownershipConfidence,
+    ownershipEvidence: ownership.ownershipEvidence,
+    ownershipWarnings: ownership.ownershipWarnings,
     residentialUnits: unitsRes,
     totalUnits: parseNumber(getValue('unitsTotal')),
     yearBuilt: parseNumber(getValue('yearBuilt')),
@@ -471,6 +569,10 @@ serve(async (req) => {
         buildingClass: null,
         propertyTypeLabel: 'Unknown',
         propertyTenure: 'UNKNOWN',
+        ownershipTypeLabel: 'Ownership type: Indeterminate',
+        ownershipConfidence: 'low',
+        ownershipEvidence: ['No property data available'],
+        ownershipWarnings: [],
         residentialUnits: null,
         totalUnits: null,
         yearBuilt: null,

@@ -4,7 +4,7 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { usePropertyProfile, PropertyTypeLabel, PropertyTenure } from '@/hooks/usePropertyProfile';
+import { usePropertyProfile, PropertyTypeLabel, OwnershipConfidence } from '@/hooks/usePropertyProfile';
 import { cn } from '@/lib/utils';
 import type { LandmarkStatus } from '@/hooks/useLandmarkStatus';
 import { LocationMap } from './LocationMap';
@@ -42,6 +42,18 @@ const PROPERTY_TYPE_ICONS: Record<PropertyTypeLabel, React.ReactNode> = {
   'Other': <Building2 className="h-5 w-5" />,
   'Unknown': <HelpCircle className="h-5 w-5" />,
 };
+
+// Styles for ownership confidence levels
+function getOwnershipStyles(confidence: OwnershipConfidence): string {
+  switch (confidence) {
+    case 'high':
+      return 'bg-accent text-accent-foreground';
+    case 'medium':
+      return 'bg-warning/10 text-warning border border-warning/30';
+    case 'low':
+      return 'bg-muted text-muted-foreground';
+  }
+}
 
 function LoadingSkeleton() {
   return (
@@ -188,7 +200,9 @@ export function PropertyProfileCard({ bbl, unitLabel, parentAddress, landmarkSta
                   profile.residentialUnits !== null ||
                   profile.yearBuilt !== null;
 
-  const isCoop = profile.propertyTenure === 'COOP';
+  // Use ownership classification instead of old isCoop check
+  const isLikelyCoop = profile.ownershipConfidence === 'medium' && 
+    profile.ownershipTypeLabel.includes('Co-op');
 
   return (
     <Card>
@@ -205,22 +219,63 @@ export function PropertyProfileCard({ bbl, unitLabel, parentAddress, landmarkSta
         )}
         
         <div className="flex flex-col lg:flex-row gap-6">
-          {/* Property Type Badge - Large */}
+          {/* Ownership Type Badge with Confidence Indicator */}
           <div className="flex items-center gap-4">
             <div className={cn(
               "flex items-center justify-center h-14 w-14 rounded-lg",
-              PROPERTY_TYPE_COLORS[profile.propertyTypeLabel]
+              getOwnershipStyles(profile.ownershipConfidence)
             )}>
-              {PROPERTY_TYPE_ICONS[profile.propertyTypeLabel]}
+              {profile.ownershipConfidence === 'high' ? (
+                PROPERTY_TYPE_ICONS[profile.propertyTypeLabel]
+              ) : profile.ownershipConfidence === 'medium' ? (
+                <Building2 className="h-5 w-5" />
+              ) : (
+                <HelpCircle className="h-5 w-5" />
+              )}
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <span className={cn(
-                  "text-lg font-semibold px-3 py-1 rounded-full",
-                  PROPERTY_TYPE_COLORS[profile.propertyTypeLabel]
-                )}>
-                  {profile.propertyTypeLabel}
-                </span>
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className={cn(
+                        "text-lg font-semibold px-3 py-1 rounded-full cursor-help inline-flex items-center gap-1.5",
+                        getOwnershipStyles(profile.ownershipConfidence)
+                      )}>
+                        {profile.ownershipTypeLabel}
+                        <Info className="h-3.5 w-3.5 opacity-60" />
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom" className="max-w-sm">
+                      <div className="space-y-2">
+                        <p className="font-medium text-xs uppercase tracking-wide text-muted-foreground">
+                          Confidence: {profile.ownershipConfidence}
+                        </p>
+                        {profile.ownershipEvidence.length > 0 && (
+                          <div>
+                            <p className="font-medium text-xs mb-1">Evidence:</p>
+                            <ul className="text-xs space-y-0.5">
+                              {profile.ownershipEvidence.map((item, i) => (
+                                <li key={i} className="flex items-start gap-1">
+                                  <span className="text-muted-foreground">•</span>
+                                  <span>{item}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                        {profile.ownershipWarnings.length > 0 && (
+                          <div className="pt-1 border-t border-border/50">
+                            <p className="font-medium text-xs text-warning mb-1">Note:</p>
+                            {profile.ownershipWarnings.map((warning, i) => (
+                              <p key={i} className="text-xs text-muted-foreground">{warning}</p>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
               </div>
               {profile.buildingClass && (
                 <TooltipProvider>
@@ -352,12 +407,13 @@ export function PropertyProfileCard({ bbl, unitLabel, parentAddress, landmarkSta
         </div>
 
 
-        {/* Co-op disclaimer */}
-        {isCoop && (
+        {/* Likely Co-op disclaimer - shown for medium confidence co-op classification */}
+        {isLikelyCoop && (
           <div className="elk-info-box flex items-start gap-2 mt-4">
-            <Info className="h-4 w-4 mt-0.5 shrink-0 text-primary" />
+            <Info className="h-4 w-4 mt-0.5 shrink-0 text-warning" />
             <p>
-              Co-op units do not have individual tax lots/BBLs. Most NYC regulatory records are issued at the building level.
+              This building's DOF tax classification suggests it may be a co-op. Co-op units do not have individual tax lots/BBLs—most NYC regulatory records are issued at the building level. 
+              <span className="text-muted-foreground"> Confirm via offering plan or corporate records if needed.</span>
             </p>
           </div>
         )}
