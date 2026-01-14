@@ -264,8 +264,8 @@ export function ViolationsTab({ bbl, bin, scope = 'building', isCoop = false, co
         datasetName="DOB Violations (3h2n-5cm9)"
       />
       
-      {/* Unit Mention Filter (for co-ops or when mentions exist) */}
-      {(isCoop || recordsWithMentionsCount > 0) && items.length > 0 && (
+      {/* Unit Mention Filter - Shows whenever there are mentions (NOT gated by ownership) */}
+      {recordsWithMentionsCount > 0 && items.length > 0 && (
         <UnitMentionFilter
           allMentionedUnits={allMentionedUnits}
           mentionCount={recordsWithMentionsCount}

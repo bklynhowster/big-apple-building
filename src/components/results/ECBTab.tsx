@@ -231,8 +231,8 @@ export function ECBTab({ bbl, bin, scope = 'building', isCoop, coopUnitContext, 
         datasetName="ECB Violations (6bgk-3dad)"
       />
       
-      {/* Unit Mention Filter (for co-ops or when mentions exist) */}
-      {(isCoop || recordsWithMentionsCount > 0) && items.length > 0 && (
+      {/* Unit Mention Filter - Shows whenever there are mentions (NOT gated by ownership) */}
+      {recordsWithMentionsCount > 0 && items.length > 0 && (
         <UnitMentionFilter
           allMentionedUnits={allMentionedUnits}
           mentionCount={recordsWithMentionsCount}

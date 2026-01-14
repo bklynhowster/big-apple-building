@@ -171,6 +171,8 @@ interface UnitInsightsCardProps {
   filingsWarning?: string | null;
   dobNowUrl?: string | null;
   fallbackMode?: boolean;
+  /** If true, hide the card entirely when there are no unit mentions (default: true) */
+  hideWhenEmpty?: boolean;
 }
 
 // Note: ViolationMentionRef, PermitMentionRef, and CombinedUnitStats are imported from useUnitMentions
@@ -1289,6 +1291,7 @@ export function UnitInsightsCard({
   filingsWarning,
   dobNowUrl,
   fallbackMode,
+  hideWhenEmpty = true,
 }: UnitInsightsCardProps) {
   const [evidenceUnit, setEvidenceUnit] = useState<string | null>(null);
   const [evidenceStats, setEvidenceStats] = useState<CombinedUnitStats | null>(null);
@@ -1389,6 +1392,12 @@ export function UnitInsightsCard({
       ? <ArrowUp className="h-3.5 w-3.5" />
       : <ArrowDown className="h-3.5 w-3.5" />;
   };
+
+  // Hide the card entirely when empty and hideWhenEmpty is true
+  // Only hide when loading is complete and there's no data
+  if (hideWhenEmpty && allLoadingComplete && !hasData) {
+    return null;
+  }
 
   return (
     <>
