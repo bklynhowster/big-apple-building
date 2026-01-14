@@ -1,23 +1,34 @@
 /**
  * Ownership Classification Helper
  * 
- * Computes ownership type with confidence and evidence based on available property data.
- * Uses STRICT assertion-only logic - only claims co-op if explicit text evidence exists.
+ * Computes ownership type with confidence score (0-100) based on available property data.
+ * Uses STRICT rules - only claims co-op when explicit text evidence exists.
  * 
- * IMPORTANT: DOF building classification codes (C0-C9, D0-D9) do NOT confirm co-op ownership.
- * These are tax classifications for apartment buildings, shared by rentals and co-ops alike.
+ * IMPORTANT: 
+ * - "Condo=NO" is NOT evidence of co-op
+ * - DOF building classification codes (C0-C9, D0-D9) do NOT confirm co-op ownership
+ * - CO-* prefix is tax classification, NOT cooperative ownership
  */
+
+export type OwnershipLabel = 
+  | 'Condo'
+  | 'Confirmed co-op'
+  | 'Likely co-op'
+  | 'Possible co-op (unconfirmed)'
+  | 'Not a co-op'
+  | 'Unknown / not specified';
 
 export type OwnershipConfidence = 'high' | 'medium' | 'low';
 
 export interface OwnershipProfile {
-  ownershipTypeLabel: string;
+  ownershipTypeLabel: OwnershipLabel;
   ownershipConfidence: OwnershipConfidence;
+  ownershipScore: number; // 0-100
   ownershipEvidence: string[];
   ownershipWarnings: string[];
 }
 
-interface PropertyData {
+export interface PropertyData {
   buildingClass?: string | null;
   landUse?: string | null;
   condoNo?: string | number | null;
@@ -30,6 +41,9 @@ interface PropertyData {
 
 // Condo building classes: R0-R9, RR, RS
 const CONDO_CLASSES = ['R0', 'R1', 'R2', 'R3', 'R4', 'R5', 'R6', 'R7', 'R8', 'R9', 'RR', 'RS'];
+
+// Residential land uses
+const RESIDENTIAL_LAND_USES = ['01', '02', '03', '04'];
 
 /**
  * Checks if text contains explicit co-op keywords (not just "CO-" prefix).
@@ -44,100 +58,150 @@ function hasExplicitCoopText(text: string | null | undefined): boolean {
 }
 
 /**
- * Computes ownership profile with STRICT confidence level and evidence.
+ * Computes ownership profile with scoring system (0-100).
  * 
- * Rules (assertion only when explicit):
- * A) High confidence Condo: condoNo present OR condo building class OR multiple unit BBLs
- * B) High confidence Co-op: ONLY if explicit "Cooperative/Co-op" text exists
- * C) Otherwise: "Ownership type: Not specified in municipal data" (low confidence)
+ * SCORING RULES:
+ * - If unit BBLs exist → Force "Condo", score=100
+ * - If condoNo or condo class → Force "Condo", score=100
+ * - Explicit "Cooperative" or "Co-op" text from municipal data → +80
+ * - Residential building, units > 10, NO unit BBLs → +20
  * 
- * NOTE: We do NOT infer co-op from C/D building class codes. These are DOF tax
- * classifications shared by rental and co-op buildings alike.
+ * LABEL MAPPING:
+ * - score >= 80 with explicit text → "Confirmed co-op" or "Likely co-op"
+ * - score 40-79 → "Possible co-op (unconfirmed)"
+ * - else → "Unknown / not specified"
+ * 
+ * NEVER use "Condo=NO" as scoring input.
  */
 export function computeOwnershipProfile(data: PropertyData): OwnershipProfile {
   const bc = (data.buildingClass || '').toUpperCase().trim();
   const condoNo = data.condoNo;
   const hasMultipleUnitBBLs = data.hasMultipleUnitBBLs || false;
   const unitBBLCount = data.unitBBLCount || 0;
+  const residentialUnits = data.residentialUnits || 0;
+  const landUse = (data.landUse || '').trim();
 
   const evidence: string[] = [];
   const warnings: string[] = [];
 
-  // ============ A) HIGH CONFIDENCE: Condominium ============
+  // ============ CONDO DETECTION (highest priority) ============
   const isCondoClass = CONDO_CLASSES.some(c => bc.startsWith(c));
-  if (isCondoClass) {
-    evidence.push(`Building Class: ${bc} (condo class)`);
-  }
-
   const hasCondoNo = condoNo !== null && condoNo !== undefined && 
     String(condoNo).trim() !== '' && String(condoNo) !== '0';
-  if (hasCondoNo) {
-    evidence.push(`Condo Number: ${condoNo}`);
-  }
 
-  if (hasMultipleUnitBBLs) {
+  // If we have unit BBLs, it's definitely a condo, not a co-op
+  if (hasMultipleUnitBBLs && unitBBLCount > 0) {
     evidence.push(`Multiple unit BBLs present (${unitBBLCount} units)`);
-  }
-
-  if (isCondoClass || hasCondoNo || hasMultipleUnitBBLs) {
+    if (isCondoClass) evidence.push(`Building Class: ${bc} (condo class)`);
+    if (hasCondoNo) evidence.push(`Condo Number: ${condoNo}`);
+    
+    console.log('[OwnershipClassifier] Condo detected via unit BBLs', { unitBBLCount, bc, condoNo });
+    
     return {
-      ownershipTypeLabel: 'Condominium',
+      ownershipTypeLabel: 'Condo',
       ownershipConfidence: 'high',
+      ownershipScore: 100,
       ownershipEvidence: evidence,
       ownershipWarnings: [],
     };
   }
 
-  // ============ B) HIGH CONFIDENCE: Co-op (ONLY with explicit text) ============
+  // Condo via class or condo number
+  if (isCondoClass || hasCondoNo) {
+    if (isCondoClass) evidence.push(`Building Class: ${bc} (condo class)`);
+    if (hasCondoNo) evidence.push(`Condo Number: ${condoNo}`);
+    
+    console.log('[OwnershipClassifier] Condo detected via class/condoNo', { bc, condoNo });
+    
+    return {
+      ownershipTypeLabel: 'Condo',
+      ownershipConfidence: 'high',
+      ownershipScore: 100,
+      ownershipEvidence: evidence,
+      ownershipWarnings: [],
+    };
+  }
+
+  // ============ CO-OP SCORING ============
+  let score = 0;
+  let hasExplicitCoopEvidence = false;
+
+  // Check for explicit co-op text in raw fields
   const textFieldsToCheck = data.rawTextFields || [];
   if (bc) textFieldsToCheck.push(bc);
   
-  const hasExplicitCoop = textFieldsToCheck.some(text => hasExplicitCoopText(text));
+  const explicitCoopText = textFieldsToCheck.find(text => hasExplicitCoopText(text));
   
-  if (hasExplicitCoop) {
-    evidence.push('Explicit "Cooperative" or "Co-op" text found in property data');
-    if (bc) evidence.push(`Building Class: ${bc}`);
-    
-    return {
-      ownershipTypeLabel: 'Co-op',
-      ownershipConfidence: 'high',
-      ownershipEvidence: evidence,
-      ownershipWarnings: [],
-    };
+  if (explicitCoopText) {
+    // +80 for explicit co-op text
+    score += 80;
+    hasExplicitCoopEvidence = true;
+    evidence.push(`Explicit "Cooperative" or "Co-op" text found: "${explicitCoopText.substring(0, 50)}..."`);
+    console.log('[OwnershipClassifier] Explicit co-op text found', { text: explicitCoopText.substring(0, 100) });
   }
 
-  // ============ C) LOW CONFIDENCE: Not specified ============
-  if (bc) {
-    evidence.push(`Building Class: ${bc}`);
-  } else {
-    evidence.push('Building Class: Not available');
+  // +20 if residential with >10 units and NO unit BBLs
+  const isResidential = RESIDENTIAL_LAND_USES.includes(landUse);
+  if (isResidential && residentialUnits > 10 && !hasMultipleUnitBBLs) {
+    score += 20;
+    evidence.push(`Residential building with ${residentialUnits} units and no individual unit BBLs`);
+    console.log('[OwnershipClassifier] +20 for residential >10 units, no unit BBLs', { residentialUnits, landUse });
   }
 
-  if (!hasCondoNo) {
-    evidence.push('Condo indicator: No');
-  }
+  // Collect diagnostic evidence
+  if (bc) evidence.push(`Building Class: ${bc}`);
+  if (landUse) evidence.push(`Land Use: ${landUse}`);
+  if (residentialUnits > 0) evidence.push(`Residential Units: ${residentialUnits}`);
 
-  if (!hasMultipleUnitBBLs) {
-    evidence.push('Unit BBLs: None detected');
-  }
-
-  if (data.landUse) {
-    evidence.push(`Land Use: ${data.landUse}`);
-  }
-
-  // Add warning if building class might be misleading
+  // Add warning about DOF codes if applicable
   const bcFirstChar = bc.charAt(0);
   if ((bcFirstChar === 'C' || bcFirstChar === 'D') && bc.length >= 2) {
     warnings.push(
       `Building class ${bc} is a DOF tax classification for apartment buildings. ` +
-      'This does NOT confirm cooperative ownership.'
+      'This does NOT confirm cooperative ownership. Many rental buildings share these classifications.'
     );
   }
 
+  console.log('[OwnershipClassifier] Score computed', { 
+    score, 
+    hasExplicitCoopEvidence, 
+    residentialUnits, 
+    hasMultipleUnitBBLs,
+    bc,
+    landUse 
+  });
+
+  // ============ LABEL MAPPING ============
+  if (score >= 80 && hasExplicitCoopEvidence) {
+    return {
+      ownershipTypeLabel: 'Likely co-op',
+      ownershipConfidence: 'high',
+      ownershipScore: score,
+      ownershipEvidence: evidence,
+      ownershipWarnings: warnings,
+    };
+  }
+
+  if (score >= 40) {
+    warnings.push(
+      'Based on municipal tax/record patterns; not definitive. ' +
+      'Confirm via offering plan / corporation records.'
+    );
+    return {
+      ownershipTypeLabel: 'Possible co-op (unconfirmed)',
+      ownershipConfidence: 'medium',
+      ownershipScore: score,
+      ownershipEvidence: evidence,
+      ownershipWarnings: warnings,
+    };
+  }
+
+  // Default: Unknown / not specified
   return {
-    ownershipTypeLabel: 'Ownership type: Not specified in municipal data',
+    ownershipTypeLabel: 'Unknown / not specified',
     ownershipConfidence: 'low',
-    ownershipEvidence: evidence,
+    ownershipScore: score,
+    ownershipEvidence: evidence.length > 0 ? evidence : ['No ownership indicators found in municipal data'],
     ownershipWarnings: warnings,
   };
 }
