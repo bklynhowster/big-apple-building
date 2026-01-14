@@ -88,8 +88,22 @@ export default function Results() {
     return lot >= 1001 && lot <= 6999;
   }, [bbl]);
 
-  // Get property profile to detect co-op status (for current BBL)
-  const { profile } = usePropertyProfile(isValidBBL ? bbl : null);
+  // CRITICAL: For condo unit pages, use building BBL for property profile
+  // Unit BBLs (lots 1001-6999) return 404 from property-profile since they're not in PLUTO
+  const profileBbl = useMemo(() => {
+    // If we're on a unit page and have the building BBL, use that
+    if (isUnitLotEarly && buildingBblParam) {
+      return buildingBblParam;
+    }
+    // Otherwise use the current BBL (building-level)
+    return bbl;
+  }, [isUnitLotEarly, buildingBblParam, bbl]);
+
+  // Get property profile using the appropriate BBL (building for units, current for buildings)
+  const { profile, loading: profileLoading, error: profileError } = usePropertyProfile(isValidBBL ? profileBbl : null);
+  
+  // Track if we're showing building-level data for a unit page
+  const isShowingBuildingContext = isUnitLotEarly && buildingBblParam && profileBbl === buildingBblParam;
   
   // Derive isCoopInferred from new two-layer ownership system:
   // Show as co-op if ownership.type === 'Cooperative' AND score >= 8
@@ -102,8 +116,8 @@ export default function Results() {
   // Update isCoopEffective when profile loads (initial state from inferred)
   useEffect(() => {
     if (profile) {
-      // Check localStorage for override
-      const storageKey = `elk_override:${bbl}`;
+      // Check localStorage for override using building BBL
+      const storageKey = `elk_override:${profileBbl}`;
       try {
         const stored = localStorage.getItem(storageKey);
         if (stored === 'COOP') {
@@ -117,7 +131,7 @@ export default function Results() {
         setIsCoopEffective(isCoopInferred);
       }
     }
-  }, [profile, bbl, isCoopInferred]);
+  }, [profile, profileBbl, isCoopInferred]);
   
   // Handler for when PropertyProfileCard changes override
   const handleOwnershipOverrideChange = useCallback((effective: boolean) => {
@@ -127,10 +141,6 @@ export default function Results() {
   // IMPORTANT: Mentioned Units visibility is NOT dependent on co-op status
   // isCoop is only used for co-op-specific UI (banners, unit context navigation)
   const isCoop = isCoopEffective;
-  
-  // For unit pages, also fetch building profile using buildingBblParam
-  const buildingBblForProfile = isUnitLotEarly && buildingBblParam ? buildingBblParam : null;
-  const { profile: buildingProfile, loading: buildingProfileLoading } = usePropertyProfile(buildingBblForProfile);
 
   // Pre-fetch HPD, 311, Rolling Sales, DOB Filings, DOB Violations, ECB, and Permits for Risk Snapshot + Unit Insights
   const hpdViolations = useHPDViolations(isValidBBL ? bbl : null);
@@ -455,16 +465,16 @@ export default function Results() {
                 bin={bin}
                 borough={borough}
                 buildingAddress={buildingAddressParam}
-                buildingProfile={buildingProfile ? {
-                  yearBuilt: buildingProfile.yearBuilt,
-                  buildingClass: buildingProfile.buildingClass,
-                  totalUnits: buildingProfile.totalUnits,
-                  residentialUnits: buildingProfile.residentialUnits,
-                  numFloors: buildingProfile.numFloors,
-                  grossSqFt: buildingProfile.grossSqFt,
-                  propertyTypeLabel: buildingProfile.propertyTypeLabel,
+                buildingProfile={profile ? {
+                  yearBuilt: profile.yearBuilt,
+                  buildingClass: profile.buildingClass,
+                  totalUnits: profile.totalUnits,
+                  residentialUnits: profile.residentialUnits,
+                  numFloors: profile.numFloors,
+                  grossSqFt: profile.grossSqFt,
+                  propertyTypeLabel: profile.propertyTypeLabel,
                 } : null}
-                buildingProfileLoading={buildingProfileLoading}
+                buildingProfileLoading={profileLoading}
                 isCondoUnit={hasCondoUnits && isUnitLot && !isCoop}
                 isCoop={isCoop}
                 coopUnitContext={coopUnitContext}
@@ -491,8 +501,9 @@ export default function Results() {
               />
 
               {/* Property Profile with embedded map */}
+              {/* Use profileBbl (building BBL for condo units) to avoid 404 on unit BBLs */}
               <PropertyProfileCard 
-                bbl={bbl} 
+                bbl={profileBbl} 
                 unitLabel={currentUnitLabel}
                 parentAddress={address}
                 landmarkStatus={landmarkStatus}
