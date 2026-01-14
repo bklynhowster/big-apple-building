@@ -1,8 +1,9 @@
-import { useState } from 'react';
-import { Lightbulb, Loader2, AlertCircle, ChevronDown, ChevronUp, BookOpen, ArrowRight, Users, HelpCircle } from 'lucide-react';
+import { useState, useMemo } from 'react';
+import { Lightbulb, Loader2, AlertCircle, ChevronDown, ChevronUp, BookOpen, ArrowRight, Users, HelpCircle, Info } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from '@/hooks/use-toast';
 import type { RecordType } from './RecordDetailDrawer';
@@ -22,6 +23,74 @@ interface RecordExplanationProps {
   recordType: RecordType;
   record: Record<string, unknown>;
   address?: string;
+}
+
+// Record types that are typically administrative with no narrative
+const ADMINISTRATIVE_RECORD_TYPES = new Set([
+  'SC', // DOB Status Change
+  'NB', // New Building (can be narrative-less)
+  'DM', // Demolition (often minimal)
+]);
+
+// Minimum character threshold for meaningful narrative
+const MIN_NARRATIVE_LENGTH = 50;
+
+// Fields that contain meaningful narrative text
+const NARRATIVE_FIELDS = [
+  'description', 'full_description', 'job_description', 'jobdescription',
+  'violation_description', 'ecb_violation_description', 
+  'complaint_type', 'problem_description', 'descriptor',
+  'resolution_description', 'comments', 'narrative',
+  'novdescription', 'infraction_code1', 'section_of_law',
+];
+
+interface EligibilityResult {
+  isEligible: boolean;
+  reason: string;
+  narrativeText: string | null;
+}
+
+function checkAIEligibility(record: Record<string, unknown>, recordType: RecordType): EligibilityResult {
+  const raw = record.raw as Record<string, unknown> | undefined;
+  const data = raw || record;
+  
+  // Check for job type that's typically administrative
+  const jobType = (data.job_type || data.jobType || data.type || '') as string;
+  const jobTypeUpper = String(jobType).toUpperCase().trim();
+  
+  // Collect all narrative text from the record
+  let narrativeText = '';
+  for (const field of NARRATIVE_FIELDS) {
+    const value = data[field] || data[field.toLowerCase()] || data[field.replace(/_/g, '')];
+    if (value && typeof value === 'string' && value.trim().length > 10) {
+      narrativeText += ' ' + value.trim();
+    }
+  }
+  narrativeText = narrativeText.trim();
+  
+  // Check if record has meaningful narrative
+  if (narrativeText.length < MIN_NARRATIVE_LENGTH) {
+    // Check if it's an administrative filing type
+    if (ADMINISTRATIVE_RECORD_TYPES.has(jobTypeUpper)) {
+      return {
+        isEligible: false,
+        reason: `AI summary not available: this ${jobTypeUpper} filing is an administrative record and does not include descriptive text to summarize.`,
+        narrativeText: null,
+      };
+    }
+    
+    return {
+      isEligible: false,
+      reason: 'AI summary not available: this record does not contain sufficient narrative text to summarize. Only status fields and identifiers are present.',
+      narrativeText: null,
+    };
+  }
+  
+  return {
+    isEligible: true,
+    reason: '',
+    narrativeText,
+  };
 }
 
 function getAgencyFromRecordType(recordType: RecordType): string {
@@ -99,6 +168,9 @@ export function RecordExplanation({ recordType, record, address }: RecordExplana
   const [expanded, setExpanded] = useState(true);
   const [glossaryExpanded, setGlossaryExpanded] = useState(false);
 
+  // Check eligibility once on mount
+  const eligibility = useMemo(() => checkAIEligibility(record, recordType), [record, recordType]);
+
   const fetchExplanation = async () => {
     setLoading(true);
     setError(null);
@@ -148,67 +220,99 @@ export function RecordExplanation({ recordType, record, address }: RecordExplana
     Low: 'bg-red-500/10 text-red-700 border-red-200',
   };
 
-  if (!explanation && !loading && !error) {
-    return (
-      <Button
-        variant="outline"
-        size="sm"
-        onClick={fetchExplanation}
-        className="gap-2 w-full"
-      >
-        <Lightbulb className="h-4 w-4" />
-        Explain in Plain English
-      </Button>
-    );
-  }
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center gap-2 py-4 text-muted-foreground">
-        <Loader2 className="h-4 w-4 animate-spin" />
-        <span className="text-sm">Analyzing record...</span>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="space-y-2">
-        <div className="flex items-center gap-2 text-destructive text-sm">
-          <AlertCircle className="h-4 w-4" />
-          <span>{error}</span>
-        </div>
-        <Button variant="outline" size="sm" onClick={fetchExplanation}>
-          Try Again
-        </Button>
-      </div>
-    );
-  }
-
-  if (!explanation) return null;
-
+  // Always render the AI section - never silently hide it
   return (
-    <div className="space-y-4">
-      <button
-        onClick={() => setExpanded(!expanded)}
-        className="flex items-center justify-between w-full group"
-      >
+    <div className="space-y-3 bg-muted/30 rounded-lg p-4 border border-border/50">
+      {/* Header - always visible */}
+      <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Lightbulb className="h-4 w-4 text-primary" />
-          <h4 className="text-sm font-medium uppercase tracking-wide">AI Explanation</h4>
+          <h4 className="text-sm font-medium">AI Explanation</h4>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button className="text-muted-foreground hover:text-foreground">
+                <HelpCircle className="h-3.5 w-3.5" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="top" className="max-w-xs">
+              <p className="text-xs">
+                <strong>What AI can summarize:</strong> Violations, complaints, permits with detailed descriptions, 
+                job filings with work descriptions, and 311 requests with narratives.
+              </p>
+              <p className="text-xs mt-1 text-muted-foreground">
+                Administrative records without narrative text (e.g., status changes, simple filings) 
+                cannot be meaningfully summarized.
+              </p>
+            </TooltipContent>
+          </Tooltip>
+        </div>
+        
+        {explanation && (
+          <button
+            onClick={() => setExpanded(!expanded)}
+            className="text-muted-foreground hover:text-foreground"
+          >
+            {expanded ? (
+              <ChevronUp className="h-4 w-4" />
+            ) : (
+              <ChevronDown className="h-4 w-4" />
+            )}
+          </button>
+        )}
+      </div>
+
+      {/* Not eligible - show explanation */}
+      {!eligibility.isEligible && !loading && !explanation && (
+        <div className="flex items-start gap-2 text-sm text-muted-foreground py-2">
+          <Info className="h-4 w-4 mt-0.5 flex-shrink-0 text-muted-foreground/70" />
+          <p>{eligibility.reason}</p>
+        </div>
+      )}
+
+      {/* Eligible but not yet requested */}
+      {eligibility.isEligible && !explanation && !loading && !error && (
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={fetchExplanation}
+          className="gap-2 w-full"
+        >
+          <Lightbulb className="h-4 w-4" />
+          Explain in Plain English
+        </Button>
+      )}
+
+      {/* Loading state */}
+      {loading && (
+        <div className="flex items-center justify-center gap-2 py-4 text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          <span className="text-sm">Analyzing record...</span>
+        </div>
+      )}
+
+      {/* Error state */}
+      {error && !loading && (
+        <div className="space-y-2">
+          <div className="flex items-center gap-2 text-destructive text-sm">
+            <AlertCircle className="h-4 w-4" />
+            <span>{error}</span>
+          </div>
+          {eligibility.isEligible && (
+            <Button variant="outline" size="sm" onClick={fetchExplanation}>
+              Try Again
+            </Button>
+          )}
+        </div>
+      )}
+
+      {/* Explanation content */}
+      {explanation && expanded && (
+        <div className="space-y-4 border-t border-border/50 pt-4">
+          {/* Confidence badge */}
           <Badge variant="outline" className={confidenceColor[explanation.confidence]}>
             {explanation.confidence} Confidence
           </Badge>
-        </div>
-        {expanded ? (
-          <ChevronUp className="h-4 w-4 text-muted-foreground" />
-        ) : (
-          <ChevronDown className="h-4 w-4 text-muted-foreground" />
-        )}
-      </button>
 
-      {expanded && (
-        <div className="space-y-4 pl-6 border-l-2 border-primary/20">
           {/* Summary */}
           <div className="space-y-1">
             <p className="text-sm font-medium">Summary</p>
@@ -318,7 +422,7 @@ export function RecordExplanation({ recordType, record, address }: RecordExplana
                 )}
               </button>
               {glossaryExpanded && (
-                <div className="bg-muted/30 rounded-md p-3 space-y-2">
+                <div className="bg-muted/50 rounded-md p-3 space-y-2">
                   {Object.entries(explanation.glossary).map(([term, def]) => (
                     <div key={term} className="text-sm">
                       <span className="font-medium">{term}:</span>{' '}
@@ -332,15 +436,27 @@ export function RecordExplanation({ recordType, record, address }: RecordExplana
 
           <Separator />
           
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={fetchExplanation}
-            className="text-xs"
-          >
-            Regenerate Explanation
-          </Button>
+          <div className="flex items-center justify-between">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={fetchExplanation}
+              className="text-xs"
+            >
+              Regenerate Explanation
+            </Button>
+            <p className="text-xs text-muted-foreground">
+              AI-generated • Verify against official NYC records
+            </p>
+          </div>
         </div>
+      )}
+
+      {/* Collapsed state with summary peek */}
+      {explanation && !expanded && (
+        <p className="text-sm text-muted-foreground line-clamp-2">
+          {explanation.summary}
+        </p>
       )}
     </div>
   );
