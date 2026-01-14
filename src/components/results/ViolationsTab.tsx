@@ -45,6 +45,7 @@ interface ViolationsTabProps {
   scope?: QueryScope;
   isCoop?: boolean;
   coopUnitContext?: string | null;
+  address?: string;
 }
 
 const COLUMN_CONFIGS: ColumnConfig[] = [
@@ -102,7 +103,7 @@ function LoadingSkeleton() {
   );
 }
 
-export function ViolationsTab({ bbl, bin, scope = 'building', isCoop = false, coopUnitContext }: ViolationsTabProps) {
+export function ViolationsTab({ bbl, bin, scope = 'building', isCoop = false, coopUnitContext, address }: ViolationsTabProps) {
   const {
     loading,
     error,
@@ -525,6 +526,7 @@ export function ViolationsTab({ bbl, bin, scope = 'building', isCoop = false, co
         onOpenChange={setDrawerOpen}
         recordType="violation"
         record={selectedRecord as unknown as Record<string, unknown>}
+        address={address}
       />
     </div>
   );

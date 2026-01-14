@@ -45,6 +45,7 @@ interface ECBTabProps {
   scope?: QueryScope;
   isCoop?: boolean;
   coopUnitContext?: string | null;
+  address?: string;
 }
 
 const COLUMN_CONFIGS: ColumnConfig[] = [
@@ -119,7 +120,7 @@ function formatCurrency(amount: number | null): string {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(amount);
 }
 
-export function ECBTab({ bbl, bin, scope = 'building', isCoop, coopUnitContext }: ECBTabProps) {
+export function ECBTab({ bbl, bin, scope = 'building', isCoop, coopUnitContext, address }: ECBTabProps) {
   const { loading, error, data, filters, offset, fetchECB, setFilters, applyFilters, goToNextPage, goToPrevPage, retry } = useECB(bbl);
   const [localFilters, setLocalFilters] = useState<ECBFilters>({ status: 'all', keyword: '' });
   
@@ -380,6 +381,7 @@ export function ECBTab({ bbl, bin, scope = 'building', isCoop, coopUnitContext }
         onOpenChange={setDrawerOpen}
         recordType="ecb"
         record={selectedRecord as unknown as Record<string, unknown>}
+        address={address}
       />
     </div>
   );

@@ -611,7 +611,7 @@ export default function Results() {
                   <TabsContent value="violations" className="mt-0">
                     <Card id="dob-violations">
                       <CardContent className="p-6">
-                        <ViolationsTab bbl={queryBbl} bin={bin} scope={scope} isCoop={isCoop} coopUnitContext={coopUnitContext} />
+                        <ViolationsTab bbl={queryBbl} bin={bin} scope={scope} isCoop={isCoop} coopUnitContext={coopUnitContext} address={address} />
                       </CardContent>
                     </Card>
                   </TabsContent>
@@ -619,7 +619,7 @@ export default function Results() {
                   <TabsContent value="ecb" className="mt-0">
                     <Card id="ecb-violations">
                       <CardContent className="p-6">
-                        <ECBTab bbl={queryBbl} bin={bin} scope={scope} isCoop={isCoop} coopUnitContext={coopUnitContext} />
+                        <ECBTab bbl={queryBbl} bin={bin} scope={scope} isCoop={isCoop} coopUnitContext={coopUnitContext} address={address} />
                       </CardContent>
                     </Card>
                   </TabsContent>
@@ -627,7 +627,7 @@ export default function Results() {
                   <TabsContent value="safety" className="mt-0">
                     <Card>
                       <CardContent className="p-6">
-                        <SafetyTab bbl={queryBbl} bin={bin} scope={scope} isCoop={isCoop} coopUnitContext={coopUnitContext} />
+                        <SafetyTab bbl={queryBbl} bin={bin} scope={scope} isCoop={isCoop} coopUnitContext={coopUnitContext} address={address} />
                       </CardContent>
                     </Card>
                   </TabsContent>
@@ -635,7 +635,7 @@ export default function Results() {
                   <TabsContent value="permits" className="mt-0">
                     <Card id="dob-permits">
                       <CardContent className="p-6">
-                        <PermitsTab bbl={queryBbl} bin={bin} scope={scope} isCoop={isCoop} coopUnitContext={coopUnitContext} />
+                        <PermitsTab bbl={queryBbl} bin={bin} scope={scope} isCoop={isCoop} coopUnitContext={coopUnitContext} address={address} />
                       </CardContent>
                     </Card>
                   </TabsContent>
@@ -652,6 +652,7 @@ export default function Results() {
                           isCoop={isCoop} 
                           coopUnitContext={coopUnitContext}
                           onClearUnitContext={handleClearUnitContext}
+                          address={address}
                         />
                       </CardContent>
                     </Card>
@@ -667,6 +668,7 @@ export default function Results() {
                           isCoop={isCoop}
                           coopUnitContext={coopUnitContext}
                           onClearUnitContext={handleClearUnitContext}
+                          address={address}
                         />
                       </CardContent>
                     </Card>

@@ -13,6 +13,7 @@ import {
 } from '@/components/ui/sheet';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { toast } from '@/hooks/use-toast';
+import { RecordExplanation } from './RecordExplanation';
 
 export type RecordType = 'violation' | 'ecb' | 'permit' | 'safety' | 'hpd-violation' | 'hpd-complaint' | '311';
 
@@ -21,6 +22,7 @@ interface RecordDetailDrawerProps {
   onOpenChange: (open: boolean) => void;
   recordType: RecordType;
   record: Record<string, unknown> | null;
+  address?: string;
 }
 
 // Build external links based on record type
@@ -181,7 +183,7 @@ function getKeyFields(recordType: RecordType, record: Record<string, unknown>): 
   return fields;
 }
 
-export function RecordDetailDrawer({ open, onOpenChange, recordType, record }: RecordDetailDrawerProps) {
+export function RecordDetailDrawer({ open, onOpenChange, recordType, record, address }: RecordDetailDrawerProps) {
   const [rawExpanded, setRawExpanded] = useState(false);
   const [copied, setCopied] = useState(false);
   
@@ -254,6 +256,15 @@ export function RecordDetailDrawer({ open, onOpenChange, recordType, record }: R
                 </p>
               </div>
             )}
+            
+            {/* AI Explanation */}
+            <div className="space-y-3">
+              <RecordExplanation 
+                recordType={recordType} 
+                record={record} 
+                address={address}
+              />
+            </div>
             
             {/* External Links */}
             {externalLinks.length > 0 && (

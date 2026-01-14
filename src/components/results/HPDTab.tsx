@@ -27,6 +27,7 @@ interface HPDTabProps {
   isCoop?: boolean;
   coopUnitContext?: string | null;
   onClearUnitContext?: () => void;
+  address?: string;
 }
 
 const VIOLATION_COLUMN_CONFIGS: ColumnConfig[] = [
@@ -102,7 +103,7 @@ const HPD_COLUMNS = [
   { key: 'recordId', header: 'ID' },
 ];
 
-export function HPDTab({ bbl, bin, scope = 'building', isCoop, coopUnitContext, onClearUnitContext }: HPDTabProps) {
+export function HPDTab({ bbl, bin, scope = 'building', isCoop, coopUnitContext, onClearUnitContext, address }: HPDTabProps) {
   const [activeSubTab, setActiveSubTab] = useState<'violations' | 'complaints'>('violations');
   const [fetchedTabs, setFetchedTabs] = useState<Set<string>>(new Set());
   
@@ -399,6 +400,7 @@ export function HPDTab({ bbl, bin, scope = 'building', isCoop, coopUnitContext, 
         onOpenChange={setDrawerOpen}
         recordType={drawerRecordType}
         record={selectedRecord as unknown as Record<string, unknown>}
+        address={address}
       />
     </div>
   );
