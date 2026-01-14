@@ -14,8 +14,19 @@ import {
 } from '@/components/ui/breadcrumb';
 import { ContextIndicator } from './ContextIndicator';
 import { CoopUnitContext } from './CoopUnitContext';
+import { BuildingSummaryStrip } from './BuildingSummaryStrip';
 
 export type QueryScope = 'unit' | 'building';
+
+export interface BuildingProfileSummary {
+  yearBuilt?: number | null;
+  buildingClass?: string | null;
+  totalUnits?: number | null;
+  residentialUnits?: number | null;
+  numFloors?: number | null;
+  grossSqFt?: number | null;
+  propertyTypeLabel?: string | null;
+}
 
 interface ContextBannerProps {
   address?: string;
@@ -25,6 +36,8 @@ interface ContextBannerProps {
   bin?: string;
   borough?: string;
   buildingAddress?: string;
+  buildingProfile?: BuildingProfileSummary | null;
+  buildingProfileLoading?: boolean;
   isCondoUnit: boolean;
   isCoop?: boolean;
   coopUnitContext?: string | null;
@@ -41,6 +54,8 @@ export function ContextBanner({
   bin,
   borough,
   buildingAddress,
+  buildingProfile,
+  buildingProfileLoading,
   isCondoUnit,
   isCoop = false,
   coopUnitContext,
@@ -240,12 +255,12 @@ export function ContextBanner({
     <div className="space-y-3">
       {/* Building Context Banner - Prominent display of parent building */}
       <div className="bg-muted/50 border border-border rounded-lg px-4 py-3">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <div className="flex items-center justify-center w-9 h-9 bg-background border border-border rounded-lg shrink-0">
+        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+          <div className="flex items-start gap-3 flex-1">
+            <div className="flex items-center justify-center w-9 h-9 bg-background border border-border rounded-lg shrink-0 mt-0.5">
               <Building2 className="h-4 w-4 text-muted-foreground" />
             </div>
-            <div>
+            <div className="flex-1 min-w-0">
               <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">Building Context</p>
               <p className="text-sm font-semibold text-foreground">
                 {fullBuildingAddress || 'Building Address Unavailable'}
@@ -262,6 +277,18 @@ export function ContextBanner({
                   </span>
                 )}
               </div>
+              
+              {/* Building Summary Stats */}
+              <BuildingSummaryStrip
+                yearBuilt={buildingProfile?.yearBuilt}
+                buildingClass={buildingProfile?.buildingClass}
+                totalUnits={buildingProfile?.totalUnits}
+                residentialUnits={buildingProfile?.residentialUnits}
+                numFloors={buildingProfile?.numFloors}
+                grossSqFt={buildingProfile?.grossSqFt}
+                propertyTypeLabel={buildingProfile?.propertyTypeLabel}
+                loading={buildingProfileLoading}
+              />
             </div>
           </div>
           
