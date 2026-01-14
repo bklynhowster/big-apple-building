@@ -1,10 +1,12 @@
-import { Building2, Home, Calendar, Maximize2, Layers, Users, AlertCircle, HelpCircle, Info, Landmark } from 'lucide-react';
+import { useState } from 'react';
+import { Building2, Home, Calendar, Maximize2, Layers, Users, AlertCircle, HelpCircle, Info, Landmark, ChevronDown, ChevronUp } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { usePropertyProfile, PropertyTypeLabel, OwnershipConfidenceLevel } from '@/hooks/usePropertyProfile';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { usePropertyProfile, PropertyTypeLabel, OwnershipConfidenceLevel, InferredConfidenceLevel } from '@/hooks/usePropertyProfile';
 import { cn } from '@/lib/utils';
 import type { LandmarkStatus } from '@/hooks/useLandmarkStatus';
 import { LocationMap } from './LocationMap';
@@ -51,6 +53,18 @@ function getConfidenceStyles(confidence: OwnershipConfidenceLevel): string {
     case 'Market-known':
       return 'bg-warning/10 text-warning border border-warning/30';
     case 'Unverified':
+      return 'bg-muted text-muted-foreground';
+  }
+}
+
+// Styles for inferred confidence levels
+function getInferredConfidenceStyles(confidence: InferredConfidenceLevel): string {
+  switch (confidence) {
+    case 'High':
+      return 'bg-accent/10 text-accent-foreground border border-accent/20';
+    case 'Medium':
+      return 'bg-warning/10 text-warning border border-warning/20';
+    case 'Low':
       return 'bg-muted text-muted-foreground';
   }
 }
@@ -104,6 +118,7 @@ function formatSqFt(sqft: number | null): string {
 
 export function PropertyProfileCard({ bbl, unitLabel, parentAddress, landmarkStatus, lat, lon }: PropertyProfileCardProps) {
   const { loading, error, profile, retry } = usePropertyProfile(bbl);
+  const [showWhyPanel, setShowWhyPanel] = useState(false);
 
   // Determine if this is a unit page
   const lotNumber = parseInt(bbl.slice(6), 10);
@@ -203,15 +218,6 @@ export function PropertyProfileCard({ bbl, unitLabel, parentAddress, landmarkSta
   }
 
   // BUILDING PAGE - Full display with two-layer ownership
-  const hasData = profile.propertyTypeLabel !== 'Unknown' || 
-                  profile.buildingClass || 
-                  profile.residentialUnits !== null ||
-                  profile.yearBuilt !== null;
-
-  // Only show co-op disclaimer for explicitly confirmed cooperatives
-  const isConfirmedCoop = profile.ownership.confidence === 'Confirmed' && 
-    profile.ownership.type === 'Cooperative';
-
   return (
     <Card>
       <CardHeader className="pb-3">
@@ -228,12 +234,12 @@ export function PropertyProfileCard({ bbl, unitLabel, parentAddress, landmarkSta
         
         <div className="flex flex-col lg:flex-row gap-6">
           {/* Two-Section Ownership Display */}
-          <div className="flex flex-col gap-4 min-w-[280px]">
-            {/* SECTION A: Municipal Ownership (NYC data) */}
+          <div className="flex flex-col gap-4 min-w-[300px]">
+            {/* SECTION A: NYC Municipal Ownership */}
             <div className="space-y-2">
               <div className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
                 <Building2 className="h-3.5 w-3.5" />
-                Municipal Ownership (NYC data)
+                NYC Municipal Ownership
               </div>
               <TooltipProvider>
                 <Tooltip>
@@ -252,11 +258,17 @@ export function PropertyProfileCard({ bbl, unitLabel, parentAddress, landmarkSta
                   </TooltipTrigger>
                   <TooltipContent side="bottom" className="max-w-sm">
                     <div className="space-y-2">
+                      <p className="text-xs font-medium">
+                        This reflects only what NYC municipal datasets explicitly state.
+                      </p>
                       <p className="text-xs text-muted-foreground">
+                        Co-op ownership is often not explicitly labeled in municipal data.
+                      </p>
+                      <p className="text-xs text-muted-foreground mt-1">
                         Source: {profile.municipal.source}
                       </p>
                       {profile.municipal.evidence.length > 0 && (
-                        <div>
+                        <div className="mt-2">
                           <p className="font-medium text-xs mb-1">Data available:</p>
                           <ul className="text-xs space-y-0.5">
                             {profile.municipal.evidence.map((item, i) => (
@@ -274,64 +286,101 @@ export function PropertyProfileCard({ bbl, unitLabel, parentAddress, landmarkSta
               </TooltipProvider>
             </div>
 
-            {/* SECTION B: Ownership Structure (External / Verification) */}
+            {/* SECTION B: Ownership Structure (Inferred) */}
             <div className="space-y-2">
               <div className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
                 <Users className="h-3.5 w-3.5" />
-                Ownership Structure (External)
+                Ownership Structure (inferred)
               </div>
               <div className="space-y-2">
-                {profile.ownership.confidence === 'Unverified' ? (
-                  <Badge variant="outline" className="bg-muted text-muted-foreground">
-                    Unverified
+                <div className="flex items-center gap-2 flex-wrap">
+                  {/* Main ownership badge */}
+                  <Badge 
+                    variant="outline" 
+                    className={cn(
+                      "text-xs",
+                      getConfidenceStyles(profile.ownership.confidence)
+                    )}
+                  >
+                    {profile.ownership.confidence === 'Unverified' 
+                      ? 'Unverified' 
+                      : `${formatConfidenceLabel(profile.ownership.confidence)}: ${profile.ownership.type}`}
                   </Badge>
-                ) : (
-                  <TooltipProvider>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <div className="inline-flex items-center gap-1.5 cursor-help">
-                          <Badge 
-                            variant="outline" 
-                            className={cn(
-                              "text-xs",
-                              getConfidenceStyles(profile.ownership.confidence)
-                            )}
-                          >
-                            {formatConfidenceLabel(profile.ownership.confidence)}: {profile.ownership.type}
-                          </Badge>
-                          <Info className="h-3 w-3 text-muted-foreground" />
+                  
+                  {/* Confidence badge for Market-known */}
+                  {profile.ownership.confidence === 'Market-known' && (
+                    <Badge 
+                      variant="outline" 
+                      className={cn(
+                        "text-xs",
+                        getInferredConfidenceStyles(profile.ownership.inferredConfidence)
+                      )}
+                    >
+                      {profile.ownership.inferredConfidence} confidence
+                    </Badge>
+                  )}
+                </div>
+
+                {/* "Why" expandable disclosure */}
+                <Collapsible open={showWhyPanel} onOpenChange={setShowWhyPanel}>
+                  <CollapsibleTrigger asChild>
+                    <Button 
+                      variant="ghost" 
+                      size="sm" 
+                      className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
+                    >
+                      {showWhyPanel ? (
+                        <>
+                          <ChevronUp className="h-3.5 w-3.5 mr-1" />
+                          Hide details
+                        </>
+                      ) : (
+                        <>
+                          <ChevronDown className="h-3.5 w-3.5 mr-1" />
+                          Why?
+                        </>
+                      )}
+                    </Button>
+                  </CollapsibleTrigger>
+                  <CollapsibleContent className="mt-2">
+                    <div className="p-3 rounded-md bg-muted/50 space-y-3 text-sm">
+                      {/* Score display */}
+                      <div className="flex items-center gap-2">
+                        <span className="text-muted-foreground">Co-op likelihood score:</span>
+                        <Badge variant="outline" className="font-mono">
+                          {profile.ownership.coopLikelihoodScore}/10
+                        </Badge>
+                      </div>
+                      
+                      {/* Indicators list */}
+                      {profile.ownership.indicators.length > 0 && (
+                        <div>
+                          <p className="text-xs font-medium text-muted-foreground mb-1">Structural indicators:</p>
+                          <ul className="text-xs space-y-1">
+                            {profile.ownership.indicators.map((indicator, i) => (
+                              <li key={i} className="flex items-start gap-1.5">
+                                <span className="text-muted-foreground mt-0.5">•</span>
+                                <span>{indicator}</span>
+                              </li>
+                            ))}
+                          </ul>
                         </div>
-                      </TooltipTrigger>
-                      <TooltipContent side="bottom" className="max-w-sm">
-                        <div className="space-y-2">
-                          {profile.ownership.sources.length > 0 && (
-                            <p className="text-xs text-muted-foreground">
-                              Sources: {profile.ownership.sources.join(', ')}
-                            </p>
-                          )}
-                          {profile.ownership.evidence.length > 0 && (
-                            <div>
-                              <p className="font-medium text-xs mb-1">Evidence:</p>
-                              <ul className="text-xs space-y-0.5">
-                                {profile.ownership.evidence.map((item, i) => (
-                                  <li key={i} className="flex items-start gap-1">
-                                    <span className="text-muted-foreground">•</span>
-                                    <span>{item}</span>
-                                  </li>
-                                ))}
-                              </ul>
-                            </div>
-                          )}
-                        </div>
-                      </TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
-                )}
-                {/* Always show disclaimer for ownership structure section */}
+                      )}
+                      
+                      {/* Score thresholds explanation */}
+                      <div className="text-xs text-muted-foreground border-t border-border pt-2">
+                        <p>Score ≥7 = Market-known (unverified)</p>
+                        <p>Score ≥9 = High confidence</p>
+                      </div>
+                    </div>
+                  </CollapsibleContent>
+                </Collapsible>
+
+                {/* Disclaimer based on confidence */}
                 <p className="text-xs text-muted-foreground">
-                  {profile.ownership.confidence === 'Unverified' 
-                    ? 'Verify via ACRIS / offering plan / corporate filings.'
-                    : 'Ownership structure is not reliably indicated by DOB or PLUTO data. Verification requires ACRIS, offering plans, or corporate filings.'}
+                  {profile.ownership.disclaimerKey === 'market-known' 
+                    ? 'Based on structural indicators (unit count, tax lot structure, and record text). Not a legal confirmation. Confirm via ACRIS / offering plan / corporate filings.'
+                    : 'Municipal datasets do not reliably indicate cooperative ownership. Confirm via external records.'}
                 </p>
               </div>
             </div>
@@ -418,81 +467,22 @@ export function PropertyProfileCard({ bbl, unitLabel, parentAddress, landmarkSta
                 </div>
                 <div className="font-medium">
                   {landmarkStatus.status === 'yes' && (
-                    <TooltipProvider>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <span className="inline-flex items-center gap-1.5 rounded-md bg-warning/15 text-warning px-2 py-0.5 text-sm font-semibold cursor-help">
-                            <Building2 className="h-3.5 w-3.5" />
-                            Yes
-                          </span>
-                        </TooltipTrigger>
-                        <TooltipContent side="bottom" className="max-w-xs">
-                          {landmarkStatus.isIndividual && landmarkStatus.individualName && (
-                            <p className="mb-1">
-                              <span className="font-medium">Individual Landmark:</span> {landmarkStatus.individualName}
-                              {landmarkStatus.individualDate && (
-                                <span className="text-muted-foreground"> (Designated {landmarkStatus.individualDate})</span>
-                              )}
-                            </p>
-                          )}
-                          {landmarkStatus.isHistoricDistrict && landmarkStatus.districtName && (
-                            <p>
-                              <span className="font-medium">Historic District:</span> {landmarkStatus.districtName}
-                            </p>
-                          )}
-                          {!landmarkStatus.individualName && !landmarkStatus.districtName && (
-                            <p>This property is landmarked</p>
-                          )}
-                        </TooltipContent>
-                      </Tooltip>
-                    </TooltipProvider>
-                  )}
-                  {landmarkStatus.status === 'no' && !landmarkStatus.error && (
-                    <span className="inline-flex items-center gap-1.5 rounded-md bg-muted text-muted-foreground px-2 py-0.5 text-sm">
+                    <span className="inline-flex items-center gap-1.5 rounded-md bg-warning/15 text-warning px-2 py-0.5 text-sm font-semibold">
                       <Building2 className="h-3.5 w-3.5" />
-                      No
+                      Yes
                     </span>
+                  )}
+                  {landmarkStatus.status === 'no' && (
+                    <span className="text-muted-foreground">No</span>
                   )}
                   {landmarkStatus.status === 'unknown' && (
-                    <span className="inline-flex items-center gap-1.5 rounded-md border border-muted bg-background text-muted-foreground px-2 py-0.5 text-sm">
-                      <HelpCircle className="h-3.5 w-3.5" />
-                      Unknown
-                    </span>
+                    <span className="text-muted-foreground">—</span>
                   )}
                 </div>
               </div>
             )}
           </div>
         </div>
-
-        {/* Ownership Warnings */}
-        {profile.ownershipWarnings.length > 0 && (
-          <div className="flex items-start gap-2 p-3 rounded-md bg-muted/50 text-sm text-muted-foreground">
-            <Info className="h-4 w-4 mt-0.5 shrink-0" />
-            <div>
-              {profile.ownershipWarnings.map((warning, i) => (
-                <p key={i}>{warning}</p>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Co-op disclaimer - ONLY shown for explicitly confirmed cooperatives */}
-        {isConfirmedCoop && (
-          <div className="elk-info-box flex items-start gap-2 mt-4">
-            <Info className="h-4 w-4 mt-0.5 shrink-0 text-primary" />
-            <p>
-              Co-op units do not have individual tax lots/BBLs. Most NYC regulatory records are issued at the building level.
-            </p>
-          </div>
-        )}
-
-        {/* Data source note */}
-        {hasData && (
-          <div className="mt-4 pt-3 border-t text-xs text-muted-foreground">
-            Source: NYC PLUTO (Primary Land Use Tax Lot Output)
-          </div>
-        )}
       </CardContent>
     </Card>
   );

@@ -200,12 +200,14 @@ type PropertyTenure = 'CONDO' | 'COOP' | 'RENTAL_OR_OTHER' | 'UNKNOWN';
 // Two-layer ownership types
 type MunicipalOwnershipLabel = 'Condominium' | 'Ownership type not specified in municipal data';
 type OwnershipConfidenceLevel = 'Confirmed' | 'Market-known' | 'Unverified';
-type OwnershipStructureType = 'Condominium' | 'Cooperative' | 'Rental' | 'Owner-Occupied' | 'Unknown';
+type InferredConfidenceLevel = 'Low' | 'Medium' | 'High';
+type OwnershipStructureType = 'Condominium' | 'Cooperative' | 'Unknown';
 
 const CONDO_CLASSES = ['R0', 'R1', 'R2', 'R3', 'R4', 'R5', 'R6', 'R7', 'R8', 'R9', 'RR', 'RS'];
 const ONE_TWO_FAMILY_CLASSES = ['A0', 'A1', 'A2', 'A3', 'A4', 'A5', 'A6', 'A7', 'A8', 'A9', 'B1', 'B2', 'B3', 'B9'];
 const MIXED_USE_LAND_USES = ['04'];
 const COMMERCIAL_LAND_USES = ['05', '06', '07', '08', '09', '10', '11'];
+const COOP_INDICATOR_CLASSES = ['D4', 'D6', 'D7', 'D8'];
 
 interface PropertyClassification {
   propertyTypeLabel: PropertyTypeLabel;
@@ -223,8 +225,23 @@ interface MunicipalClassification {
 interface OwnershipStructure {
   type: OwnershipStructureType;
   confidence: OwnershipConfidenceLevel;
-  evidence: string[];
+  inferredConfidence: InferredConfidenceLevel;
+  coopLikelihoodScore: number;
+  indicators: string[];
   sources: string[];
+  disclaimerKey: 'unverified' | 'market-known';
+}
+
+// Scoring inputs
+interface ScoringInputs {
+  unitsResidential: number | null;
+  condoUnitsCount: number;
+  hasCondoFlag: boolean;
+  unitBblCount: number | null;
+  mentionedUnitCount: number;
+  salesRecordsCount: number;
+  unitSalesCount: number;
+  buildingClass: string | null;
 }
 
 // Combined profile
@@ -241,22 +258,39 @@ interface OwnershipProfile {
  * - Do NOT use building class codes (e.g., C0, D4, R0-R9) to infer ownership
  * - Do NOT use "CO" strings or certificate-of-occupancy references
  * - Do NOT use unit count, BBL patterns, or anything heuristic
- * - Only show "Condominium" if an NYC dataset EXPLICITLY indicates it (e.g., condoNo field)
+ * - Only show "Condominium" if:
+ *   1. condoNo field is explicitly set, OR
+ *   2. condo unit BBL splits exist (condoUnitsCount > 0)
  */
 function computeMunicipalClassification(
-  buildingClass: string | null,
   condoNo: string | number | null,
+  condoUnitsCount: number,
+  buildingClass: string | null,
   landUse: string | null,
   residentialUnits: number | null
 ): MunicipalClassification {
   const bc = (buildingClass || '').toUpperCase().trim();
   const evidence: string[] = [];
 
-  // ONLY explicit condo indicator: condoNo field is set
-  // Per strict rules: Do NOT use building class codes to infer condo/co-op
+  // Check for explicit condo indicators
   const hasExplicitCondoNo = condoNo !== null && condoNo !== undefined && 
     String(condoNo).trim() !== '' && String(condoNo) !== '0';
 
+  // If condo unit BBLs exist, this is a condominium
+  if (condoUnitsCount > 0) {
+    evidence.push(`Condo unit BBLs detected: ${condoUnitsCount} unit(s)`);
+    if (hasExplicitCondoNo) {
+      evidence.push(`Condo Number: ${condoNo}`);
+    }
+    
+    return {
+      label: 'Condominium',
+      evidence,
+      source: 'NYC DOF (Department of Finance)',
+    };
+  }
+
+  // If explicit condoNo exists, this is a condominium
   if (hasExplicitCondoNo) {
     evidence.push(`Condo Number: ${condoNo} (explicit municipal indicator)`);
     
@@ -281,33 +315,106 @@ function computeMunicipalClassification(
 }
 
 /**
- * SECTION B: Ownership Structure (External / Verification)
+ * SECTION B: Ownership Structure Scoring
  * 
- * STRICT RULES:
- * - Only use external sources: ACRIS, offering plans, sales records, corporate filings
- * - Never infer co-op from DOB, PLUTO, CO status, building class, or any municipal-only fields
- * - If no external evidence, show "Unverified"
+ * Computes a co-op likelihood score (0-10) based on structural evidence.
  */
 function computeOwnershipStructure(
-  municipal: MunicipalClassification
+  municipal: MunicipalClassification,
+  inputs: ScoringInputs
 ): OwnershipStructure {
-  // If municipal explicitly says Condominium (via condoNo), that's confirmed
-  if (municipal.label === 'Condominium') {
+  const indicators: string[] = [];
+  let score = 0;
+
+  // HARD BLOCK: If condo indicators exist, this is a condominium
+  if (inputs.condoUnitsCount > 0 || inputs.hasCondoFlag) {
+    if (inputs.condoUnitsCount > 0) {
+      indicators.push(`Condo unit BBLs detected (${inputs.condoUnitsCount} units)`);
+    }
+    if (inputs.hasCondoFlag) {
+      indicators.push('Municipal condo flag detected');
+    }
+    
     return {
       type: 'Condominium',
       confidence: 'Confirmed',
-      evidence: ['Condo number registered with NYC Department of Finance'],
+      inferredConfidence: 'High',
+      coopLikelihoodScore: 0,
+      indicators,
       sources: ['NYC DOF'],
+      disclaimerKey: 'unverified',
     };
   }
 
-  // No external indicators available in this endpoint yet
-  // (ACRIS, offering plans, sales records would be checked here when integrated)
+  // Apply scoring signals
+  const unitsRes = inputs.unitsResidential ?? 0;
+  const unitBblCount = inputs.unitBblCount ?? 0;
+  const mentionedUnitCount = inputs.mentionedUnitCount;
+  const bc = (inputs.buildingClass || '').toUpperCase().trim();
+
+  // Signal 1: Large building on single tax lot (no unit BBL splits)
+  if (unitsRes >= 10 && (unitBblCount === 0 || inputs.unitBblCount === null)) {
+    score += 4;
+    indicators.push(`${unitsRes} residential units on a single tax lot`);
+  }
+
+  // Signal 2: Multi-unit building with no condo indicators
+  if (unitsRes >= 2 && inputs.condoUnitsCount === 0 && !inputs.hasCondoFlag) {
+    score += 3;
+    indicators.push('No condo unit BBL splits detected');
+  }
+
+  // Signal 3: High unit mention count in records
+  if (mentionedUnitCount >= 20) {
+    score += 3;
+    indicators.push(`${mentionedUnitCount} records reference apartment/unit numbers`);
+  } else if (mentionedUnitCount >= 5) {
+    score += 2;
+    indicators.push(`${mentionedUnitCount} records reference apartment/unit numbers`);
+  }
+
+  // Signal 4: Building sales without unit sales (may indicate co-op)
+  if (inputs.salesRecordsCount > 0 && inputs.unitSalesCount === 0) {
+    score += 2;
+    indicators.push('Building-level sales without unit sales records');
+  }
+
+  // Signal 5: Building class (very low weight)
+  if (COOP_INDICATOR_CLASSES.some(c => bc.startsWith(c))) {
+    score += 1;
+    indicators.push(`Building class ${bc} is common for co-ops`);
+  }
+
+  // CAP: If small building (<=2 units), never reach market-known
+  if (unitsRes <= 2) {
+    score = Math.min(score, 2);
+    if (score < 7) {
+      indicators.push('Small building (≤2 units) - capped score');
+    }
+  }
+
+  // Determine confidence and structure based on score
+  if (score >= 7) {
+    return {
+      type: 'Cooperative',
+      confidence: 'Market-known',
+      inferredConfidence: score >= 9 ? 'High' : 'Medium',
+      coopLikelihoodScore: Math.min(score, 10),
+      indicators,
+      sources: ['Structural analysis'],
+      disclaimerKey: 'market-known',
+    };
+  }
+
+  // Default: Unverified
   return {
     type: 'Unknown',
     confidence: 'Unverified',
-    evidence: [],
+    inferredConfidence: 'Low',
+    coopLikelihoodScore: Math.min(score, 10),
+    indicators: indicators.length > 0 ? indicators : ['Insufficient structural evidence'],
     sources: [],
+    disclaimerKey: 'unverified',
   };
 }
 
@@ -319,12 +426,18 @@ function computeOwnershipProfile(
   condoNo: string | number | null,
   landUse: string | null,
   residentialUnits: number | null,
-  bbl: string
+  bbl: string,
+  scoringInputs: ScoringInputs
 ): OwnershipProfile {
   const municipal = computeMunicipalClassification(
-    buildingClass, condoNo, landUse, residentialUnits
+    condoNo,
+    scoringInputs.condoUnitsCount,
+    buildingClass,
+    landUse,
+    residentialUnits
   );
-  const ownership = computeOwnershipStructure(municipal);
+  
+  const ownership = computeOwnershipStructure(municipal, scoringInputs);
 
   const warnings: string[] = [];
 
@@ -337,6 +450,8 @@ function computeOwnershipProfile(
   console.log(`[OwnershipClassifier] BBL ${bbl}:`, {
     municipal: municipal.label,
     ownership: `${ownership.type} (${ownership.confidence})`,
+    score: ownership.coopLikelihoodScore,
+    indicators: ownership.indicators,
     condoNo,
     buildingClass,
   });
@@ -450,9 +565,22 @@ function normalizeProfile(raw: Record<string, unknown>, bbl: string, schema: Sch
     ? (typeof condoNoRaw === 'string' || typeof condoNoRaw === 'number' ? condoNoRaw : null) 
     : null;
 
+  // Default scoring inputs - will be enhanced when more data sources are available
+  const scoringInputs: ScoringInputs = {
+    unitsResidential: unitsRes,
+    condoUnitsCount: 0, // Will be populated from condo-units endpoint
+    hasCondoFlag: condoNo !== null && condoNo !== undefined && 
+      String(condoNo).trim() !== '' && String(condoNo) !== '0',
+    unitBblCount: null, // Not yet available
+    mentionedUnitCount: 0, // Will be populated from unit-mentions endpoint
+    salesRecordsCount: 0, // Not yet available
+    unitSalesCount: 0, // Not yet available
+    buildingClass,
+  };
+
   const classification = classifyProperty(buildingClass, landUse, unitsRes, condoNo);
   const ownershipProfile = computeOwnershipProfile(
-    buildingClass, condoNo, landUse, unitsRes, bbl
+    buildingClass, condoNo, landUse, unitsRes, bbl, scoringInputs
   );
 
   const fieldsUsed = Object.entries(schema.columnMap)
@@ -498,46 +626,27 @@ serve(async (req) => {
   const NYC_OPEN_DATA_APP_TOKEN = Deno.env.get('NYC_OPEN_DATA_APP_TOKEN');
 
   try {
-    if (!NYC_OPEN_DATA_APP_TOKEN) {
-      return createErrorResponse(ctx, 500, 'Configuration error', 'NYC_OPEN_DATA_APP_TOKEN is not configured', 
-        'Server is missing NYC Open Data token configuration.');
-    }
-
     const clientIP = getClientIP(req);
-    const rateLimit = checkRateLimit(clientIP);
-    if (!rateLimit.allowed) {
-      return new Response(JSON.stringify({
-        error: 'Rate limit exceeded',
-        details: `Too many requests. Please wait ${rateLimit.retryAfter} seconds.`,
-        userMessage: 'You\'re making too many requests. Please wait a moment and try again.',
-        requestId: ctx.requestId,
-      }), {
-        status: 429,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json', 'Retry-After': String(rateLimit.retryAfter) },
-      });
+    const rl = checkRateLimit(clientIP);
+    if (!rl.allowed) {
+      return createErrorResponse(ctx, 429, 'Rate limit exceeded', `Retry after ${rl.retryAfter} seconds`, 'Too many requests. Please wait a moment.');
     }
 
     const url = new URL(req.url);
-    const params = url.searchParams;
-
-    let bbl: string | null = null;
-    for (const key of ['bbl', 'BBL']) {
-      const v = params.get(key);
-      if (v?.trim()) { bbl = v.trim(); break; }
-    }
+    const bbl = url.searchParams.get('bbl');
 
     if (!bbl) {
-      return createErrorResponse(ctx, 400, 'Missing parameter', 'bbl parameter is required', 'Please provide a valid property identifier (BBL).');
+      return createErrorResponse(ctx, 400, 'Missing parameter', 'BBL is required', 'Please provide a BBL.');
     }
 
-    bbl = bbl.padStart(10, '0');
     ctx.bbl = bbl;
 
     if (!validateBBL(bbl)) {
-      return createErrorResponse(ctx, 400, 'Invalid BBL', 'bbl must be exactly 10 digits', 'The property identifier (BBL) format is invalid.');
+      return createErrorResponse(ctx, 400, 'Invalid BBL', `Invalid format: ${bbl}`, 'BBL must be a 10-digit number.');
     }
 
-    const cacheKey = `property-profile:${bbl}`;
+    // Check cache
+    const cacheKey = `profile:${bbl}`;
     const cached = getCached<PropertyProfile>(cacheKey);
     if (cached) {
       logRequest(ctx, 'Cache hit');
@@ -546,98 +655,45 @@ serve(async (req) => {
       });
     }
 
-    const schema = await discoverSchema(NYC_OPEN_DATA_APP_TOKEN);
-    
-    if (!schema.columnMap.bbl) {
-      return createErrorResponse(ctx, 400, 'Schema mismatch', 'PLUTO dataset does not have a bbl column',
-        'Unable to query property profile—schema mismatch.');
-    }
+    // Discover schema
+    const schema = await discoverSchema(NYC_OPEN_DATA_APP_TOKEN || '');
 
-    const dataUrl = new URL(PLUTO_BASE_URL);
-    dataUrl.searchParams.set('$where', `${schema.columnMap.bbl}='${bbl}'`);
-    dataUrl.searchParams.set('$limit', '1');
+    // Fetch from PLUTO
+    const queryUrl = new URL(PLUTO_BASE_URL);
+    queryUrl.searchParams.set('bbl', bbl);
 
-    const headers: Record<string, string> = { 
-      'Accept': 'application/json',
-      'X-App-Token': NYC_OPEN_DATA_APP_TOKEN,
-    };
-
-    const result = await fetchWithRetry(dataUrl.toString(), { headers });
+    const result = await fetchWithRetry(queryUrl.toString(), {
+      headers: {
+        'Accept': 'application/json',
+        ...(NYC_OPEN_DATA_APP_TOKEN && { 'X-App-Token': NYC_OPEN_DATA_APP_TOKEN }),
+      },
+    });
 
     if (!result.ok) {
-      if (result.status === 400) {
-        return createErrorResponse(ctx, 400, 'Invalid query', result.error || 'Upstream returned 400',
-          'Invalid query—schema mismatch prevented.', { service: 'NYC Open Data', status: 400 });
-      }
-      if (result.status === 429) {
-        return createErrorResponse(ctx, 429, 'Rate limited', 'Upstream rate limited',
-          'NYC data service is busy.', { service: 'NYC Open Data', status: 429 });
-      }
-      return createErrorResponse(ctx, 502, 'Upstream error', result.error || 'Unknown error',
-        'Unable to retrieve property profile.', { service: 'NYC Open Data', status: result.status });
+      return createErrorResponse(
+        ctx, 502, 'Upstream error', result.error || 'PLUTO query failed',
+        'Unable to fetch property data. Please try again.',
+        { service: 'NYC Open Data', status: result.status }
+      );
     }
 
-    const rawData = result.data as Record<string, unknown>[];
-    
-    if (rawData.length === 0) {
-      const emptyProfile: PropertyProfile = {
-        bbl,
-        borough: getBoroughName(bbl.charAt(0)),
-        block: bbl.slice(1, 6).replace(/^0+/, '') || '0',
-        lot: bbl.slice(6, 10).replace(/^0+/, '') || '0',
-        address: null,
-        landUse: null,
-        buildingClass: null,
-        propertyTypeLabel: 'Unknown',
-        propertyTenure: 'UNKNOWN',
-        municipal: {
-          label: 'Ownership type not specified in municipal data',
-          evidence: ['No property data available'],
-          source: 'NYC PLUTO',
-        },
-        ownership: {
-          type: 'Unknown',
-          confidence: 'Unverified',
-          evidence: ['No external ownership records available'],
-          sources: [],
-        },
-        ownershipWarnings: ['DOB and PLUTO data do not reliably indicate cooperative ownership.'],
-        residentialUnits: null,
-        totalUnits: null,
-        yearBuilt: null,
-        grossSqFt: null,
-        lotArea: null,
-        numFloors: null,
-        zipCode: null,
-        ownerName: null,
-        source: { datasetId: PLUTO_DATASET_ID, fieldsUsed: [] },
-        raw: {},
-        requestId: ctx.requestId,
-      };
-
-      logRequest(ctx, 'No profile found', { bbl });
-      return new Response(JSON.stringify(emptyProfile), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
+    const records = result.data as Record<string, unknown>[];
+    if (!records || records.length === 0) {
+      return createErrorResponse(ctx, 404, 'Not found', `No property found for BBL ${bbl}`, 'Property not found in NYC records.');
     }
 
-    const profile = normalizeProfile(rawData[0], bbl, schema, ctx.requestId);
+    const profile = normalizeProfile(records[0], bbl, schema, ctx.requestId);
     setCache(cacheKey, profile);
-    
-    logRequest(ctx, 'Success', { 
-      propertyType: profile.propertyTypeLabel,
-      municipalLabel: profile.municipal.label,
-      ownershipType: profile.ownership.type,
-      ownershipConfidence: profile.ownership.confidence,
-    });
+    logRequest(ctx, 'Profile fetched', { hasData: !!profile.buildingClass });
 
     return new Response(JSON.stringify(profile), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
-
   } catch (error) {
-    return createErrorResponse(ctx, 500, 'Internal server error', 
-      error instanceof Error ? error.message : 'Unknown error',
-      'An unexpected error occurred.');
+    console.error('Property profile error:', error);
+    return createErrorResponse(
+      ctx, 500, 'Internal error', error instanceof Error ? error.message : 'Unknown error',
+      'An unexpected error occurred. Please try again.'
+    );
   }
 });
