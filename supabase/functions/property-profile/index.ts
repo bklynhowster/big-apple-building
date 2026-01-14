@@ -235,85 +235,78 @@ interface OwnershipProfile {
 }
 
 /**
- * Layer 1: Municipal Classification
- * Only reflects what NYC municipal datasets explicitly state.
- * NEVER infers cooperative from DOB, PLUTO, CO status, or building class.
+ * SECTION A: Municipal Classification
+ * 
+ * STRICT RULES:
+ * - Do NOT use building class codes (e.g., C0, D4, R0-R9) to infer ownership
+ * - Do NOT use "CO" strings or certificate-of-occupancy references
+ * - Do NOT use unit count, BBL patterns, or anything heuristic
+ * - Only show "Condominium" if an NYC dataset EXPLICITLY indicates it (e.g., condoNo field)
  */
 function computeMunicipalClassification(
   buildingClass: string | null,
   condoNo: string | number | null,
   landUse: string | null,
-  residentialUnits: number | null,
-  hasMultipleUnitBBLs: boolean,
-  unitBBLCount: number
+  residentialUnits: number | null
 ): MunicipalClassification {
   const bc = (buildingClass || '').toUpperCase().trim();
   const evidence: string[] = [];
 
-  const isCondoClass = CONDO_CLASSES.some(c => bc.startsWith(c));
-  const hasCondoNo = condoNo !== null && condoNo !== undefined && 
+  // ONLY explicit condo indicator: condoNo field is set
+  // Per strict rules: Do NOT use building class codes to infer condo/co-op
+  const hasExplicitCondoNo = condoNo !== null && condoNo !== undefined && 
     String(condoNo).trim() !== '' && String(condoNo) !== '0';
 
-  // Condo via unit BBLs
-  if (hasMultipleUnitBBLs && unitBBLCount > 0) {
-    evidence.push(`Multiple unit BBLs present (${unitBBLCount} units)`);
-    if (isCondoClass) evidence.push(`Building Class: ${bc} (condo class)`);
-    if (hasCondoNo) evidence.push(`Condo Number: ${condoNo}`);
+  if (hasExplicitCondoNo) {
+    evidence.push(`Condo Number: ${condoNo} (explicit municipal indicator)`);
     
     return {
       label: 'Condominium',
       evidence,
-      source: 'NYC DOF/PLUTO',
-    };
-  }
-
-  // Condo via class or condo number
-  if (isCondoClass || hasCondoNo) {
-    if (isCondoClass) evidence.push(`Building Class: ${bc} (condo class)`);
-    if (hasCondoNo) evidence.push(`Condo Number: ${condoNo}`);
-    
-    return {
-      label: 'Condominium',
-      evidence,
-      source: 'NYC PLUTO',
+      source: 'NYC DOF (Department of Finance)',
     };
   }
 
   // Default: not specified in municipal data
-  if (bc) evidence.push(`Building Class: ${bc}`);
+  // Include available data for transparency but do NOT use for inference
+  if (bc) evidence.push(`Building Class: ${bc} (not used for ownership inference)`);
   if (landUse) evidence.push(`Land Use: ${landUse}`);
   if (residentialUnits) evidence.push(`Residential Units: ${residentialUnits}`);
 
   return {
     label: 'Ownership type not specified in municipal data',
-    evidence: evidence.length > 0 ? evidence : ['No explicit ownership indicators'],
+    evidence: evidence.length > 0 ? evidence : ['No explicit ownership indicators in municipal data'],
     source: 'NYC PLUTO/DOB',
   };
 }
 
 /**
- * Layer 2: Ownership Structure
- * Uses external indicators when available.
- * NOTE: Currently we don't have ACRIS/offering plan data in this endpoint.
+ * SECTION B: Ownership Structure (External / Verification)
+ * 
+ * STRICT RULES:
+ * - Only use external sources: ACRIS, offering plans, sales records, corporate filings
+ * - Never infer co-op from DOB, PLUTO, CO status, building class, or any municipal-only fields
+ * - If no external evidence, show "Unverified"
  */
 function computeOwnershipStructure(
   municipal: MunicipalClassification
 ): OwnershipStructure {
-  // If municipal says Condominium, that's confirmed
+  // If municipal explicitly says Condominium (via condoNo), that's confirmed
   if (municipal.label === 'Condominium') {
     return {
       type: 'Condominium',
       confidence: 'Confirmed',
-      evidence: municipal.evidence,
-      sources: [municipal.source],
+      evidence: ['Condo number registered with NYC Department of Finance'],
+      sources: ['NYC DOF'],
     };
   }
 
   // No external indicators available in this endpoint yet
+  // (ACRIS, offering plans, sales records would be checked here when integrated)
   return {
     type: 'Unknown',
     confidence: 'Unverified',
-    evidence: ['No external ownership records available'],
+    evidence: [],
     sources: [],
   };
 }
@@ -326,27 +319,26 @@ function computeOwnershipProfile(
   condoNo: string | number | null,
   landUse: string | null,
   residentialUnits: number | null,
-  bbl: string,
-  hasMultipleUnitBBLs: boolean,
-  unitBBLCount: number
+  bbl: string
 ): OwnershipProfile {
   const municipal = computeMunicipalClassification(
-    buildingClass, condoNo, landUse, residentialUnits, hasMultipleUnitBBLs, unitBBLCount
+    buildingClass, condoNo, landUse, residentialUnits
   );
   const ownership = computeOwnershipStructure(municipal);
 
   const warnings: string[] = [];
 
-  if (ownership.type === 'Unknown') {
+  if (ownership.confidence === 'Unverified') {
     warnings.push(
-      'DOB and PLUTO data do not reliably indicate cooperative ownership. ' +
-      'Ownership structure requires verification via ACRIS, offering plan, or corporation filings.'
+      'DOB and PLUTO data do not reliably indicate cooperative ownership.'
     );
   }
 
   console.log(`[OwnershipClassifier] BBL ${bbl}:`, {
     municipal: municipal.label,
     ownership: `${ownership.type} (${ownership.confidence})`,
+    condoNo,
+    buildingClass,
   });
 
   return { municipal, ownership, warnings };
@@ -460,7 +452,7 @@ function normalizeProfile(raw: Record<string, unknown>, bbl: string, schema: Sch
 
   const classification = classifyProperty(buildingClass, landUse, unitsRes, condoNo);
   const ownershipProfile = computeOwnershipProfile(
-    buildingClass, condoNo, landUse, unitsRes, bbl, false, 0
+    buildingClass, condoNo, landUse, unitsRes, bbl
   );
 
   const fieldsUsed = Object.entries(schema.columnMap)
