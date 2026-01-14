@@ -33,6 +33,7 @@ interface ContextBannerProps {
   unitLabel?: string | null;
   unitBbl: string;
   billingBbl?: string | null;
+  effectiveBbl?: string; // The actual BBL used for data queries
   bin?: string;
   borough?: string;
   buildingAddress?: string;
@@ -51,6 +52,7 @@ export function ContextBanner({
   unitLabel,
   unitBbl,
   billingBbl,
+  effectiveBbl,
   bin,
   borough,
   buildingAddress,
@@ -372,11 +374,18 @@ export function ContextBanner({
                 {/* Identifiers - hierarchical */}
                 <div className="flex flex-wrap items-center gap-3 pt-1">
                   <div className="flex items-center gap-1.5">
-                    <Badge variant="default" className="font-mono text-xs">
-                      Unit BBL: {unitBbl}
+                    <Badge variant="outline" className="font-mono text-xs text-muted-foreground">
+                      Viewing Unit BBL: {unitBbl}
                     </Badge>
                   </div>
-                  {billingBbl && (
+                  {effectiveBbl && effectiveBbl !== unitBbl && (
+                    <div className="flex items-center gap-1.5">
+                      <Badge variant="default" className="font-mono text-xs bg-amber-600 hover:bg-amber-700">
+                        Records from Building BBL: {effectiveBbl}
+                      </Badge>
+                    </div>
+                  )}
+                  {billingBbl && billingBbl !== effectiveBbl && (
                     <div className="flex items-center gap-1.5">
                       <Badge variant="outline" className="font-mono text-xs text-muted-foreground">
                         Building BBL: {billingBbl}

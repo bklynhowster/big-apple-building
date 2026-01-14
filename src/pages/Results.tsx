@@ -88,22 +88,34 @@ export default function Results() {
     return lot >= 1001 && lot <= 6999;
   }, [bbl]);
 
-  // CRITICAL: For condo unit pages, use building BBL for property profile
-  // Unit BBLs (lots 1001-6999) return 404 from property-profile since they're not in PLUTO
-  const profileBbl = useMemo(() => {
-    // If we're on a unit page and have the building BBL, use that
+  // ==========================================================================
+  // EFFECTIVE BBL - Single canonical variable for ALL data fetching
+  // ==========================================================================
+  // view_bbl: the unit BBL the user clicked (from URL param 'bbl')
+  // building_bbl: the condo parent BBL (from URL param 'buildingBbl')
+  // effective_bbl: the BBL we actually query datasets with
+  //
+  // Condo rule: If user is in Unit view AND building_bbl exists, 
+  // use building_bbl for ALL building-level datasets (HPD/ECB/DOB/etc.)
+  // Unit BBLs do not have enforcement records in city databases.
+  // ==========================================================================
+  const effectiveBbl = useMemo(() => {
+    // For condo unit pages, always use building BBL for data fetching
     if (isUnitLotEarly && buildingBblParam) {
       return buildingBblParam;
     }
-    // Otherwise use the current BBL (building-level)
+    // Otherwise use the current BBL
     return bbl;
   }, [isUnitLotEarly, buildingBblParam, bbl]);
 
-  // Get property profile using the appropriate BBL (building for units, current for buildings)
-  const { profile, loading: profileLoading, error: profileError } = usePropertyProfile(isValidBBL ? profileBbl : null);
-  
   // Track if we're showing building-level data for a unit page
-  const isShowingBuildingContext = isUnitLotEarly && buildingBblParam && profileBbl === buildingBblParam;
+  const isShowingBuildingContext = isUnitLotEarly && buildingBblParam && effectiveBbl === buildingBblParam;
+  
+  // Validate effective BBL
+  const isEffectiveBblValid = effectiveBbl.length === 10;
+
+  // Get property profile using the effective BBL (building for units, current for buildings)
+  const { profile, loading: profileLoading, error: profileError } = usePropertyProfile(isEffectiveBblValid ? effectiveBbl : null);
   
   // Derive isCoopInferred from new two-layer ownership system:
   // Show as co-op if ownership.type === 'Cooperative' AND score >= 8
@@ -116,8 +128,8 @@ export default function Results() {
   // Update isCoopEffective when profile loads (initial state from inferred)
   useEffect(() => {
     if (profile) {
-      // Check localStorage for override using building BBL
-      const storageKey = `elk_override:${profileBbl}`;
+      // Check localStorage for override using effective BBL
+      const storageKey = `elk_override:${effectiveBbl}`;
       try {
         const stored = localStorage.getItem(storageKey);
         if (stored === 'COOP') {
@@ -131,7 +143,7 @@ export default function Results() {
         setIsCoopEffective(isCoopInferred);
       }
     }
-  }, [profile, profileBbl, isCoopInferred]);
+  }, [profile, effectiveBbl, isCoopInferred]);
   
   // Handler for when PropertyProfileCard changes override
   const handleOwnershipOverrideChange = useCallback((effective: boolean) => {
@@ -143,19 +155,20 @@ export default function Results() {
   const isCoop = isCoopEffective;
 
   // Pre-fetch HPD, 311, Rolling Sales, DOB Filings, DOB Violations, ECB, and Permits for Risk Snapshot + Unit Insights
-  const hpdViolations = useHPDViolations(isValidBBL ? bbl : null);
-  const hpdComplaints = useHPDComplaints(isValidBBL ? bbl : null);
+  // CRITICAL: All hooks use effectiveBbl (building BBL for condo units) to avoid scope mismatch
+  const hpdViolations = useHPDViolations(isEffectiveBblValid ? effectiveBbl : null);
+  const hpdComplaints = useHPDComplaints(isEffectiveBblValid ? effectiveBbl : null);
   const threeOneOne = use311(latitude, longitude);
   const coopUnitRoster = useCoopUnitRoster();
   const dobJobFilings = useDobJobFilings();
-  const dobViolationsHook = useViolations(isValidBBL ? bbl : null);
-  const ecbHook = useECB(isValidBBL ? bbl : null);
-  const permitsHook = usePermits(isValidBBL ? bbl : null);
+  const dobViolationsHook = useViolations(isEffectiveBblValid ? effectiveBbl : null);
+  const ecbHook = useECB(isEffectiveBblValid ? effectiveBbl : null);
+  const permitsHook = usePermits(isEffectiveBblValid ? effectiveBbl : null);
   
   // Landmark status lookup - pass PLUTO histdist if available for quick detection
   const plutoHistDist = profile?.raw?.histdist as string | undefined;
   const landmarkStatus = useLandmarkStatus({ 
-    bbl, 
+    bbl: effectiveBbl, 
     bin, 
     lat: latitude, 
     lon: longitude, 
@@ -164,21 +177,24 @@ export default function Results() {
   
   // Track if we've fetched data for insights/risk snapshot
   const dataFetchedRef = useRef(false);
+  const lastFetchedBblRef = useRef<string | null>(null);
   
   // Fetch all data for Risk Snapshot and Unit Insights
+  // CRITICAL: All fetches use effectiveBbl to match hook initialization
   useEffect(() => {
-    if (!isValidBBL || dataFetchedRef.current) return;
-    if (!bbl || bbl.length !== 10) return;
+    if (!isEffectiveBblValid) return;
+    // Re-fetch if effectiveBbl changed
+    if (lastFetchedBblRef.current === effectiveBbl && dataFetchedRef.current) return;
 
-    hpdViolations.fetch(bbl);
-    hpdComplaints.fetch(bbl);
-    dobViolationsHook.fetchViolations(bbl);
-    ecbHook.fetchECB(bbl);
-    permitsHook.fetchPermits(bbl);
+    hpdViolations.fetch(effectiveBbl);
+    hpdComplaints.fetch(effectiveBbl);
+    dobViolationsHook.fetchViolations(effectiveBbl);
+    ecbHook.fetchECB(effectiveBbl);
+    permitsHook.fetchPermits(effectiveBbl);
     
     // Co-op specific data
     if (isCoop) {
-      coopUnitRoster.fetch(bbl);
+      coopUnitRoster.fetch(effectiveBbl);
     }
     
     if (bin) {
@@ -188,7 +204,8 @@ export default function Results() {
       threeOneOne.fetch(latitude, longitude);
     }
     dataFetchedRef.current = true;
-  }, [isValidBBL, bbl, bin, latitude, longitude, isCoop]);
+    lastFetchedBblRef.current = effectiveBbl;
+  }, [isEffectiveBblValid, effectiveBbl, bin, latitude, longitude, isCoop]);
   
   // Compute record counts for Risk Snapshot
   const recordCounts: RecordCounts = useMemo(() => {
@@ -293,14 +310,21 @@ export default function Results() {
   });
   
   // The BBL to use for queries based on scope
+  // CRITICAL: For condo units, always use effectiveBbl (building BBL) regardless of scope
+  // This ensures tabs show the same data as Risk Snapshot
   const queryBbl = useMemo(() => {
+    // For condo unit pages, always use effectiveBbl (building BBL)
+    if (isShowingBuildingContext) {
+      return effectiveBbl;
+    }
     // Co-ops always query at building level
-    if (isCoop) return bbl;
+    if (isCoop) return effectiveBbl;
+    // For building pages with scope toggle
     if (scope === 'building' && billingBbl) {
       return billingBbl;
     }
-    return bbl;
-  }, [scope, billingBbl, bbl, isCoop]);
+    return effectiveBbl;
+  }, [scope, billingBbl, effectiveBbl, isCoop, isShowingBuildingContext]);
   
   // Update scope default when BBL changes or co-op status changes
   useEffect(() => {
@@ -462,6 +486,7 @@ export default function Results() {
                 unitLabel={currentUnitLabel}
                 unitBbl={bbl}
                 billingBbl={billingBbl || buildingBblParam}
+                effectiveBbl={effectiveBbl}
                 bin={bin}
                 borough={borough}
                 buildingAddress={buildingAddressParam}
@@ -501,9 +526,9 @@ export default function Results() {
               />
 
               {/* Property Profile with embedded map */}
-              {/* Use profileBbl (building BBL for condo units) to avoid 404 on unit BBLs */}
+              {/* Use effectiveBbl (building BBL for condo units) to avoid 404 on unit BBLs */}
               <PropertyProfileCard 
-                bbl={profileBbl} 
+                bbl={effectiveBbl}
                 unitLabel={currentUnitLabel}
                 parentAddress={address}
                 landmarkStatus={landmarkStatus}
@@ -541,7 +566,7 @@ export default function Results() {
               {/* Residential Units Card - Co-ops only (informational unit enumeration) */}
               {isCoop && (
                 <ResidentialUnitsCard
-                  buildingBbl={bbl}
+                  buildingBbl={effectiveBbl}
                   selectedUnit={coopUnitContext}
                   onUnitSelect={handleCoopUnitContextChange}
                 />
@@ -549,7 +574,7 @@ export default function Results() {
 
               {/* Mentioned Units Card - Shows whenever unit mentions exist (NOT gated by ownership) */}
               <UnitInsightsCard
-                buildingBbl={bbl}
+                buildingBbl={effectiveBbl}
                 bin={bin}
                 hpdViolations={hpdViolations.items}
                 hpdComplaints={hpdComplaints.items}
@@ -646,7 +671,7 @@ export default function Results() {
                     <Card>
                       <CardContent className="p-6">
                         <SummaryTab 
-                          bbl={bbl}
+                          bbl={effectiveBbl}
                           billingBbl={billingBbl}
                           isCoop={isCoop}
                           coopUnitContext={coopUnitContext}
