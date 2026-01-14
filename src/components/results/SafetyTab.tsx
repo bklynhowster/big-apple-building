@@ -37,6 +37,7 @@ interface SafetyTabProps {
   scope?: QueryScope;
   isCoop?: boolean;
   coopUnitContext?: string | null;
+  address?: string;
 }
 
 interface SafetyViolation {
@@ -90,7 +91,7 @@ function LoadingSkeleton() {
   );
 }
 
-export function SafetyTab({ bbl, bin, scope = 'building', isCoop, coopUnitContext }: SafetyTabProps) {
+export function SafetyTab({ bbl, bin, scope = 'building', isCoop, coopUnitContext, address }: SafetyTabProps) {
   const [status, setStatus] = useState<'open' | 'closed' | 'all'>('all');
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
@@ -241,6 +242,7 @@ export function SafetyTab({ bbl, bin, scope = 'building', isCoop, coopUnitContex
         onOpenChange={setDrawerOpen}
         recordType="safety"
         record={selectedRecord as unknown as Record<string, unknown>}
+        address={address}
       />
     </div>
   );

@@ -27,6 +27,7 @@ interface ThreeOneOneTabProps {
   isCoop?: boolean;
   coopUnitContext?: string | null;
   onClearUnitContext?: () => void;
+  address?: string;
 }
 
 const COLUMN_CONFIGS: ColumnConfig[] = [
@@ -79,7 +80,7 @@ const COLUMNS = [
   { key: 'recordId', header: 'ID' },
 ];
 
-export function ThreeOneOneTab({ lat, lon, scope = 'building', isCoop, coopUnitContext, onClearUnitContext }: ThreeOneOneTabProps) {
+export function ThreeOneOneTab({ lat, lon, scope = 'building', isCoop, coopUnitContext, onClearUnitContext, address }: ThreeOneOneTabProps) {
   const { loading, error, data, items, fetch, filters, setFilters, applyFilters, retry } = use311(lat, lon);
   const [localFilters, setLocalFilters] = useState<ServiceRequestFilters>({
     status: 'all',
@@ -308,6 +309,7 @@ export function ThreeOneOneTab({ lat, lon, scope = 'building', isCoop, coopUnitC
         onOpenChange={setDrawerOpen}
         recordType="311"
         record={selectedRecord as unknown as Record<string, unknown>}
+        address={address}
       />
     </div>
   );

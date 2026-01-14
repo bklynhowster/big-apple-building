@@ -45,6 +45,7 @@ interface PermitsTabProps {
   scope?: QueryScope;
   isCoop?: boolean;
   coopUnitContext?: string | null;
+  address?: string;
 }
 
 const COLUMN_CONFIGS: ColumnConfig[] = [
@@ -96,7 +97,7 @@ function LoadingSkeleton() {
   );
 }
 
-export function PermitsTab({ bbl, bin, scope = 'building', isCoop, coopUnitContext }: PermitsTabProps) {
+export function PermitsTab({ bbl, bin, scope = 'building', isCoop, coopUnitContext, address }: PermitsTabProps) {
   const { loading, error, data, filters, offset, fetchPermits, setFilters, applyFilters, goToNextPage, goToPrevPage, retry } = usePermits(bbl);
   const [localFilters, setLocalFilters] = useState<PermitsFilters>({ status: 'all', keyword: '' });
   
@@ -362,6 +363,7 @@ export function PermitsTab({ bbl, bin, scope = 'building', isCoop, coopUnitConte
         onOpenChange={setDrawerOpen}
         recordType="permit"
         record={selectedRecord as unknown as Record<string, unknown>}
+        address={address}
       />
     </div>
   );
