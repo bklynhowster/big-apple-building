@@ -3,9 +3,14 @@ import { supabase } from '@/integrations/supabase/client';
 
 export interface ChargeRow {
   parid?: string;
+  bble?: string;
+  bbl?: string;
   stmtdate?: string;
   activitythrough?: string;
   value?: string;
+  balance?: string;
+  open_balance?: string;
+  outstanding?: string;
   dession?: string;
   chargetype?: string;
   install?: string;
@@ -13,6 +18,17 @@ export interface ChargeRow {
   borough?: string;
   block?: string;
   lot?: string;
+  period?: string;
+  bill_period?: string;
+  effective_date?: string;
+}
+
+export interface Attempt {
+  field: string;
+  key: string;
+  url: string;
+  rows_found: number;
+  error?: string;
 }
 
 export interface PropertyTaxResult {
@@ -23,7 +39,10 @@ export interface PropertyTaxResult {
   scope_used: 'unit' | 'building' | 'direct';
   parid_used: string;
   bbl_used: string;
+  matched_field: string | null;
+  matched_key: string | null;
   no_data_found: boolean;
+  attempts: Attempt[];
   api_error?: string;
 }
 
@@ -48,7 +67,7 @@ export function usePropertyTaxes(): UsePropertyTaxesResult {
   const abortControllerRef = useRef<AbortController | null>(null);
 
   const fetchTaxes = useCallback(async (bbl: string, buildingBbl?: string) => {
-    if (!bbl || bbl.length !== 10) {
+    if (!bbl || bbl.length < 8) {
       setError('Invalid BBL');
       return;
     }

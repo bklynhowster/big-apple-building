@@ -14,9 +14,14 @@ const DATASET_ID = 'scjx-j6np';
 
 interface ChargeRow {
   parid?: string;
+  bble?: string;
+  bbl?: string;
   stmtdate?: string;
   activitythrough?: string;
   value?: string;
+  balance?: string;
+  open_balance?: string;
+  outstanding?: string;
   dession?: string;
   chargetype?: string;
   install?: string;
@@ -24,34 +29,86 @@ interface ChargeRow {
   borough?: string;
   block?: string;
   lot?: string;
+  period?: string;
+  bill_period?: string;
+  effective_date?: string;
   [key: string]: unknown;
 }
 
+interface Attempt {
+  field: string;
+  key: string;
+  url: string;
+  rows_found: number;
+  error?: string;
+}
+
 interface TaxResult {
-  current_amount_owed: number | null;  // null means "not available" (no rows)
+  current_amount_owed: number | null;
   rows_count: number;
   as_of: string | null;
   recent_rows: ChargeRow[];
   scope_used: 'unit' | 'building' | 'direct';
   parid_used: string;
   bbl_used: string;
+  matched_field: string | null;
+  matched_key: string | null;
   no_data_found: boolean;
+  attempts: Attempt[];
   api_error?: string;
 }
 
-// Convert BBL to PARID (BBL + easement "0")
-function bblToParid(bbl: string): string {
-  // BBL is 10 digits: Borough(1) + Block(5) + Lot(4)
-  // PARID is 11 chars: Borough(1) + Block(5) + Lot(4) + Easement(1)
-  return bbl.padStart(10, '0') + '0';
+// Normalize BBL to proper format: 1 borough + 5 block (padded) + 4 lot (padded)
+function normalizeBbl(bbl: string): string {
+  if (!bbl || bbl.length < 5) return bbl;
+  
+  // Try to parse as raw BBL
+  const cleaned = bbl.replace(/\D/g, '');
+  
+  if (cleaned.length === 10) {
+    // Already 10 digits, but ensure proper padding
+    const borough = cleaned.charAt(0);
+    const block = cleaned.slice(1, 6).padStart(5, '0');
+    const lot = cleaned.slice(6, 10).padStart(4, '0');
+    return `${borough}${block}${lot}`;
+  }
+  
+  return cleaned.padStart(10, '0');
 }
 
-// Query the DOF dataset for a given PARID
-async function queryDOFCharges(parid: string, appToken: string): Promise<{ rows: ChargeRow[]; error?: string }> {
-  // Use simple query format: ?parid=VALUE&$limit=200
-  const url = `https://data.cityofnewyork.us/resource/${DATASET_ID}.json?parid=${encodeURIComponent(parid)}&$limit=200`;
+// Generate candidate keys from a BBL
+function generateCandidateKeys(bbl: string): string[] {
+  const candidates: string[] = [];
   
-  console.log(`[property-taxes] Request URL: ${url}`);
+  // Original BBL (10 digits)
+  const original = bbl.padStart(10, '0');
+  candidates.push(original);
+  
+  // BBLE variant (BBL + "0" for easement)
+  candidates.push(original + '0');
+  
+  // Normalized version
+  const normalized = normalizeBbl(bbl);
+  if (normalized !== original) {
+    candidates.push(normalized);
+    candidates.push(normalized + '0');
+  }
+  
+  // Deduplicate while preserving order
+  return [...new Set(candidates)];
+}
+
+// Query NYC Open Data with a specific field and key
+async function queryByFieldAndKey(
+  field: string, 
+  key: string, 
+  appToken: string
+): Promise<{ rows: ChargeRow[]; url: string; error?: string }> {
+  // Use $where with equality for precise matching
+  const whereClause = `${field}='${key}'`;
+  const url = `https://data.cityofnewyork.us/resource/${DATASET_ID}.json?$limit=200&$where=${encodeURIComponent(whereClause)}`;
+  
+  console.log(`[property-taxes] Query: ${field}='${key}' -> ${url}`);
   
   const headers: Record<string, string> = {
     'Accept': 'application/json',
@@ -65,86 +122,205 @@ async function queryDOFCharges(parid: string, appToken: string): Promise<{ rows:
     const response = await fetch(url, { headers });
     
     if (!response.ok) {
-      // Get the full error body for diagnostics
       const errorBody = await response.text();
-      console.error(`[property-taxes] DOF API error: ${response.status} ${response.statusText}`);
-      console.error(`[property-taxes] Error body: ${errorBody}`);
+      console.error(`[property-taxes] API error for ${field}=${key}: ${response.status}`);
+      console.error(`[property-taxes] Error body: ${errorBody.substring(0, 300)}`);
       return { 
         rows: [], 
-        error: `DOF API returned ${response.status}: ${errorBody.substring(0, 500)}` 
+        url,
+        error: `API ${response.status}: ${errorBody.substring(0, 200)}` 
       };
     }
     
     const data = await response.json();
     
-    // Validate response is an array
     if (!Array.isArray(data)) {
       console.error(`[property-taxes] Unexpected response type: ${typeof data}`);
-      return { rows: [], error: 'Unexpected response format from DOF API' };
+      return { rows: [], url, error: 'Unexpected response format' };
     }
     
-    console.log(`[property-taxes] DOF returned ${data.length} rows for PARID ${parid}`);
+    console.log(`[property-taxes] ${field}='${key}' returned ${data.length} rows`);
+    return { rows: data as ChargeRow[], url };
     
-    // Sort by statement date descending (newest first)
-    const sorted = data.sort((a: ChargeRow, b: ChargeRow) => {
-      const dateA = a.stmtdate || '';
-      const dateB = b.stmtdate || '';
-      return dateB.localeCompare(dateA);
-    });
-    
-    return { rows: sorted as ChargeRow[] };
   } catch (fetchError) {
     const errMsg = fetchError instanceof Error ? fetchError.message : String(fetchError);
     console.error(`[property-taxes] Fetch error: ${errMsg}`);
-    return { rows: [], error: `Network error: ${errMsg}` };
+    return { rows: [], url, error: `Network error: ${errMsg}` };
   }
 }
 
-// Process charge rows into a summary
-function processCharges(rows: ChargeRow[], scope: 'unit' | 'building' | 'direct', paridUsed: string, bblUsed: string): TaxResult {
-  // If no rows, return explicit "no data found" - do NOT return $0
-  if (rows.length === 0) {
-    return {
-      current_amount_owed: null,  // null = "not available", NOT $0
-      rows_count: 0,
-      as_of: null,
-      recent_rows: [],
-      scope_used: scope,
-      parid_used: paridUsed,
-      bbl_used: bblUsed,
-      no_data_found: true,
-    };
+// Multi-key lookup: try all combinations until we find rows
+async function multiKeyLookup(
+  bbl: string, 
+  scope: 'unit' | 'building' | 'direct',
+  appToken: string
+): Promise<{ 
+  rows: ChargeRow[]; 
+  matchedField: string | null;
+  matchedKey: string | null;
+  attempts: Attempt[];
+  bblUsed: string;
+}> {
+  const attempts: Attempt[] = [];
+  const candidateKeys = generateCandidateKeys(bbl);
+  const fieldsToTry = ['parid', 'bble', 'bbl'];
+  
+  console.log(`[property-taxes] Multi-key lookup for BBL ${bbl}, scope: ${scope}`);
+  console.log(`[property-taxes] Candidate keys: ${candidateKeys.join(', ')}`);
+  
+  // Try each candidate key with each field
+  for (const key of candidateKeys) {
+    for (const field of fieldsToTry) {
+      const result = await queryByFieldAndKey(field, key, appToken);
+      
+      const attempt: Attempt = {
+        field,
+        key,
+        url: result.url,
+        rows_found: result.rows.length,
+        error: result.error,
+      };
+      attempts.push(attempt);
+      
+      if (result.rows.length > 0) {
+        console.log(`[property-taxes] ✓ Found ${result.rows.length} rows using ${field}='${key}'`);
+        return {
+          rows: result.rows,
+          matchedField: field,
+          matchedKey: key,
+          attempts,
+          bblUsed: bbl,
+        };
+      }
+    }
   }
   
-  // Calculate current amount owed - sum all open/unpaid balances
-  // In DOF data, the "value" field represents the charge/credit amount
-  // Positive values are charges owed, negative are payments/credits
-  let totalOwed = 0;
+  console.log(`[property-taxes] No rows found after ${attempts.length} attempts`);
+  return {
+    rows: [],
+    matchedField: null,
+    matchedKey: null,
+    attempts,
+    bblUsed: bbl,
+  };
+}
+
+// Compute current amount owed from rows
+function computeAmountOwed(rows: ChargeRow[]): { amount: number; balanceField: string } {
+  // Look for balance-like fields in priority order
+  const balanceFields = ['open_balance', 'balance', 'outstanding', 'value'];
+  
+  // Log available fields from first row for debugging
+  if (rows.length > 0) {
+    const sampleRow = rows[0];
+    const availableFields = Object.keys(sampleRow);
+    console.log(`[property-taxes] Available fields in rows: ${availableFields.join(', ')}`);
+  }
+  
+  // Try to find the best balance field
+  let usedField = 'value'; // default fallback
+  let total = 0;
+  
+  for (const field of balanceFields) {
+    const hasField = rows.some(r => r[field] !== undefined && r[field] !== null && r[field] !== '');
+    if (hasField) {
+      usedField = field;
+      break;
+    }
+  }
+  
+  console.log(`[property-taxes] Using field '${usedField}' for balance calculation`);
+  
+  // Sum the values
   for (const row of rows) {
-    const value = parseFloat(row.value || '0');
-    if (!isNaN(value)) {
-      totalOwed += value;
+    const rawValue = row[usedField];
+    if (rawValue !== undefined && rawValue !== null) {
+      const numValue = parseFloat(String(rawValue));
+      if (!isNaN(numValue)) {
+        total += numValue;
+      }
     }
   }
   
   // Round to cents
-  totalOwed = Math.round(totalOwed * 100) / 100;
+  total = Math.round(total * 100) / 100;
   
-  // Get the most recent date as "as_of"
-  const mostRecentRow = rows[0]; // Already sorted DESC
-  const asOf = mostRecentRow?.activitythrough || mostRecentRow?.stmtdate || null;
+  return { amount: total, balanceField: usedField };
+}
+
+// Get the most recent date from rows
+function getAsOfDate(rows: ChargeRow[]): string | null {
+  const dateFields = ['activitythrough', 'stmtdate', 'period', 'bill_period', 'effective_date'];
   
-  console.log(`[property-taxes] Processed ${rows.length} rows, computed balance: ${totalOwed}, as_of: ${asOf}`);
+  let maxDate: string | null = null;
+  
+  for (const row of rows) {
+    for (const field of dateFields) {
+      const val = row[field];
+      if (val && typeof val === 'string' && val.trim()) {
+        if (!maxDate || val > maxDate) {
+          maxDate = val;
+        }
+      }
+    }
+  }
+  
+  return maxDate;
+}
+
+// Process charge rows into a summary
+function processCharges(
+  rows: ChargeRow[], 
+  scope: 'unit' | 'building' | 'direct', 
+  matchedField: string | null,
+  matchedKey: string | null,
+  bblUsed: string,
+  attempts: Attempt[]
+): TaxResult {
+  // If no rows, return explicit "no data found"
+  if (rows.length === 0) {
+    return {
+      current_amount_owed: null,
+      rows_count: 0,
+      as_of: null,
+      recent_rows: [],
+      scope_used: scope,
+      parid_used: matchedKey || '',
+      bbl_used: bblUsed,
+      matched_field: null,
+      matched_key: null,
+      no_data_found: true,
+      attempts,
+    };
+  }
+  
+  // Compute amount owed
+  const { amount, balanceField } = computeAmountOwed(rows);
+  
+  // Get as_of date
+  const asOf = getAsOfDate(rows);
+  
+  // Sort rows by date descending
+  const sortedRows = [...rows].sort((a, b) => {
+    const dateA = a.stmtdate || a.activitythrough || '';
+    const dateB = b.stmtdate || b.activitythrough || '';
+    return dateB.localeCompare(dateA);
+  });
+  
+  console.log(`[property-taxes] Processed ${rows.length} rows using ${balanceField}, computed balance: ${amount}, as_of: ${asOf}`);
   
   return {
-    current_amount_owed: totalOwed,
+    current_amount_owed: amount,
     rows_count: rows.length,
     as_of: asOf,
-    recent_rows: rows.slice(0, 25), // Limit to 25 for UI
+    recent_rows: sortedRows.slice(0, 25),
     scope_used: scope,
-    parid_used: paridUsed,
+    parid_used: matchedKey || '',
     bbl_used: bblUsed,
+    matched_field: matchedField,
+    matched_key: matchedKey,
     no_data_found: false,
+    attempts,
   };
 }
 
@@ -155,15 +331,15 @@ serve(async (req) => {
   }
 
   try {
-    const { bbl, building_bbl } = await req.json();
+    const { bbl, building_bbl, view_bbl } = await req.json();
     
-    // Normalize field names (accept both view_bbl and bbl)
-    const viewBbl = bbl;
+    // Accept either bbl or view_bbl
+    const viewBbl = view_bbl || bbl;
     const buildingBbl = building_bbl;
     
-    console.log(`[property-taxes] Request received - view_bbl: ${viewBbl}, building_bbl: ${buildingBbl || 'none'}`);
+    console.log(`[property-taxes] Request - view_bbl: ${viewBbl}, building_bbl: ${buildingBbl || 'none'}`);
     
-    if (!viewBbl || viewBbl.length !== 10) {
+    if (!viewBbl || viewBbl.length < 8) {
       return new Response(
         JSON.stringify({ error: 'Invalid BBL format. Expected 10 digits.' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -172,73 +348,53 @@ serve(async (req) => {
     
     const appToken = Deno.env.get('NYC_OPEN_DATA_APP_TOKEN') || '';
     
-    // Derive PARIDs
-    const unitParid = bblToParid(viewBbl);
-    const buildingParid = buildingBbl ? bblToParid(buildingBbl) : null;
+    // Normalize the BBLs
+    const normalizedViewBbl = normalizeBbl(viewBbl);
+    const normalizedBuildingBbl = buildingBbl ? normalizeBbl(buildingBbl) : null;
     
-    console.log(`[property-taxes] Derived PARIDs - unit: ${unitParid}, building: ${buildingParid || 'none'}`);
-    
-    // Check cache first for unit PARID
-    const cacheKey = unitParid;
+    // Check cache
+    const cacheKey = `multikey:${normalizedViewBbl}:${normalizedBuildingBbl || ''}`;
     const cached = cache.get(cacheKey);
     if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
-      console.log(`[property-taxes] Cache hit for PARID ${unitParid}`);
+      console.log(`[property-taxes] Cache hit for ${cacheKey}`);
       return new Response(
         JSON.stringify(cached.data),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
     
-    // Query for unit PARID first
-    let queryResult = await queryDOFCharges(unitParid, appToken);
-    let rows = queryResult.rows;
-    let scope: 'unit' | 'building' | 'direct' = 'direct';
-    let paridUsed = unitParid;
-    let bblUsed = viewBbl;
-    let lastError = queryResult.error;
+    // Try unit BBL first (multi-key lookup)
+    let lookupResult = await multiKeyLookup(normalizedViewBbl, buildingBbl ? 'unit' : 'direct', appToken);
+    let allAttempts = lookupResult.attempts;
+    let scope: 'unit' | 'building' | 'direct' = buildingBbl ? 'unit' : 'direct';
     
-    // If no rows and we have a building BBL, try building PARID
-    if (rows.length === 0 && buildingParid && buildingParid !== unitParid) {
-      console.log(`[property-taxes] No rows for unit PARID, trying building PARID: ${buildingParid}`);
+    // If no rows and we have a building BBL, try building BBL
+    if (lookupResult.rows.length === 0 && normalizedBuildingBbl && normalizedBuildingBbl !== normalizedViewBbl) {
+      console.log(`[property-taxes] No rows for unit, trying building BBL: ${normalizedBuildingBbl}`);
       
-      // Check building cache
-      const buildingCacheKey = buildingParid;
-      const buildingCached = cache.get(buildingCacheKey);
-      if (buildingCached && Date.now() - buildingCached.timestamp < CACHE_TTL_MS) {
-        console.log(`[property-taxes] Cache hit for building PARID ${buildingParid}`);
-        const cachedResult = buildingCached.data as TaxResult;
-        const result = { ...cachedResult, scope_used: 'building' as const };
-        return new Response(
-          JSON.stringify(result),
-          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
+      const buildingResult = await multiKeyLookup(normalizedBuildingBbl, 'building', appToken);
+      allAttempts = [...allAttempts, ...buildingResult.attempts];
       
-      queryResult = await queryDOFCharges(buildingParid, appToken);
-      rows = queryResult.rows;
-      scope = 'building';
-      paridUsed = buildingParid;
-      bblUsed = buildingBbl;
-      if (queryResult.error) {
-        lastError = queryResult.error;
+      if (buildingResult.rows.length > 0) {
+        lookupResult = buildingResult;
+        scope = 'building';
       }
-    } else if (rows.length > 0 && buildingBbl) {
-      // We found unit-level data
-      scope = 'unit';
     }
     
-    // Process the results
-    const result = processCharges(rows, scope, paridUsed, bblUsed);
+    // Process results
+    const result = processCharges(
+      lookupResult.rows,
+      scope,
+      lookupResult.matchedField,
+      lookupResult.matchedKey,
+      scope === 'building' ? (normalizedBuildingBbl || normalizedViewBbl) : normalizedViewBbl,
+      allAttempts
+    );
     
-    // Add API error info if present (but still return the result)
-    if (lastError && rows.length === 0) {
-      result.api_error = lastError;
-    }
+    // Cache the result
+    cache.set(cacheKey, { data: result, timestamp: Date.now() });
     
-    // Cache the result (even empty results to avoid repeated calls)
-    cache.set(paridUsed, { data: result, timestamp: Date.now() });
-    
-    console.log(`[property-taxes] Returning result - scope: ${result.scope_used}, amount_owed: ${result.current_amount_owed}, rows_count: ${result.rows_count}, no_data: ${result.no_data_found}`);
+    console.log(`[property-taxes] Result - scope: ${result.scope_used}, matched: ${result.matched_field}='${result.matched_key}', amount: ${result.current_amount_owed}, rows: ${result.rows_count}, no_data: ${result.no_data_found}`);
     
     return new Response(
       JSON.stringify(result),
