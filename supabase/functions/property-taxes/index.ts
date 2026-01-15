@@ -21,6 +21,10 @@ const CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
 type BillingCycle = 'Quarterly' | 'Semiannual' | 'Unknown';
 type PaymentStatus = 'paid' | 'unpaid' | 'unknown';
 
+// ============================================================================
+// HELPER FUNCTIONS
+// ============================================================================
+
 // Normalize BBL to 10-digit format
 function normalizeBbl(bbl: string): string {
   if (!bbl || bbl.length < 5) return bbl;
@@ -48,50 +52,11 @@ function generateCandidateKeys(bbl: string): string[] {
   return [...new Set(candidates)];
 }
 
-// Raw row from NYC Open Data
-interface RawRow {
-  [key: string]: unknown;
-}
-
-// Parsed ledger row
-interface LedgerRow {
-  dueDate: Date | null;
-  dueDateStr: string | null;
-  liability: number | null;  // sum_liab - the charge amount
-  balance: number | null;    // sum_bal - remaining balance
-  code: string | null;       // charge code (CHG, PMT, etc.)
-  cycle: string | null;      // billing cycle indicator
-  rawRow: RawRow;
-}
-
-// Field candidates for extraction
-const DUE_DATE_FIELDS = ['due_date', 'dt_pd_begin', 'dt_pd_end', 'stmtdate', 'bill_date', 'effective_date'];
-const LIABILITY_FIELDS = ['sum_liab', 'amount', 'charge_amount', 'original_amount', 'billed_amount'];
-const BALANCE_FIELDS = ['sum_bal', 'open_balance', 'outstanding_amount', 'outstanding_balance', 'balance'];
-const CODE_FIELDS = ['code', 'type', 'charge_type', 'chargetype'];
-const CYCLE_FIELDS = ['cycle', 'billing_cycle'];
-
-// Get first matching field value
-function getFieldValue(row: RawRow, candidates: string[]): string | number | null {
-  for (const field of candidates) {
-    const val = row[field];
-    if (val !== undefined && val !== null && val !== '') {
-      return typeof val === 'number' ? val : String(val);
-    }
-  }
-  return null;
-}
-
-// Parse date string to Date object
-function parseDate(dateStr: string | null): Date | null {
-  if (!dateStr) return null;
-  try {
-    const d = new Date(dateStr);
-    if (isNaN(d.getTime())) return null;
-    return d;
-  } catch {
-    return null;
-  }
+// Normalize date to ISO YYYY-MM-DD string or null
+function normDate(d: unknown): string | null {
+  if (!d) return null;
+  const s = String(d).slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null;
 }
 
 // Robust numeric parsing - handles "$1,234.56", "1,234.56", "-1,234.56", etc.
@@ -106,85 +71,174 @@ function toNumber(v: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-// Format date for display
-function formatDateDisplay(date: Date): string {
-  return `${String(date.getMonth() + 1).padStart(2, '0')}/${String(date.getDate()).padStart(2, '0')}/${date.getFullYear()}`;
+// Generate a period key for grouping duplicate rows
+function periodKey(r: NormalizedRow): string {
+  // Prefer explicit year/period fields if present; fallback to due_date only.
+  const due = r.due_date ?? '';
+  const y = r.tax_year ?? '';
+  const p = r.year_period ?? '';
+  const charge = r.code ?? '';
+  return [y, p, due, charge].join('|');
 }
 
-// Normalize date to ISO YYYY-MM-DD string or null
-function normalizeDateStr(dateStr: string | null): string | null {
-  if (!dateStr) return null;
-  try {
-    const d = new Date(dateStr);
-    if (isNaN(d.getTime())) return null;
-    // Return ISO date string (YYYY-MM-DD)
-    return d.toISOString().split('T')[0];
-  } catch {
-    return null;
+// Format date for display (MM/DD/YYYY)
+function formatDateDisplay(dateStr: string): string {
+  const parts = dateStr.split('-');
+  if (parts.length !== 3) return dateStr;
+  return `${parts[1]}/${parts[2]}/${parts[0]}`;
+}
+
+// ============================================================================
+// TYPES
+// ============================================================================
+
+// Raw row from NYC Open Data
+interface RawRow {
+  [key: string]: unknown;
+}
+
+// Normalized row with consistent types
+interface NormalizedRow {
+  raw: RawRow;
+  due_date: string | null;
+  sum_liab: number | null;
+  sum_bal: number | null;
+  code: string;
+  tax_year: string | null;
+  year_period: string | null;
+}
+
+// Period aggregation bucket
+interface PeriodAgg {
+  key: string;
+  due_date: string | null;
+  max_liab: number;   // canonical bill for that period
+  max_bal: number;    // canonical balance for that period
+  row_count: number;
+  sample_codes: string[];
+}
+
+// ============================================================================
+// DATA NORMALIZATION
+// ============================================================================
+
+// Field candidates for extraction
+const DUE_DATE_FIELDS = ['due_date', 'dt_pd_begin', 'dt_pd_end', 'stmtdate', 'bill_date', 'effective_date'];
+const LIABILITY_FIELDS = ['sum_liab', 'amount', 'charge_amount', 'original_amount', 'billed_amount'];
+const BALANCE_FIELDS = ['sum_bal', 'open_balance', 'outstanding_amount', 'outstanding_balance', 'balance'];
+const CODE_FIELDS = ['code', 'type', 'charge_type', 'chargetype'];
+const TAX_YEAR_FIELDS = ['tax_year', 'year', 'fiscal_year'];
+const PERIOD_FIELDS = ['year_period', 'period', 'tax_period'];
+
+// Get first matching field value
+function getFieldValue(row: RawRow, candidates: string[]): unknown {
+  for (const field of candidates) {
+    const val = row[field];
+    if (val !== undefined && val !== null && val !== '') {
+      return val;
+    }
   }
+  return null;
 }
 
-// Parse a raw row into structured LedgerRow
-function parseRow(raw: RawRow): LedgerRow {
-  const dueDateRaw = getFieldValue(raw, DUE_DATE_FIELDS);
-  const dueDateStrRaw = dueDateRaw ? String(dueDateRaw) : null;
-  const dueDate = parseDate(dueDateStrRaw);
-  const dueDateStr = normalizeDateStr(dueDateStrRaw);
-  
-  // Use toNumber for robust parsing of currency values
-  const liabilityRaw = getFieldValue(raw, LIABILITY_FIELDS);
-  const liability = toNumber(liabilityRaw);
-  
-  const balanceRaw = getFieldValue(raw, BALANCE_FIELDS);
-  const balance = toNumber(balanceRaw);
-  
-  const codeRaw = getFieldValue(raw, CODE_FIELDS);
-  const code = codeRaw ? String(codeRaw).toUpperCase().trim() : null;
-  
-  const cycleRaw = getFieldValue(raw, CYCLE_FIELDS);
-  const cycle = cycleRaw ? String(cycleRaw) : null;
-  
-  return { dueDate, dueDateStr, liability, balance, code, cycle, rawRow: raw };
+// Normalize raw rows to consistent shape
+function normalizeRows(rawRows: RawRow[]): NormalizedRow[] {
+  return rawRows.map(r => ({
+    raw: r,
+    due_date: normDate(getFieldValue(r, DUE_DATE_FIELDS)),
+    sum_liab: toNumber(getFieldValue(r, LIABILITY_FIELDS)),
+    sum_bal: toNumber(getFieldValue(r, BALANCE_FIELDS)),
+    code: String(getFieldValue(r, CODE_FIELDS) ?? '').trim().toUpperCase(),
+    tax_year: getFieldValue(r, TAX_YEAR_FIELDS) ? String(getFieldValue(r, TAX_YEAR_FIELDS)) : null,
+    year_period: getFieldValue(r, PERIOD_FIELDS) ? String(getFieldValue(r, PERIOD_FIELDS)) : null,
+  }));
 }
 
-// Infer billing cycle from due date patterns
-function inferBillingCycle(rows: LedgerRow[]): { cycle: BillingCycle; evidence: string } {
+// ============================================================================
+// PERIOD BUCKETING - KEY FIX FOR INFLATED AMOUNTS
+// ============================================================================
+
+function buildPeriodBuckets(rows: NormalizedRow[]): PeriodAgg[] {
+  const buckets = new Map<string, PeriodAgg>();
+  
+  for (const r of rows) {
+    if (!r.due_date) continue;
+    
+    const k = periodKey(r);
+    const liab = r.sum_liab ?? 0;
+    const bal = r.sum_bal ?? 0;
+    
+    const cur = buckets.get(k) ?? {
+      key: k,
+      due_date: r.due_date,
+      max_liab: 0,
+      max_bal: 0,
+      row_count: 0,
+      sample_codes: [],
+    };
+    
+    cur.row_count += 1;
+    // Use MAX instead of SUM to avoid duplicate inflation
+    cur.max_liab = Math.max(cur.max_liab, liab);
+    cur.max_bal = Math.max(cur.max_bal, bal);
+    
+    if (r.code && cur.sample_codes.length < 6 && !cur.sample_codes.includes(r.code)) {
+      cur.sample_codes.push(r.code);
+    }
+    
+    buckets.set(k, cur);
+  }
+  
+  // Sort by due_date ascending
+  return Array.from(buckets.values()).sort((a, b) =>
+    (a.due_date ?? '').localeCompare(b.due_date ?? '')
+  );
+}
+
+// ============================================================================
+// BILLING CYCLE INFERENCE
+// ============================================================================
+
+function inferBillingCycle(periods: PeriodAgg[]): { cycle: BillingCycle; evidence: string } {
   const now = new Date();
   const oneYearAgo = new Date(now);
   oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
+  const oneYearAgoStr = oneYearAgo.toISOString().split('T')[0];
   
   // Get unique due date months from last 12 months
-  const recentRows = rows.filter(r => r.dueDate && r.dueDate >= oneYearAgo);
+  const recentPeriods = periods.filter(p => p.due_date && p.due_date >= oneYearAgoStr);
   const uniqueMonths = new Set<number>();
   
-  for (const row of recentRows) {
-    if (row.dueDate) {
-      uniqueMonths.add(row.dueDate.getMonth());
+  for (const period of recentPeriods) {
+    if (period.due_date) {
+      const month = parseInt(period.due_date.slice(5, 7), 10) - 1; // 0-indexed
+      uniqueMonths.add(month);
     }
   }
   
   const monthsArray = Array.from(uniqueMonths).sort((a, b) => a - b);
   
-  // Quarterly pattern: Jan(0), Apr(3), Jul(6), Oct(9) - 4 months
-  // Semiannual pattern: Jan(0), Jul(6) - 2 months
+  // Quarterly pattern: Jan(0), Apr(3), Jul(6), Oct(9)
+  // Semiannual pattern: Jan(0), Jul(6)
   const quarterlyMonths = [0, 3, 6, 9];
   const semiannualMonths = [0, 6];
   
-  // Check if matches quarterly pattern (any 3-4 of the quarterly months)
   const matchedQuarterly = monthsArray.filter(m => quarterlyMonths.includes(m));
   const matchedSemiannual = monthsArray.filter(m => semiannualMonths.includes(m));
+  
+  const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   
   if (matchedQuarterly.length >= 3) {
     return { 
       cycle: 'Quarterly', 
-      evidence: `Found ${matchedQuarterly.length} quarterly due date months: ${monthsArray.map(m => ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][m]).join(', ')}`
+      evidence: `Found ${matchedQuarterly.length} quarterly due date months: ${monthsArray.map(m => monthNames[m]).join(', ')}`
     };
   }
   
   if (matchedSemiannual.length === 2 && monthsArray.length <= 3) {
     return { 
       cycle: 'Semiannual', 
-      evidence: `Found semiannual pattern: ${monthsArray.map(m => ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][m]).join(', ')}`
+      evidence: `Found semiannual pattern: ${monthsArray.map(m => monthNames[m]).join(', ')}`
     };
   }
   
@@ -194,200 +248,163 @@ function inferBillingCycle(rows: LedgerRow[]): { cycle: BillingCycle; evidence: 
   
   return { 
     cycle: 'Unknown', 
-    evidence: `Inconclusive pattern: months found = ${monthsArray.map(m => ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][m]).join(', ')}`
+    evidence: `Inconclusive pattern: months found = ${monthsArray.map(m => monthNames[m]).join(', ')}`
   };
 }
 
-// Filter to bill charge rows (positive liability, has due date)
-function filterBillRows(rows: LedgerRow[]): { billRows: LedgerRow[]; excludedCount: number; exclusionReasons: string[] } {
-  const exclusionReasons: string[] = [];
-  let excludedCount = 0;
-  
-  const billRows = rows.filter(row => {
-    // Must have a due date
-    if (!row.dueDate) {
-      excludedCount++;
-      return false;
-    }
-    
-    // Must have positive liability (a charge, not a payment/credit)
-    if (row.liability === null || row.liability <= 0) {
-      excludedCount++;
-      return false;
-    }
-    
-    // Exclude payment codes if identifiable
-    if (row.code === 'PMT' || row.code === 'PAY' || row.code === 'CRD' || row.code === 'REF') {
-      excludedCount++;
-      if (!exclusionReasons.includes(`Excluded code: ${row.code}`)) {
-        exclusionReasons.push(`Excluded code: ${row.code}`);
-      }
-      return false;
-    }
-    
-    return true;
-  });
-  
-  if (excludedCount > 0 && exclusionReasons.length === 0) {
-    exclusionReasons.push(`Excluded ${excludedCount} rows with no due_date or non-positive sum_liab`);
-  }
-  
-  return { billRows, excludedCount, exclusionReasons };
-}
+// ============================================================================
+// LATEST BILL COMPUTATION
+// ============================================================================
 
-// Compute latest bill from bill rows
-function computeLatestBill(billRows: LedgerRow[]): {
-  latestDueDate: Date | null;
-  latestDueDateStr: string | null;
+interface LatestBillResult {
+  latestDueDate: string | null;
+  latestDueDateDisplay: string | null;
   latestBillAmount: number | null;
   latestPeriodBalance: number | null;
   paymentStatus: PaymentStatus;
+  latestPeriodKey: string | null;
   rowsInLatestPeriod: number;
-} {
-  if (billRows.length === 0) {
+}
+
+function computeLatestBill(periods: PeriodAgg[]): LatestBillResult {
+  if (periods.length === 0) {
     return {
       latestDueDate: null,
-      latestDueDateStr: null,
+      latestDueDateDisplay: null,
       latestBillAmount: null,
       latestPeriodBalance: null,
       paymentStatus: 'unknown',
+      latestPeriodKey: null,
       rowsInLatestPeriod: 0,
     };
   }
   
-  // Find max due date
-  let maxDate: Date | null = null;
-  for (const row of billRows) {
-    if (row.dueDate && (!maxDate || row.dueDate > maxDate)) {
-      maxDate = row.dueDate;
-    }
-  }
+  // Find max due_date
+  const latestDue = periods[periods.length - 1].due_date;
   
-  if (!maxDate) {
+  // Get all periods with the latest due date (there may be multiple keys for different charge types)
+  const latestCandidates = periods.filter(p => p.due_date === latestDue);
+  
+  // Pick the one with highest max_liab (the main tax bill)
+  const latest = latestCandidates.sort((a, b) => b.max_liab - a.max_liab)[0];
+  
+  if (!latest || !latest.due_date) {
     return {
       latestDueDate: null,
-      latestDueDateStr: null,
+      latestDueDateDisplay: null,
       latestBillAmount: null,
       latestPeriodBalance: null,
       paymentStatus: 'unknown',
+      latestPeriodKey: null,
       rowsInLatestPeriod: 0,
     };
   }
   
-  // Filter to rows with the latest due date (compare by date string to handle time differences)
-  const maxDateStr = maxDate.toISOString().split('T')[0];
-  const latestPeriodRows = billRows.filter(row => {
-    if (!row.dueDate) return false;
-    return row.dueDate.toISOString().split('T')[0] === maxDateStr;
-  });
-  
-  // Sum liability for latest period (this is the bill amount)
-  let totalLiability = 0;
-  let totalBalance = 0;
-  let hasValidBalance = false;
-  
-  for (const row of latestPeriodRows) {
-    if (row.liability !== null && row.liability > 0) {
-      totalLiability += row.liability;
-    }
-    if (row.balance !== null) {
-      totalBalance += row.balance;
-      hasValidBalance = true;
-    }
-  }
-  
-  // Round to cents
-  totalLiability = Math.round(totalLiability * 100) / 100;
-  totalBalance = Math.round(totalBalance * 100) / 100;
+  const latestBillAmount = latest.max_liab > 0 ? Math.round(latest.max_liab * 100) / 100 : null;
+  const latestPeriodBalance = Math.round(latest.max_bal * 100) / 100;
   
   // Determine payment status
   let paymentStatus: PaymentStatus = 'unknown';
-  if (hasValidBalance) {
-    if (totalBalance <= 0.01) { // Allow for small rounding errors
-      paymentStatus = 'paid';
-    } else {
-      paymentStatus = 'unpaid';
-    }
+  if (latest.max_bal <= 0.01) {
+    paymentStatus = 'paid';
+  } else if (latest.max_bal > 0) {
+    paymentStatus = 'unpaid';
   }
   
   return {
-    latestDueDate: maxDate,
-    latestDueDateStr: formatDateDisplay(maxDate),
-    latestBillAmount: totalLiability > 0 ? totalLiability : null,
-    latestPeriodBalance: hasValidBalance ? totalBalance : null,
+    latestDueDate: latest.due_date,
+    latestDueDateDisplay: formatDateDisplay(latest.due_date),
+    latestBillAmount,
+    latestPeriodBalance,
     paymentStatus,
-    rowsInLatestPeriod: latestPeriodRows.length,
+    latestPeriodKey: latest.key,
+    rowsInLatestPeriod: latest.row_count,
   };
 }
 
-// Compute arrears (past-due positive balances)
-function computeArrears(rows: LedgerRow[], latestDueDate: Date | null): {
+// ============================================================================
+// ARREARS COMPUTATION - WITH RUNNING BALANCE DETECTION
+// ============================================================================
+
+interface ArrearsResult {
   arrears: number | null;
   arrearsAvailable: boolean;
   arrearsNote: string;
-} {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  runningBalanceDetected: boolean;
+}
+
+function computeArrears(periods: PeriodAgg[], latestDue: string | null): ArrearsResult {
+  const today = new Date().toISOString().slice(0, 10);
   
-  // Filter to rows with due_date < today (past due)
-  // and with positive balance
-  let totalArrears = 0;
-  let hasArrearsData = false;
-  let pastDueRowCount = 0;
+  // Filter to past-due periods only (due_date < today, exclude latest period)
+  const pastDue = periods.filter(p => {
+    if (!p.due_date) return false;
+    if (p.due_date >= today) return false;
+    if (latestDue && p.due_date === latestDue) return false;
+    return true;
+  });
   
-  for (const row of rows) {
-    if (!row.dueDate) continue;
-    
-    // Skip if this is the latest period (not arrears)
-    if (latestDueDate && row.dueDate.toISOString().split('T')[0] === latestDueDate.toISOString().split('T')[0]) {
-      continue;
-    }
-    
-    // Only consider rows with due_date < today
-    if (row.dueDate >= today) continue;
-    
-    pastDueRowCount++;
-    
-    // Sum positive balances (amounts still owed)
-    if (row.balance !== null && row.balance > 0) {
-      totalArrears += row.balance;
-      hasArrearsData = true;
-    }
-  }
+  // Get positive balances from past-due periods
+  const pastPosBalances = pastDue
+    .map(p => p.max_bal)
+    .filter(b => b > 0);
   
-  if (!hasArrearsData) {
-    if (pastDueRowCount === 0) {
-      return {
-        arrears: 0,
-        arrearsAvailable: true,
-        arrearsNote: 'No past-due periods found',
-      };
-    }
+  if (pastPosBalances.length === 0) {
     return {
-      arrears: null,
-      arrearsAvailable: false,
-      arrearsNote: 'Balance data unavailable for past periods',
+      arrears: 0,
+      arrearsAvailable: true,
+      arrearsNote: pastDue.length === 0 ? 'No past-due periods found' : 'All past periods paid',
+      runningBalanceDetected: false,
     };
   }
   
-  totalArrears = Math.round(totalArrears * 100) / 100;
+  // Detect "running balance" pattern: many periods with mostly increasing balances
+  // In running balance systems, each row shows cumulative balance, so we take MAX not SUM
+  let runningLikely = false;
+  if (pastPosBalances.length >= 4) {
+    let incCount = 0;
+    for (let i = 1; i < pastPosBalances.length; i++) {
+      if (pastPosBalances[i] >= pastPosBalances[i - 1]) incCount++;
+    }
+    runningLikely = incCount / (pastPosBalances.length - 1) > 0.75;
+  }
   
-  if (totalArrears <= 0.01) {
+  let arrearsAmount: number;
+  let arrearsNote: string;
+  
+  if (runningLikely) {
+    // Running balance: take MAX (most recent cumulative balance)
+    arrearsAmount = Math.max(...pastPosBalances);
+    arrearsNote = `Max balance from ${pastDue.length} past-due periods (running balance pattern detected)`;
+  } else {
+    // Discrete periods: SUM the balances
+    arrearsAmount = pastPosBalances.reduce((s, v) => s + v, 0);
+    arrearsNote = `Sum of positive balances from ${pastPosBalances.length} past-due periods`;
+  }
+  
+  arrearsAmount = Math.round(arrearsAmount * 100) / 100;
+  
+  if (arrearsAmount <= 0.01) {
     return {
       arrears: 0,
       arrearsAvailable: true,
       arrearsNote: 'All past periods paid',
+      runningBalanceDetected: runningLikely,
     };
   }
   
   return {
-    arrears: totalArrears,
+    arrears: arrearsAmount,
     arrearsAvailable: true,
-    arrearsNote: `Sum of positive balances from ${pastDueRowCount} past-due periods`,
+    arrearsNote,
+    runningBalanceDetected: runningLikely,
   };
 }
 
-// Query NYC Open Data
+// ============================================================================
+// NYC OPEN DATA QUERY
+// ============================================================================
+
 async function queryByFieldAndKey(
   field: string,
   key: string,
@@ -426,7 +443,6 @@ async function queryByFieldAndKey(
   }
 }
 
-// Multi-key lookup
 async function fetchLedgerRows(bbl: string, appToken: string): Promise<{
   rows: RawRow[];
   matchedField: string | null;
@@ -462,6 +478,10 @@ async function fetchLedgerRows(bbl: string, appToken: string): Promise<{
   };
 }
 
+// ============================================================================
+// RESULT TYPE
+// ============================================================================
+
 interface TaxResult {
   // Primary outputs
   latest_bill_amount: number | null;
@@ -483,9 +503,7 @@ interface TaxResult {
   matched_field: string | null;
   matched_key: string | null;
   total_rows_fetched: number;
-  bill_rows_used: number;
-  rows_excluded: number;
-  exclusion_reasons: string[];
+  period_count: number;
   rows_in_latest_period: number;
   data_source: string;
   no_data_found: boolean;
@@ -500,18 +518,26 @@ interface TaxResult {
       liability: string[];
       balance: string[];
       code: string[];
+      tax_year: string[];
+      period: string[];
     };
     first_row_keys: string[];
-    sample_rows: Array<{
+    running_balance_detected: boolean;
+    latest_period_key: string | null;
+    periods: Array<{
       due_date: string | null;
-      liability: number | null;
-      balance: number | null;
-      code: string | null;
+      max_liab: number;
+      max_bal: number;
+      row_count: number;
+      codes: string[];
     }>;
-    all_due_dates: string[];
     computation_log: string[];
   };
 }
+
+// ============================================================================
+// MAIN HANDLER
+// ============================================================================
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -541,7 +567,7 @@ serve(async (req) => {
     const normalizedBbl = normalizeBbl(primaryBbl);
     
     // Check cache (skip if debug mode)
-    const cacheKey = `v5:ledger:${normalizedBbl}`;
+    const cacheKey = `v6:periods:${normalizedBbl}`;
     if (!includeDebug) {
       const cached = cache.get(cacheKey);
       if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
@@ -562,7 +588,7 @@ serve(async (req) => {
     // Fetch ledger rows
     computationLog.push('Fetching ledger rows from DOF Property Charges Balance...');
     const fetchResult = await fetchLedgerRows(normalizedBbl, appToken);
-    computationLog.push(`Fetched ${fetchResult.rows.length} rows`);
+    computationLog.push(`Fetched ${fetchResult.rows.length} raw rows`);
     
     if (fetchResult.rows.length === 0) {
       // No data found
@@ -580,9 +606,7 @@ serve(async (req) => {
         matched_field: null,
         matched_key: null,
         total_rows_fetched: 0,
-        bill_rows_used: 0,
-        rows_excluded: 0,
-        exclusion_reasons: [],
+        period_count: 0,
         rows_in_latest_period: 0,
         data_source: `NYC Open Data DOF Property Charges (${DATASET_ID})`,
         no_data_found: true,
@@ -598,10 +622,13 @@ serve(async (req) => {
             liability: LIABILITY_FIELDS,
             balance: BALANCE_FIELDS,
             code: CODE_FIELDS,
+            tax_year: TAX_YEAR_FIELDS,
+            period: PERIOD_FIELDS,
           },
           first_row_keys: [],
-          sample_rows: [],
-          all_due_dates: [],
+          running_balance_detected: false,
+          latest_period_key: null,
+          periods: [],
           computation_log: [...computationLog, 'No data found'],
         };
       }
@@ -612,48 +639,43 @@ serve(async (req) => {
       );
     }
     
-    // Parse all rows
-    computationLog.push('Parsing rows...');
-    const parsedRows = fetchResult.rows.map(parseRow);
-    
     // Get first row keys for debug
     const firstRowKeys = Object.keys(fetchResult.rows[0]).sort();
     computationLog.push(`First row keys: ${firstRowKeys.slice(0, 10).join(', ')}...`);
     
+    // Normalize rows
+    computationLog.push('Normalizing rows to consistent shape...');
+    const normalizedRows = normalizeRows(fetchResult.rows);
+    
+    // Build period buckets (KEY FIX: group by period, take MAX not SUM)
+    computationLog.push('Building period buckets (grouping by tax_year|period|due_date|code)...');
+    const periods = buildPeriodBuckets(normalizedRows);
+    computationLog.push(`Created ${periods.length} unique period buckets from ${fetchResult.rows.length} raw rows`);
+    
     // Infer billing cycle
     computationLog.push('Inferring billing cycle from due date patterns...');
-    const { cycle: billingCycle, evidence: billingCycleEvidence } = inferBillingCycle(parsedRows);
+    const { cycle: billingCycle, evidence: billingCycleEvidence } = inferBillingCycle(periods);
     computationLog.push(`Billing cycle: ${billingCycle} (${billingCycleEvidence})`);
     
-    // Filter to bill rows
-    computationLog.push('Filtering to bill charge rows (sum_liab > 0, has due_date)...');
-    const { billRows, excludedCount, exclusionReasons } = filterBillRows(parsedRows);
-    computationLog.push(`Found ${billRows.length} bill rows, excluded ${excludedCount} rows`);
-    
-    // Compute latest bill
-    computationLog.push('Computing latest bill...');
-    const latestBillResult = computeLatestBill(billRows);
-    computationLog.push(`Latest due date: ${latestBillResult.latestDueDateStr || 'none'}`);
-    computationLog.push(`Latest bill amount: $${latestBillResult.latestBillAmount?.toLocaleString() || 'null'}`);
+    // Compute latest bill from periods
+    computationLog.push('Computing latest bill from period buckets...');
+    const latestBillResult = computeLatestBill(periods);
+    computationLog.push(`Latest due date: ${latestBillResult.latestDueDateDisplay || 'none'}`);
+    computationLog.push(`Latest bill amount (canonical): $${latestBillResult.latestBillAmount?.toLocaleString() || 'null'}`);
     computationLog.push(`Latest period balance: $${latestBillResult.latestPeriodBalance?.toLocaleString() || 'null'}`);
     computationLog.push(`Payment status: ${latestBillResult.paymentStatus}`);
     
     // Compute arrears
     computationLog.push('Computing arrears from past-due periods...');
-    const arrearsResult = computeArrears(parsedRows, latestBillResult.latestDueDate);
+    const arrearsResult = computeArrears(periods, latestBillResult.latestDueDate);
+    computationLog.push(`Running balance detected: ${arrearsResult.runningBalanceDetected}`);
     computationLog.push(`Arrears: ${arrearsResult.arrearsAvailable ? `$${arrearsResult.arrears?.toLocaleString() || '0'}` : 'unavailable'}`);
     computationLog.push(`Arrears note: ${arrearsResult.arrearsNote}`);
-    
-    // Collect all unique due dates for debug
-    const allDueDates = [...new Set(parsedRows
-      .filter(r => r.dueDateStr)
-      .map(r => r.dueDateStr!)
-    )].sort().reverse();
     
     // Build result
     const result: TaxResult = {
       latest_bill_amount: latestBillResult.latestBillAmount,
-      latest_due_date: latestBillResult.latestDueDateStr,
+      latest_due_date: latestBillResult.latestDueDateDisplay,
       billing_cycle: billingCycle,
       billing_cycle_evidence: billingCycleEvidence,
       payment_status: latestBillResult.paymentStatus,
@@ -665,9 +687,7 @@ serve(async (req) => {
       matched_field: fetchResult.matchedField,
       matched_key: fetchResult.matchedKey,
       total_rows_fetched: fetchResult.rows.length,
-      bill_rows_used: billRows.length,
-      rows_excluded: excludedCount,
-      exclusion_reasons: exclusionReasons,
+      period_count: periods.length,
       rows_in_latest_period: latestBillResult.rowsInLatestPeriod,
       data_source: `NYC Open Data DOF Property Charges (${DATASET_ID})`,
       no_data_found: false,
@@ -683,15 +703,19 @@ serve(async (req) => {
           liability: LIABILITY_FIELDS,
           balance: BALANCE_FIELDS,
           code: CODE_FIELDS,
+          tax_year: TAX_YEAR_FIELDS,
+          period: PERIOD_FIELDS,
         },
         first_row_keys: firstRowKeys,
-        sample_rows: parsedRows.slice(0, 10).map(r => ({
-          due_date: r.dueDateStr,
-          liability: r.liability,
-          balance: r.balance,
-          code: r.code,
+        running_balance_detected: arrearsResult.runningBalanceDetected,
+        latest_period_key: latestBillResult.latestPeriodKey,
+        periods: periods.slice(-15).map(p => ({
+          due_date: p.due_date,
+          max_liab: Math.round(p.max_liab * 100) / 100,
+          max_bal: Math.round(p.max_bal * 100) / 100,
+          row_count: p.row_count,
+          codes: p.sample_codes,
         })),
-        all_due_dates: allDueDates.slice(0, 20),
         computation_log: computationLog,
       };
     }
@@ -700,7 +724,7 @@ serve(async (req) => {
     const now = Date.now();
     cache.set(cacheKey, { data: result, timestamp: now });
     
-    console.log(`[property-taxes] Result - bill: $${result.latest_bill_amount}, due: ${result.latest_due_date}, status: ${result.payment_status}, cycle: ${result.billing_cycle}`);
+    console.log(`[property-taxes] Result - bill: $${result.latest_bill_amount}, due: ${result.latest_due_date}, status: ${result.payment_status}, periods: ${result.period_count}`);
     
     return new Response(
       JSON.stringify(result),
