@@ -174,6 +174,12 @@ export function CondoUnitsCard({
   if (loading) return hidden ? null : <LoadingSkeleton />;
 
   if (error) {
+    // Only show Retry for network/server errors, not for "no data" responses
+    const isNetworkError = error.error === 'Internal server error' || 
+                           error.error === 'Network error' ||
+                           error.error?.toLowerCase().includes('fetch') ||
+                           error.error?.toLowerCase().includes('timeout');
+    
     return (
       <Card>
         <CardHeader className="pb-3">
@@ -183,13 +189,15 @@ export function CondoUnitsCard({
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <Alert variant="destructive">
+          <Alert variant={isNetworkError ? "destructive" : "default"}>
             <AlertCircle className="h-4 w-4" />
             <AlertDescription className="flex items-center justify-between">
               <span>{error.userMessage || 'Failed to load condo units.'}</span>
-              <Button variant="outline" size="sm" onClick={retry} className="ml-2">
-                Retry
-              </Button>
+              {isNetworkError && (
+                <Button variant="outline" size="sm" onClick={retry} className="ml-2">
+                  Retry
+                </Button>
+              )}
             </AlertDescription>
           </Alert>
         </CardContent>
@@ -205,7 +213,10 @@ export function CondoUnitsCard({
   // Visible when the property is a condo OR the lot looks like a condo billing lot (75xx).
   if (!data.isCondo && !lotLooksLikeBilling) return null;
 
-  const hasMore = data.totalApprox > 0 ? data.units.length < data.totalApprox : false;
+  // Defensive: ensure units is always an array
+  const units = Array.isArray(data.units) ? data.units : [];
+  const hasUnits = units.length > 0;
+  const hasMore = data.totalApprox > 0 ? units.length < data.totalApprox : false;
 
   return (
     <Card>
@@ -219,7 +230,7 @@ export function CondoUnitsCard({
             <Badge variant="secondary" className="text-xs">
               {data.isCondo ? 'Condominium' : 'Possible condo'}
             </Badge>
-            {data.strategyUsed === 'blockLotFallback' && (
+            {data.strategyUsed === 'blockLotFallback' && hasUnits && (
               <Badge variant="outline" className="text-xs">
                 Units found via block-based condo fallback
               </Badge>
@@ -229,141 +240,156 @@ export function CondoUnitsCard({
       </CardHeader>
 
       <CardContent className="space-y-4">
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="flex items-center gap-2">
-            <p className="text-xs text-muted-foreground">Unit count found</p>
-            <Badge variant="outline" className="font-mono">
-              {data.totalApprox || data.units.length}
-            </Badge>
-          </div>
+        {/* Empty state: condo detected but no unit records available */}
+        {!hasUnits ? (
+          <Alert>
+            <Info className="h-4 w-4" />
+            <AlertDescription className="text-sm">
+              This condominium is billed at the building level or unit-level tax records are not available in NYC datasets.
+              {data.billingBbl && (
+                <span className="block mt-1 text-xs text-muted-foreground">
+                  Billing BBL: <span className="font-mono">{data.billingBbl}</span>
+                </span>
+              )}
+            </AlertDescription>
+          </Alert>
+        ) : (
+          <>
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="flex items-center gap-2">
+                <p className="text-xs text-muted-foreground">Unit count found</p>
+                <Badge variant="outline" className="font-mono">
+                  {data.totalApprox || units.length}
+                </Badge>
+              </div>
 
-          {data.billingBbl && (
-            <div className="flex items-center gap-2">
-              <p className="text-xs text-muted-foreground">Billing BBL</p>
-              <Badge variant="outline" className="font-mono">
-                {data.billingBbl}
-              </Badge>
+              {data.billingBbl && (
+                <div className="flex items-center gap-2">
+                  <p className="text-xs text-muted-foreground">Billing BBL</p>
+                  <Badge variant="outline" className="font-mono">
+                    {data.billingBbl}
+                  </Badge>
+                </div>
+              )}
+
+              {data.inputRole === 'unit' && (
+                <div className="flex items-center gap-2">
+                  <p className="text-xs text-muted-foreground">Current unit</p>
+                  <Badge variant="secondary" className="font-mono">
+                    {data.inputBbl}
+                  </Badge>
+                </div>
+              )}
+
+              {data.inputRole === 'unit' && data.billingBbl && (
+                <Button variant="outline" size="sm" onClick={handleBackToBuilding} className="gap-1.5">
+                  <ArrowLeft className="h-3.5 w-3.5" />
+                  Back to building
+                </Button>
+              )}
             </div>
-          )}
 
-          {data.inputRole === 'unit' && (
-            <div className="flex items-center gap-2">
-              <p className="text-xs text-muted-foreground">Current unit</p>
-              <Badge variant="secondary" className="font-mono">
-                {data.inputBbl}
-              </Badge>
+            {/* Search */}
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Search by unit label, lot, or BBL…"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-9"
+              />
             </div>
-          )}
 
-          {data.inputRole === 'unit' && data.billingBbl && (
-            <Button variant="outline" size="sm" onClick={handleBackToBuilding} className="gap-1.5">
-              <ArrowLeft className="h-3.5 w-3.5" />
-              Back to building
-            </Button>
-          )}
-        </div>
-
-        {/* Search */}
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input
-            placeholder="Search by unit label, lot, or BBL…"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="pl-9"
-          />
-        </div>
-
-        {/* Table */}
-        <div className="border rounded-md">
-          <ScrollArea className={filteredUnits.length > 10 ? 'h-80' : undefined}>
-            <Table>
-              <TableHeader>
-                <TableRow className="bg-muted/50">
-                  <TableHead className="font-semibold">Unit label</TableHead>
-                  <TableHead className="font-semibold">Unit BBL</TableHead>
-                  <TableHead className="font-semibold">Lot</TableHead>
-                  <TableHead className="font-semibold text-right">Action</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredUnits.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={4} className="text-center text-sm text-muted-foreground py-8">
-                      {data.units.length === 0
-                        ? 'Condo detected but 0 unit lots returned from unit dataset. Check logs for dataset + filter.'
-                        : 'No units match your search.'}
-                    </TableCell>
-                  </TableRow>
-                ) : (
-                  filteredUnits.map((unit) => {
-                    const isCurrent = Boolean(currentUnitBbl && unit.unitBbl === currentUnitBbl);
-                    const displayLabel = unit.unitLabel || `Lot ${formatLot(unit.lot)}`;
-                    const labelSource = unit.unitLabelSource || 'unknown';
-                    const isLotFallback = !unit.unitLabel || labelSource === 'fallback.lot';
-
-                    return (
-                      <TableRow key={unit.unitBbl} className={isCurrent ? 'bg-muted/40' : undefined}>
-                        <TableCell className="text-sm">
-                          <div className="flex items-center gap-2">
-                            <TooltipProvider>
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <span className="cursor-help flex items-center gap-1">
-                                    <span className={isLotFallback ? 'text-muted-foreground' : undefined}>
-                                      {displayLabel}
-                                    </span>
-                                    {!isLotFallback && (
-                                      <Info className="h-3 w-3 text-muted-foreground/60" />
-                                    )}
-                                  </span>
-                                </TooltipTrigger>
-                                <TooltipContent side="top" className="max-w-xs">
-                                  <p className="text-xs">
-                                    <strong>Source:</strong> {labelSource}
-                                  </p>
-                                  <p className="text-xs text-muted-foreground">
-                                    Lot: {formatLot(unit.lot)}
-                                  </p>
-                                </TooltipContent>
-                              </Tooltip>
-                            </TooltipProvider>
-                            {isCurrent && (
-                              <Badge variant="secondary" className="text-[10px]">
-                                Current
-                              </Badge>
-                            )}
-                          </div>
-                        </TableCell>
-                        <TableCell className="font-mono text-sm">{unit.unitBbl}</TableCell>
-                        <TableCell className="text-sm text-muted-foreground">{formatLot(unit.lot)}</TableCell>
-                        <TableCell className="text-right">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => handleOpenUnit(unit.unitBbl)}
-                            className="gap-1"
-                          >
-                            <Home className="h-3.5 w-3.5" />
-                            Open unit
-                          </Button>
+            {/* Table */}
+            <div className="border rounded-md">
+              <ScrollArea className={filteredUnits.length > 10 ? 'h-80' : undefined}>
+                <Table>
+                  <TableHeader>
+                    <TableRow className="bg-muted/50">
+                      <TableHead className="font-semibold">Unit label</TableHead>
+                      <TableHead className="font-semibold">Unit BBL</TableHead>
+                      <TableHead className="font-semibold">Lot</TableHead>
+                      <TableHead className="font-semibold text-right">Action</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {filteredUnits.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={4} className="text-center text-sm text-muted-foreground py-8">
+                          No units match your search.
                         </TableCell>
                       </TableRow>
-                    );
-                  })
-                )}
-              </TableBody>
-            </Table>
-          </ScrollArea>
+                    ) : (
+                      filteredUnits.map((unit) => {
+                        const isCurrent = Boolean(currentUnitBbl && unit.unitBbl === currentUnitBbl);
+                        const displayLabel = unit.unitLabel || `Lot ${formatLot(unit.lot)}`;
+                        const labelSource = unit.unitLabelSource || 'unknown';
+                        const isLotFallback = !unit.unitLabel || labelSource === 'fallback.lot';
 
-          {hasMore && (
-            <div className="p-2 border-t text-center">
-              <Button variant="ghost" size="sm" onClick={() => fetchNextPage()} disabled={loadingMore}>
-                {loadingMore ? 'Loading…' : `Load more (${data.totalApprox - data.units.length} remaining)`}
-              </Button>
+                        return (
+                          <TableRow key={unit.unitBbl} className={isCurrent ? 'bg-muted/40' : undefined}>
+                            <TableCell className="text-sm">
+                              <div className="flex items-center gap-2">
+                                <TooltipProvider>
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <span className="cursor-help flex items-center gap-1">
+                                        <span className={isLotFallback ? 'text-muted-foreground' : undefined}>
+                                          {displayLabel}
+                                        </span>
+                                        {!isLotFallback && (
+                                          <Info className="h-3 w-3 text-muted-foreground/60" />
+                                        )}
+                                      </span>
+                                    </TooltipTrigger>
+                                    <TooltipContent side="top" className="max-w-xs">
+                                      <p className="text-xs">
+                                        <strong>Source:</strong> {labelSource}
+                                      </p>
+                                      <p className="text-xs text-muted-foreground">
+                                        Lot: {formatLot(unit.lot)}
+                                      </p>
+                                    </TooltipContent>
+                                  </Tooltip>
+                                </TooltipProvider>
+                                {isCurrent && (
+                                  <Badge variant="secondary" className="text-[10px]">
+                                    Current
+                                  </Badge>
+                                )}
+                              </div>
+                            </TableCell>
+                            <TableCell className="font-mono text-sm">{unit.unitBbl}</TableCell>
+                            <TableCell className="text-sm text-muted-foreground">{formatLot(unit.lot)}</TableCell>
+                            <TableCell className="text-right">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleOpenUnit(unit.unitBbl)}
+                                className="gap-1"
+                              >
+                                <Home className="h-3.5 w-3.5" />
+                                Open unit
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })
+                    )}
+                  </TableBody>
+                </Table>
+              </ScrollArea>
+
+              {hasMore && (
+                <div className="p-2 border-t text-center">
+                  <Button variant="ghost" size="sm" onClick={() => fetchNextPage()} disabled={loadingMore}>
+                    {loadingMore ? 'Loading…' : `Load more (${data.totalApprox - units.length} remaining)`}
+                  </Button>
+                </div>
+              )}
             </div>
-          )}
-        </div>
+          </>
+        )}
       </CardContent>
     </Card>
   );
