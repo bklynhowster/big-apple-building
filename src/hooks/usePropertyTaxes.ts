@@ -44,6 +44,8 @@ export interface PropertyTaxResult {
   no_data_found: boolean;
   attempts: Attempt[];
   api_error?: string;
+  cache_status: 'HIT' | 'MISS';
+  cached_at: string | null;
 }
 
 interface UsePropertyTaxesResult {
