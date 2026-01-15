@@ -1,60 +1,56 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 
-// Basis and confidence types from edge function
-export type TaxBasis = 'dof_assessment' | 'pluto_estimate' | 'unavailable';
-export type TaxConfidence = 'high' | 'estimated' | 'none';
-export type ArrearsStatus = 'none_detected' | 'unavailable';
+// Types from edge function
+export type BillingCycle = 'Quarterly' | 'Semiannual' | 'Unknown';
+export type PaymentStatus = 'paid' | 'unpaid' | 'unknown';
 
 // Debug info from edge function
 export interface DebugInfo {
-  step1_attempted: boolean;
-  step1_url: string | null;
-  step1_success: boolean;
-  step1_error: string | null;
-  step2_attempted: boolean;
-  step2_url: string | null;
-  step2_success: boolean;
-  step2_error: string | null;
-  raw_dof_row: Record<string, unknown> | null;
-  raw_pluto_row: Record<string, unknown> | null;
-  dof_row_keys: string[];
-  pluto_row_keys: string[];
-  calculation_steps: string[];
+  request_url: string;
+  fields_used: {
+    due_date: string[];
+    liability: string[];
+    balance: string[];
+    code: string[];
+  };
+  first_row_keys: string[];
+  sample_rows: Array<{
+    due_date: string | null;
+    liability: number | null;
+    balance: number | null;
+    code: string | null;
+  }>;
+  all_due_dates: string[];
+  computation_log: string[];
 }
 
-// Result from the 3-step property-taxes edge function
+// Result from the ledger-based property-taxes edge function
 export interface PropertyTaxResult {
   // Primary outputs
-  quarterly_bill: number | null;
-  annual_tax: number | null;
-  billing_cycle: string;
-  due_date: string;
-  due_date_formatted: string;
+  latest_bill_amount: number | null;
+  latest_due_date: string | null;
+  billing_cycle: BillingCycle;
+  billing_cycle_evidence: string;
   
-  // Data source tracking
-  basis: TaxBasis;
-  confidence: TaxConfidence;
-  basis_explanation: string;
-  
-  // Assessment data
-  tax_class: string | null;
-  tax_rate: number | null;
-  tax_rate_description: string;
-  assessed_value: number | null;
-  exempt_value: number | null;
-  taxable_billable_av: number | null;
+  // Payment status
+  payment_status: PaymentStatus;
+  latest_period_balance: number | null;
   
   // Arrears
   arrears: number | null;
-  arrears_status: ArrearsStatus;
+  arrears_available: boolean;
   arrears_note: string;
   
   // Metadata
   bbl_used: string;
-  address: string | null;
-  owner_name: string | null;
-  building_class: string | null;
+  matched_field: string | null;
+  matched_key: string | null;
+  total_rows_fetched: number;
+  bill_rows_used: number;
+  rows_excluded: number;
+  exclusion_reasons: string[];
+  rows_in_latest_period: number;
   data_source: string;
   no_data_found: boolean;
   cache_status: 'HIT' | 'MISS';
