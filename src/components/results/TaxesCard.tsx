@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { ExternalLink, DollarSign, FileText, Copy, Check, Info, Building2, Home, ChevronDown, ChevronUp, RefreshCw, AlertCircle } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -19,7 +19,7 @@ interface TaxesCardProps {
 
 // Parse BBL into borough, block, lot
 function parseBBL(bbl: string): { borough: string; block: string; lot: string } | null {
-  if (bbl.length !== 10) return null;
+  if (!bbl || bbl.length !== 10) return null;
   return {
     borough: bbl.charAt(0),
     block: bbl.slice(1, 6),
@@ -46,7 +46,7 @@ function formatCurrency(amount: number): string {
 }
 
 // Format date
-function formatDate(dateStr: string | null): string {
+function formatDate(dateStr: string | null | undefined): string {
   if (!dateStr) return '—';
   try {
     const date = new Date(dateStr);
@@ -67,7 +67,7 @@ function getDOFBillsUrl(): string {
 }
 
 export function TaxesCard({ viewBbl, buildingBbl, address, isUnitPage = false }: TaxesCardProps) {
-  const [copiedBbl, setCopiedBbl] = useState<string | null>(null);
+  const [copiedValue, setCopiedValue] = useState<string | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
   
   const { loading, error, data, fetch, retry } = usePropertyTaxes();
@@ -82,13 +82,13 @@ export function TaxesCard({ viewBbl, buildingBbl, address, isUnitPage = false }:
   const parsedBbl = parseBBL(viewBbl);
   const boroughName = parsedBbl ? BOROUGH_NAMES[parsedBbl.borough] : '';
   
-  const handleCopyBbl = async (bblToCopy: string) => {
+  const handleCopy = async (value: string) => {
     try {
-      await navigator.clipboard.writeText(bblToCopy);
-      setCopiedBbl(bblToCopy);
-      setTimeout(() => setCopiedBbl(null), 2000);
+      await navigator.clipboard.writeText(value);
+      setCopiedValue(value);
+      setTimeout(() => setCopiedValue(null), 2000);
     } catch (err) {
-      console.error('Failed to copy BBL:', err);
+      console.error('Failed to copy:', err);
     }
   };
   
@@ -98,9 +98,12 @@ export function TaxesCard({ viewBbl, buildingBbl, address, isUnitPage = false }:
     return `${parsed.borough}-${parsed.block}-${parsed.lot}`;
   };
 
-  // Derive tax lookup BBL from data or fallback to props
-  const taxLookupBbl = data?.parid_used?.slice(0, 10) || viewBbl;
-  const isUsingBuildingLevel = data?.scope === 'building';
+  // Derive values from data
+  const bblUsed = data?.bbl_used || viewBbl;
+  const paridUsed = data?.parid_used || '';
+  const isUsingBuildingLevel = data?.scope_used === 'building';
+  const hasRealData = data && !data.no_data_found && data.rows_count > 0;
+  const currentAmountOwed = data?.current_amount_owed;
 
   return (
     <Card>
@@ -161,49 +164,54 @@ export function TaxesCard({ viewBbl, buildingBbl, address, isUnitPage = false }:
         {/* Data Display */}
         {data && (
           <>
-            {/* Balance Summary */}
+            {/* Amount Owed Summary */}
             <div className="rounded-lg border border-border bg-muted/30 p-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-xs text-muted-foreground uppercase tracking-wide">Current Balance Due</p>
-                  <p className={`text-2xl font-bold ${data.current_balance_due > 0 ? 'text-destructive' : 'text-primary'}`}>
-                    {formatCurrency(data.current_balance_due)}
-                  </p>
+                  <p className="text-xs text-muted-foreground uppercase tracking-wide">Current Amount Owed</p>
+                  {hasRealData && currentAmountOwed !== null ? (
+                    <p className={`text-2xl font-bold ${currentAmountOwed > 0 ? 'text-destructive' : 'text-primary'}`}>
+                      {formatCurrency(currentAmountOwed)}
+                    </p>
+                  ) : (
+                    <p className="text-xl font-medium text-muted-foreground">
+                      Not available
+                    </p>
+                  )}
                 </div>
-                {data.current_balance_due === 0 && (
-                  <Badge variant="secondary" className="bg-primary/10 text-primary">
-                    Paid
-                  </Badge>
-                )}
-                {data.current_balance_due > 0 && (
-                  <Badge variant="destructive">
-                    Balance Due
-                  </Badge>
+                {/* Only show badges when we have real data */}
+                {hasRealData && currentAmountOwed !== null && (
+                  <>
+                    {currentAmountOwed === 0 && (
+                      <Badge variant="secondary" className="bg-primary/10 text-primary">
+                        Paid
+                      </Badge>
+                    )}
+                    {currentAmountOwed > 0 && (
+                      <Badge variant="destructive">
+                        Balance Due
+                      </Badge>
+                    )}
+                  </>
                 )}
               </div>
               
-              {/* Metadata */}
-              <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-                {data.data_as_of && (
-                  <span>Data as of: {formatDate(data.data_as_of)}</span>
-                )}
-                {data.most_recent_bill_period && (
-                  <span>Last bill: {formatDate(data.most_recent_bill_period)}</span>
-                )}
-                {data.last_payment_date && (
-                  <span>Last payment: {formatDate(data.last_payment_date)}</span>
-                )}
-              </div>
+              {/* Metadata - only show when we have real data */}
+              {hasRealData && data.as_of && (
+                <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                  <span>As of: {formatDate(data.as_of)}</span>
+                </div>
+              )}
             </div>
             
             {/* Scope Indicator */}
-            <div className="flex items-center gap-2 text-sm">
+            <div className="flex items-center gap-2 text-sm flex-wrap">
               {isUsingBuildingLevel ? (
                 <>
                   <Building2 className="h-4 w-4 text-muted-foreground" />
-                  <span className="text-muted-foreground">Tax account:</span>
+                  <span className="text-muted-foreground">Account scope:</span>
                   <Badge variant="secondary" className="font-mono text-xs">
-                    Building BBL {formatBblForDisplay(taxLookupBbl)}
+                    Building
                   </Badge>
                 </>
               ) : (
@@ -213,25 +221,50 @@ export function TaxesCard({ viewBbl, buildingBbl, address, isUnitPage = false }:
                   ) : (
                     <Building2 className="h-4 w-4 text-muted-foreground" />
                   )}
-                  <span className="text-muted-foreground">Tax account:</span>
+                  <span className="text-muted-foreground">Account scope:</span>
                   <Badge variant="outline" className="font-mono text-xs">
-                    {isUnitPage ? 'Unit' : ''} BBL {formatBblForDisplay(taxLookupBbl)}
+                    {isUnitPage ? 'Unit' : 'Property'}
                   </Badge>
                 </>
               )}
-              
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-6 w-6 ml-1"
-                onClick={() => handleCopyBbl(taxLookupBbl)}
-              >
-                {copiedBbl === taxLookupBbl ? (
-                  <Check className="h-3 w-3 text-primary" />
-                ) : (
-                  <Copy className="h-3 w-3 text-muted-foreground" />
-                )}
-              </Button>
+            </div>
+            
+            {/* BBL and PARID display with copy buttons */}
+            <div className="flex flex-col gap-1 text-xs text-muted-foreground">
+              <div className="flex items-center gap-2">
+                <span>BBL:</span>
+                <code className="bg-muted px-1 rounded">{formatBblForDisplay(bblUsed)}</code>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-5 w-5"
+                  onClick={() => handleCopy(bblUsed)}
+                >
+                  {copiedValue === bblUsed ? (
+                    <Check className="h-3 w-3 text-primary" />
+                  ) : (
+                    <Copy className="h-3 w-3" />
+                  )}
+                </Button>
+              </div>
+              {paridUsed && (
+                <div className="flex items-center gap-2">
+                  <span>PARID:</span>
+                  <code className="bg-muted px-1 rounded">{paridUsed}</code>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-5 w-5"
+                    onClick={() => handleCopy(paridUsed)}
+                  >
+                    {copiedValue === paridUsed ? (
+                      <Check className="h-3 w-3 text-primary" />
+                    ) : (
+                      <Copy className="h-3 w-3" />
+                    )}
+                  </Button>
+                </div>
+              )}
             </div>
             
             {/* Building level fallback note */}
@@ -243,13 +276,13 @@ export function TaxesCard({ viewBbl, buildingBbl, address, isUnitPage = false }:
               </Alert>
             )}
             
-            {/* Details Collapsible */}
-            {data.line_items.length > 0 && (
+            {/* Details Collapsible - only when we have rows */}
+            {hasRealData && data.recent_rows.length > 0 && (
               <Collapsible open={detailsOpen} onOpenChange={setDetailsOpen}>
                 <CollapsibleTrigger asChild>
                   <Button variant="ghost" size="sm" className="w-full justify-between h-8 px-2">
                     <span className="text-xs text-muted-foreground">
-                      View {data.line_items.length} charge records
+                      View {data.recent_rows.length} charge records
                     </span>
                     {detailsOpen ? (
                       <ChevronUp className="h-4 w-4" />
@@ -270,7 +303,7 @@ export function TaxesCard({ viewBbl, buildingBbl, address, isUnitPage = false }:
                           </TableRow>
                         </TableHeader>
                         <TableBody>
-                          {data.line_items.map((item, idx) => (
+                          {data.recent_rows.map((item: ChargeRow, idx: number) => (
                             <TableRow key={idx}>
                               <TableCell className="text-xs py-1.5">
                                 {formatDate(item.stmtdate)}
@@ -278,7 +311,7 @@ export function TaxesCard({ viewBbl, buildingBbl, address, isUnitPage = false }:
                               <TableCell className="text-xs py-1.5">
                                 {item.chargetype || item.dession || '—'}
                               </TableCell>
-                              <TableCell className={`text-xs py-1.5 text-right font-mono ${parseFloat(item.value) < 0 ? 'text-primary' : ''}`}>
+                              <TableCell className={`text-xs py-1.5 text-right font-mono ${parseFloat(item.value || '0') < 0 ? 'text-primary' : ''}`}>
                                 {formatCurrency(parseFloat(item.value || '0'))}
                               </TableCell>
                             </TableRow>
@@ -290,19 +323,19 @@ export function TaxesCard({ viewBbl, buildingBbl, address, isUnitPage = false }:
                 </CollapsibleContent>
               </Collapsible>
             )}
+            
+            {/* No data found message */}
+            {data.no_data_found && (
+              <Alert className="py-2">
+                <AlertDescription className="text-xs text-muted-foreground">
+                  No NYC Open Data charge rows found for this parcel.
+                </AlertDescription>
+              </Alert>
+            )}
           </>
         )}
         
-        {/* Empty State - No data found */}
-        {!loading && !error && data && data.line_items.length === 0 && data.current_balance_due === 0 && (
-          <Alert className="py-2">
-            <AlertDescription className="text-xs text-muted-foreground">
-              No DOF charge data found for this parcel. Use the links below to check the official DOF portal.
-            </AlertDescription>
-          </Alert>
-        )}
-        
-        {/* Fallback: No data at all */}
+        {/* Fallback: No data at all (before fetch completes) */}
         {!loading && !data && !error && (
           <Alert className="py-2">
             <AlertDescription className="text-xs text-muted-foreground">

@@ -28,15 +28,15 @@ interface ChargeRow {
 }
 
 interface TaxResult {
-  current_balance_due: number;
-  most_recent_bill_period: string | null;
-  most_recent_due_date: string | null;
-  last_payment_date: string | null;
-  line_items: ChargeRow[];
-  scope: 'unit' | 'building' | 'direct';
+  current_amount_owed: number | null;  // null means "not available" (no rows)
+  rows_count: number;
+  as_of: string | null;
+  recent_rows: ChargeRow[];
+  scope_used: 'unit' | 'building' | 'direct';
   parid_used: string;
-  data_as_of: string | null;
-  no_data_found?: boolean;
+  bbl_used: string;
+  no_data_found: boolean;
+  api_error?: string;
 }
 
 // Convert BBL to PARID (BBL + easement "0")
@@ -49,7 +49,6 @@ function bblToParid(bbl: string): string {
 // Query the DOF dataset for a given PARID
 async function queryDOFCharges(parid: string, appToken: string): Promise<{ rows: ChargeRow[]; error?: string }> {
   // Use simple query format: ?parid=VALUE&$limit=200
-  // Avoid $order and $where until we confirm the API works
   const url = `https://data.cityofnewyork.us/resource/${DATASET_ID}.json?parid=${encodeURIComponent(parid)}&$limit=200`;
   
   console.log(`[property-taxes] Request URL: ${url}`);
@@ -86,7 +85,7 @@ async function queryDOFCharges(parid: string, appToken: string): Promise<{ rows:
     
     console.log(`[property-taxes] DOF returned ${data.length} rows for PARID ${parid}`);
     
-    // Sort by statement date descending (since we removed $order)
+    // Sort by statement date descending (newest first)
     const sorted = data.sort((a: ChargeRow, b: ChargeRow) => {
       const dateA = a.stmtdate || '';
       const dateB = b.stmtdate || '';
@@ -102,52 +101,49 @@ async function queryDOFCharges(parid: string, appToken: string): Promise<{ rows:
 }
 
 // Process charge rows into a summary
-function processCharges(rows: ChargeRow[], scope: 'unit' | 'building' | 'direct', paridUsed: string): TaxResult {
+function processCharges(rows: ChargeRow[], scope: 'unit' | 'building' | 'direct', paridUsed: string, bblUsed: string): TaxResult {
+  // If no rows, return explicit "no data found" - do NOT return $0
   if (rows.length === 0) {
     return {
-      current_balance_due: 0,
-      most_recent_bill_period: null,
-      most_recent_due_date: null,
-      last_payment_date: null,
-      line_items: [],
-      scope,
+      current_amount_owed: null,  // null = "not available", NOT $0
+      rows_count: 0,
+      as_of: null,
+      recent_rows: [],
+      scope_used: scope,
       parid_used: paridUsed,
-      data_as_of: null,
+      bbl_used: bblUsed,
       no_data_found: true,
     };
   }
   
-  // Calculate current balance due - sum all charge values
-  // In DOF data, positive values are charges, negative are payments/credits
-  let totalBalance = 0;
+  // Calculate current amount owed - sum all open/unpaid balances
+  // In DOF data, the "value" field represents the charge/credit amount
+  // Positive values are charges owed, negative are payments/credits
+  let totalOwed = 0;
   for (const row of rows) {
     const value = parseFloat(row.value || '0');
     if (!isNaN(value)) {
-      totalBalance += value;
+      totalOwed += value;
     }
   }
   
-  // Get most recent statement date as "bill period"
+  // Round to cents
+  totalOwed = Math.round(totalOwed * 100) / 100;
+  
+  // Get the most recent date as "as_of"
   const mostRecentRow = rows[0]; // Already sorted DESC
-  const mostRecentBillPeriod = mostRecentRow?.stmtdate ?? null;
-  const mostRecentDueDate = mostRecentRow?.activitythrough ?? null;
+  const asOf = mostRecentRow?.activitythrough || mostRecentRow?.stmtdate || null;
   
-  // Find most recent payment (negative value)
-  const payments = rows.filter(r => parseFloat(r.value || '0') < 0);
-  const lastPaymentDate = payments.length > 0 ? (payments[0].stmtdate ?? null) : null;
-  
-  // Data as of - use the most recent activity date
-  const dataAsOf = mostRecentRow?.activitythrough ?? mostRecentRow?.stmtdate ?? null;
+  console.log(`[property-taxes] Processed ${rows.length} rows, computed balance: ${totalOwed}, as_of: ${asOf}`);
   
   return {
-    current_balance_due: Math.round(totalBalance * 100) / 100, // Round to cents
-    most_recent_bill_period: mostRecentBillPeriod,
-    most_recent_due_date: mostRecentDueDate,
-    last_payment_date: lastPaymentDate,
-    line_items: rows.slice(0, 20), // Limit to 20 for UI
-    scope,
+    current_amount_owed: totalOwed,
+    rows_count: rows.length,
+    as_of: asOf,
+    recent_rows: rows.slice(0, 25), // Limit to 25 for UI
+    scope_used: scope,
     parid_used: paridUsed,
-    data_as_of: dataAsOf,
+    bbl_used: bblUsed,
     no_data_found: false,
   };
 }
@@ -161,9 +157,13 @@ serve(async (req) => {
   try {
     const { bbl, building_bbl } = await req.json();
     
-    console.log(`[property-taxes] Request received - bbl: ${bbl}, building_bbl: ${building_bbl || 'none'}`);
+    // Normalize field names (accept both view_bbl and bbl)
+    const viewBbl = bbl;
+    const buildingBbl = building_bbl;
     
-    if (!bbl || bbl.length !== 10) {
+    console.log(`[property-taxes] Request received - view_bbl: ${viewBbl}, building_bbl: ${buildingBbl || 'none'}`);
+    
+    if (!viewBbl || viewBbl.length !== 10) {
       return new Response(
         JSON.stringify({ error: 'Invalid BBL format. Expected 10 digits.' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -173,8 +173,8 @@ serve(async (req) => {
     const appToken = Deno.env.get('NYC_OPEN_DATA_APP_TOKEN') || '';
     
     // Derive PARIDs
-    const unitParid = bblToParid(bbl);
-    const buildingParid = building_bbl ? bblToParid(building_bbl) : null;
+    const unitParid = bblToParid(viewBbl);
+    const buildingParid = buildingBbl ? bblToParid(buildingBbl) : null;
     
     console.log(`[property-taxes] Derived PARIDs - unit: ${unitParid}, building: ${buildingParid || 'none'}`);
     
@@ -194,6 +194,7 @@ serve(async (req) => {
     let rows = queryResult.rows;
     let scope: 'unit' | 'building' | 'direct' = 'direct';
     let paridUsed = unitParid;
+    let bblUsed = viewBbl;
     let lastError = queryResult.error;
     
     // If no rows and we have a building BBL, try building PARID
@@ -205,7 +206,8 @@ serve(async (req) => {
       const buildingCached = cache.get(buildingCacheKey);
       if (buildingCached && Date.now() - buildingCached.timestamp < CACHE_TTL_MS) {
         console.log(`[property-taxes] Cache hit for building PARID ${buildingParid}`);
-        const result = { ...buildingCached.data as TaxResult, scope: 'building' as const };
+        const cachedResult = buildingCached.data as TaxResult;
+        const result = { ...cachedResult, scope_used: 'building' as const };
         return new Response(
           JSON.stringify(result),
           { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -216,42 +218,27 @@ serve(async (req) => {
       rows = queryResult.rows;
       scope = 'building';
       paridUsed = buildingParid;
+      bblUsed = buildingBbl;
       if (queryResult.error) {
         lastError = queryResult.error;
       }
-    } else if (rows.length > 0 && building_bbl) {
+    } else if (rows.length > 0 && buildingBbl) {
       // We found unit-level data
       scope = 'unit';
     }
     
-    // If we still have no rows and there was an error, report it
-    if (rows.length === 0 && lastError) {
-      console.error(`[property-taxes] Final error after fallback: ${lastError}`);
-      // Return empty result instead of throwing - graceful degradation
-      const emptyResult: TaxResult = {
-        current_balance_due: 0,
-        most_recent_bill_period: null,
-        most_recent_due_date: null,
-        last_payment_date: null,
-        line_items: [],
-        scope,
-        parid_used: paridUsed,
-        data_as_of: null,
-        no_data_found: true,
-      };
-      return new Response(
-        JSON.stringify({ ...emptyResult, api_error: lastError }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-    
     // Process the results
-    const result = processCharges(rows, scope, paridUsed);
+    const result = processCharges(rows, scope, paridUsed, bblUsed);
+    
+    // Add API error info if present (but still return the result)
+    if (lastError && rows.length === 0) {
+      result.api_error = lastError;
+    }
     
     // Cache the result (even empty results to avoid repeated calls)
     cache.set(paridUsed, { data: result, timestamp: Date.now() });
     
-    console.log(`[property-taxes] Returning result - scope: ${scope}, balance: ${result.current_balance_due}, rows: ${result.line_items.length}, no_data: ${result.no_data_found}`);
+    console.log(`[property-taxes] Returning result - scope: ${result.scope_used}, amount_owed: ${result.current_amount_owed}, rows_count: ${result.rows_count}, no_data: ${result.no_data_found}`);
     
     return new Response(
       JSON.stringify(result),
