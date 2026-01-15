@@ -37,6 +37,7 @@ export interface DebugInfo {
     periods_included_in_arrears: string[];
     max_prior_balance: number | null;
     exclusion_reason?: string;
+    running_balance_detected?: boolean;
   };
 }
 
