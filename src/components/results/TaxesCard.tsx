@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { ExternalLink, DollarSign, FileText, Copy, Check, Info, Building2, Home, ChevronDown, ChevronUp, RefreshCw, AlertCircle } from 'lucide-react';
+import { ExternalLink, DollarSign, FileText, Copy, Check, Info, Building2, Home, ChevronDown, ChevronUp, RefreshCw, AlertCircle, Search } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -8,7 +8,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { usePropertyTaxes, type ChargeRow } from '@/hooks/usePropertyTaxes';
+import { usePropertyTaxes, type ChargeRow, type Attempt } from '@/hooks/usePropertyTaxes';
 
 interface TaxesCardProps {
   viewBbl: string;           // The unit BBL the user is viewing
@@ -69,6 +69,7 @@ function getDOFBillsUrl(): string {
 export function TaxesCard({ viewBbl, buildingBbl, address, isUnitPage = false }: TaxesCardProps) {
   const [copiedValue, setCopiedValue] = useState<string | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const [attemptsOpen, setAttemptsOpen] = useState(false);
   
   const { loading, error, data, fetch, retry } = usePropertyTaxes();
   
@@ -100,10 +101,12 @@ export function TaxesCard({ viewBbl, buildingBbl, address, isUnitPage = false }:
 
   // Derive values from data
   const bblUsed = data?.bbl_used || viewBbl;
-  const paridUsed = data?.parid_used || '';
+  const matchedField = data?.matched_field;
+  const matchedKey = data?.matched_key;
   const isUsingBuildingLevel = data?.scope_used === 'building';
   const hasRealData = data && !data.no_data_found && data.rows_count > 0;
   const currentAmountOwed = data?.current_amount_owed;
+  const attempts = data?.attempts || [];
 
   return (
     <Card>
@@ -204,32 +207,48 @@ export function TaxesCard({ viewBbl, buildingBbl, address, isUnitPage = false }:
               )}
             </div>
             
-            {/* Scope Indicator */}
-            <div className="flex items-center gap-2 text-sm flex-wrap">
-              {isUsingBuildingLevel ? (
-                <>
-                  <Building2 className="h-4 w-4 text-muted-foreground" />
-                  <span className="text-muted-foreground">Account scope:</span>
-                  <Badge variant="secondary" className="font-mono text-xs">
-                    Building
-                  </Badge>
-                </>
-              ) : (
-                <>
-                  {isUnitPage ? (
-                    <Home className="h-4 w-4 text-muted-foreground" />
-                  ) : (
+            {/* Scope and Match Indicator */}
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center gap-2 text-sm flex-wrap">
+                {isUsingBuildingLevel ? (
+                  <>
                     <Building2 className="h-4 w-4 text-muted-foreground" />
-                  )}
-                  <span className="text-muted-foreground">Account scope:</span>
-                  <Badge variant="outline" className="font-mono text-xs">
-                    {isUnitPage ? 'Unit' : 'Property'}
+                    <span className="text-muted-foreground">Account scope:</span>
+                    <Badge variant="secondary" className="font-mono text-xs">
+                      Building
+                    </Badge>
+                  </>
+                ) : (
+                  <>
+                    {isUnitPage ? (
+                      <Home className="h-4 w-4 text-muted-foreground" />
+                    ) : (
+                      <Building2 className="h-4 w-4 text-muted-foreground" />
+                    )}
+                    <span className="text-muted-foreground">Account scope:</span>
+                    <Badge variant="outline" className="font-mono text-xs">
+                      {isUnitPage ? 'Unit' : 'Property'}
+                    </Badge>
+                  </>
+                )}
+              </div>
+              
+              {/* Match indicator - only when we have data */}
+              {hasRealData && matchedField && matchedKey && (
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <Search className="h-3 w-3" />
+                  <span>Matched using:</span>
+                  <code className="bg-muted px-1.5 py-0.5 rounded text-xs">
+                    {matchedField}='{matchedKey}'
+                  </code>
+                  <Badge variant="outline" className="text-[10px] px-1.5 py-0">
+                    {isUsingBuildingLevel ? 'building' : isUnitPage ? 'unit' : 'property'}
                   </Badge>
-                </>
+                </div>
               )}
             </div>
             
-            {/* BBL and PARID display with copy buttons */}
+            {/* BBL display with copy button */}
             <div className="flex flex-col gap-1 text-xs text-muted-foreground">
               <div className="flex items-center gap-2">
                 <span>BBL:</span>
@@ -247,24 +266,6 @@ export function TaxesCard({ viewBbl, buildingBbl, address, isUnitPage = false }:
                   )}
                 </Button>
               </div>
-              {paridUsed && (
-                <div className="flex items-center gap-2">
-                  <span>PARID:</span>
-                  <code className="bg-muted px-1 rounded">{paridUsed}</code>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-5 w-5"
-                    onClick={() => handleCopy(paridUsed)}
-                  >
-                    {copiedValue === paridUsed ? (
-                      <Check className="h-3 w-3 text-primary" />
-                    ) : (
-                      <Copy className="h-3 w-3" />
-                    )}
-                  </Button>
-                </div>
-              )}
             </div>
             
             {/* Building level fallback note */}
@@ -328,9 +329,57 @@ export function TaxesCard({ viewBbl, buildingBbl, address, isUnitPage = false }:
             {data.no_data_found && (
               <Alert className="py-2">
                 <AlertDescription className="text-xs text-muted-foreground">
-                  No NYC Open Data charge rows found for this parcel.
+                  No NYC Open Data charge rows found after trying multiple identifier formats.
                 </AlertDescription>
               </Alert>
+            )}
+            
+            {/* Debug: Attempts list (collapsible) */}
+            {attempts.length > 0 && (
+              <Collapsible open={attemptsOpen} onOpenChange={setAttemptsOpen}>
+                <CollapsibleTrigger asChild>
+                  <Button variant="ghost" size="sm" className="w-full justify-between h-7 px-2 text-muted-foreground">
+                    <span className="text-[10px]">
+                      {attempts.length} lookup attempts ({attempts.filter(a => a.rows_found > 0).length} matched)
+                    </span>
+                    {attemptsOpen ? (
+                      <ChevronUp className="h-3 w-3" />
+                    ) : (
+                      <ChevronDown className="h-3 w-3" />
+                    )}
+                  </Button>
+                </CollapsibleTrigger>
+                <CollapsibleContent>
+                  <div className="mt-1 rounded border border-border overflow-hidden">
+                    <div className="max-h-40 overflow-auto">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead className="text-[10px] py-1">Field</TableHead>
+                            <TableHead className="text-[10px] py-1">Key</TableHead>
+                            <TableHead className="text-[10px] py-1 text-right">Rows</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {attempts.map((attempt: Attempt, idx: number) => (
+                            <TableRow key={idx} className={attempt.rows_found > 0 ? 'bg-primary/5' : ''}>
+                              <TableCell className="text-[10px] py-1 font-mono">
+                                {attempt.field}
+                              </TableCell>
+                              <TableCell className="text-[10px] py-1 font-mono max-w-[120px] truncate">
+                                {attempt.key}
+                              </TableCell>
+                              <TableCell className={`text-[10px] py-1 text-right ${attempt.rows_found > 0 ? 'text-primary font-medium' : ''}`}>
+                                {attempt.rows_found}
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  </div>
+                </CollapsibleContent>
+              </Collapsible>
             )}
           </>
         )}
