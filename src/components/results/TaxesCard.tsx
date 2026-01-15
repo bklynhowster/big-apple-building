@@ -103,13 +103,16 @@ export function TaxesCard({ viewBbl, buildingBbl, address, isUnitPage = false }:
   const matchedField = data?.matched_field;
   const matchedKey = data?.matched_key;
   const isUsingBuildingLevel = data?.scope_used === 'building';
-  const currentAmountOwed = data?.current_amount_owed;
+  
+  // New: use latest period amount instead of summed total
+  const amountDueLatestPeriod = data?.amount_due_latest_period;
+  const latestDueDate = data?.latest_due_date;
+  const rowsInLatestPeriod = data?.rows_in_latest_period ?? 0;
   const lineItems = data?.line_items || [];
   
   // Use strict owed_status for badge logic
   const owedStatus: OwedStatus | undefined = data?.owed_status;
   const owedReason = data?.owed_reason;
-  const rowsWithNumericBalance = data?.rows_with_numeric_balance ?? 0;
   
   // Can only show amount if status is 'paid' or 'due'
   const canShowAmount = owedStatus === 'paid' || owedStatus === 'due';
@@ -173,14 +176,14 @@ export function TaxesCard({ viewBbl, buildingBbl, address, isUnitPage = false }:
         {/* Data Display */}
         {data && (
           <>
-            {/* Amount Owed Summary */}
+            {/* Amount Owed Summary - now shows latest period only */}
             <div className="rounded-lg border border-border bg-muted/30 p-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-xs text-muted-foreground uppercase tracking-wide">Current Amount Owed</p>
-                  {canShowAmount && currentAmountOwed !== null ? (
-                    <p className={`text-2xl font-bold ${currentAmountOwed > 0 ? 'text-destructive' : 'text-primary'}`}>
-                      {formatCurrency(currentAmountOwed)}
+                  <p className="text-xs text-muted-foreground uppercase tracking-wide">Due (Latest Period)</p>
+                  {canShowAmount && amountDueLatestPeriod !== null ? (
+                    <p className={`text-2xl font-bold ${amountDueLatestPeriod > 0 ? 'text-destructive' : 'text-primary'}`}>
+                      {formatCurrency(amountDueLatestPeriod)}
                     </p>
                   ) : (
                     <div className="flex items-center gap-2">
@@ -217,15 +220,20 @@ export function TaxesCard({ viewBbl, buildingBbl, address, isUnitPage = false }:
                 )}
               </div>
               
-              {/* Metadata - only show when we have valid data */}
-              {canShowAmount && data.as_of && (
+              {/* Metadata - show latest due date */}
+              {canShowAmount && latestDueDate && (
                 <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-                  <span>As of: {formatDate(data.as_of)}</span>
-                  {rowsWithNumericBalance > 0 && (
-                    <span>Balance rows: {rowsWithNumericBalance}/{data.rows_count}</span>
+                  <span>As of: {formatDate(latestDueDate)}</span>
+                  {rowsInLatestPeriod > 0 && (
+                    <span>Rows in period: {rowsInLatestPeriod}/{data.rows_count}</span>
                   )}
                 </div>
               )}
+              
+              {/* Disclaimer */}
+              <p className="mt-2 text-[10px] text-muted-foreground/70 leading-tight">
+                This reflects charges associated with the most recent due date in NYC Open Data and may not equal the official DOF current balance.
+              </p>
             </div>
             
             {/* Scope and Match Indicator */}
