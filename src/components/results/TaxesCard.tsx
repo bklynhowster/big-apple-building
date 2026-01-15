@@ -8,7 +8,8 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { usePropertyTaxes, type ChargeRow, type Attempt } from '@/hooks/usePropertyTaxes';
+import { usePropertyTaxes, type ChargeRow, type Attempt, type OwedStatus } from '@/hooks/usePropertyTaxes';
+import { HelpCircle } from 'lucide-react';
 
 interface TaxesCardProps {
   viewBbl: string;           // The unit BBL the user is viewing
@@ -104,9 +105,17 @@ export function TaxesCard({ viewBbl, buildingBbl, address, isUnitPage = false }:
   const matchedField = data?.matched_field;
   const matchedKey = data?.matched_key;
   const isUsingBuildingLevel = data?.scope_used === 'building';
-  const hasRealData = data && !data.no_data_found && data.rows_count > 0;
   const currentAmountOwed = data?.current_amount_owed;
   const attempts = data?.attempts || [];
+  
+  // Use strict owed_status for badge logic
+  const owedStatus: OwedStatus | undefined = data?.owed_status;
+  const owedReason = data?.owed_reason;
+  const balanceFieldUsed = data?.balance_field_used;
+  const rowsWithNumericBalance = data?.rows_with_numeric_balance ?? 0;
+  
+  // Can only show amount if status is 'paid' or 'due'
+  const canShowAmount = owedStatus === 'paid' || owedStatus === 'due';
 
   return (
     <Card>
@@ -172,37 +181,55 @@ export function TaxesCard({ viewBbl, buildingBbl, address, isUnitPage = false }:
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-xs text-muted-foreground uppercase tracking-wide">Current Amount Owed</p>
-                  {hasRealData && currentAmountOwed !== null ? (
+                  {canShowAmount && currentAmountOwed !== null ? (
                     <p className={`text-2xl font-bold ${currentAmountOwed > 0 ? 'text-destructive' : 'text-primary'}`}>
                       {formatCurrency(currentAmountOwed)}
                     </p>
                   ) : (
-                    <p className="text-xl font-medium text-muted-foreground">
-                      Not available
-                    </p>
+                    <div className="flex items-center gap-2">
+                      <p className="text-xl font-medium text-muted-foreground">
+                        Not available
+                      </p>
+                      {owedReason && (
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button variant="ghost" size="icon" className="h-5 w-5">
+                                <HelpCircle className="h-3.5 w-3.5 text-muted-foreground" />
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent className="max-w-xs">
+                              <p className="text-xs">{owedReason}</p>
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      )}
+                    </div>
                   )}
                 </div>
-                {/* Only show badges when we have real data */}
-                {hasRealData && currentAmountOwed !== null && (
-                  <>
-                    {currentAmountOwed === 0 && (
-                      <Badge variant="secondary" className="bg-primary/10 text-primary">
-                        Paid
-                      </Badge>
-                    )}
-                    {currentAmountOwed > 0 && (
-                      <Badge variant="destructive">
-                        Balance Due
-                      </Badge>
-                    )}
-                  </>
+                {/* Only show Paid badge when owed_status === 'paid' */}
+                {owedStatus === 'paid' && (
+                  <Badge variant="secondary" className="bg-primary/10 text-primary">
+                    Paid
+                  </Badge>
+                )}
+                {owedStatus === 'due' && (
+                  <Badge variant="destructive">
+                    Balance Due
+                  </Badge>
                 )}
               </div>
               
-              {/* Metadata - only show when we have real data */}
-              {hasRealData && data.as_of && (
+              {/* Metadata - only show when we have valid data */}
+              {canShowAmount && data.as_of && (
                 <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
                   <span>As of: {formatDate(data.as_of)}</span>
+                  {balanceFieldUsed && (
+                    <span>Field: {balanceFieldUsed}</span>
+                  )}
+                  {rowsWithNumericBalance > 0 && (
+                    <span>Rows: {rowsWithNumericBalance}/{data.rows_count}</span>
+                  )}
                 </div>
               )}
             </div>
@@ -234,7 +261,7 @@ export function TaxesCard({ viewBbl, buildingBbl, address, isUnitPage = false }:
               </div>
               
               {/* Match indicator - only when we have data */}
-              {hasRealData && matchedField && matchedKey && (
+              {canShowAmount && matchedField && matchedKey && (
                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
                   <Search className="h-3 w-3" />
                   <span>Matched using:</span>
@@ -278,7 +305,7 @@ export function TaxesCard({ viewBbl, buildingBbl, address, isUnitPage = false }:
             )}
             
             {/* Details Collapsible - only when we have rows */}
-            {hasRealData && data.recent_rows.length > 0 && (
+            {data.rows_count > 0 && data.recent_rows.length > 0 && (
               <Collapsible open={detailsOpen} onOpenChange={setDetailsOpen}>
                 <CollapsibleTrigger asChild>
                   <Button variant="ghost" size="sm" className="w-full justify-between h-8 px-2">

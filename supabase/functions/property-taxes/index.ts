@@ -50,9 +50,12 @@ interface Attempt {
   error?: string;
 }
 
+type OwedStatus = 'paid' | 'due' | 'unknown';
+
 interface BaseTaxResult {
   current_amount_owed: number | null;
   rows_count: number;
+  rows_with_numeric_balance: number;
   as_of: string | null;
   recent_rows: ChargeRow[];
   scope_used: 'unit' | 'building' | 'direct';
@@ -63,6 +66,11 @@ interface BaseTaxResult {
   no_data_found: boolean;
   attempts: Attempt[];
   api_error?: string;
+  // New strict balance tracking
+  balance_field_used: string | null;
+  owed_status: OwedStatus;
+  owed_reason: string | null;
+  data_source_used: string;
 }
 
 interface TaxResult extends BaseTaxResult {
@@ -217,47 +225,130 @@ async function multiKeyLookup(
   };
 }
 
-// Compute current amount owed from rows
-function computeAmountOwed(rows: ChargeRow[]): { amount: number; balanceField: string } {
-  // Look for balance-like fields in priority order
-  const balanceFields = ['open_balance', 'balance', 'outstanding', 'value'];
+// Priority list of balance-like fields
+const BALANCE_FIELD_PRIORITY = [
+  'open_balance',
+  'outstanding_balance',
+  'outstanding_amount',
+  'balance',
+  'amount_due',
+];
+
+// Find the best balance field from the rows
+function findBalanceField(rows: ChargeRow[]): string | null {
+  if (rows.length === 0) return null;
   
-  // Log available fields from first row for debugging
-  if (rows.length > 0) {
-    const sampleRow = rows[0];
-    const availableFields = Object.keys(sampleRow);
-    console.log(`[property-taxes] Available fields in rows: ${availableFields.join(', ')}`);
-  }
+  const sampleRow = rows[0];
+  const availableFields = Object.keys(sampleRow);
+  console.log(`[property-taxes] Available fields in rows: ${availableFields.join(', ')}`);
   
-  // Try to find the best balance field
-  let usedField = 'value'; // default fallback
-  let total = 0;
-  
-  for (const field of balanceFields) {
-    const hasField = rows.some(r => r[field] !== undefined && r[field] !== null && r[field] !== '');
-    if (hasField) {
-      usedField = field;
-      break;
-    }
-  }
-  
-  console.log(`[property-taxes] Using field '${usedField}' for balance calculation`);
-  
-  // Sum the values
-  for (const row of rows) {
-    const rawValue = row[usedField];
-    if (rawValue !== undefined && rawValue !== null) {
-      const numValue = parseFloat(String(rawValue));
-      if (!isNaN(numValue)) {
-        total += numValue;
+  // Check priority list first
+  for (const field of BALANCE_FIELD_PRIORITY) {
+    if (availableFields.includes(field)) {
+      const hasValue = rows.some(r => r[field] !== undefined && r[field] !== null && r[field] !== '');
+      if (hasValue) {
+        console.log(`[property-taxes] Found priority balance field: ${field}`);
+        return field;
       }
     }
+  }
+  
+  // Fallback: find any field containing 'balance' or 'outstanding' (case-insensitive)
+  const balancePattern = /balance|outstanding/i;
+  for (const field of availableFields) {
+    if (balancePattern.test(field)) {
+      const hasValue = rows.some(r => r[field] !== undefined && r[field] !== null && r[field] !== '');
+      if (hasValue) {
+        console.log(`[property-taxes] Found fallback balance field: ${field}`);
+        return field;
+      }
+    }
+  }
+  
+  console.log(`[property-taxes] No balance-like field found in: ${availableFields.join(', ')}`);
+  return null;
+}
+
+// Compute current amount owed with strict numeric parsing
+function computeAmountOwed(rows: ChargeRow[], balanceField: string | null): { 
+  amount: number | null; 
+  rowsWithNumericBalance: number;
+  reason: string | null;
+} {
+  // If no balance field, we can't compute
+  if (!balanceField) {
+    return { 
+      amount: null, 
+      rowsWithNumericBalance: 0,
+      reason: 'No balance/outstanding field found in NYC Open Data rows.'
+    };
+  }
+  
+  let total = 0;
+  let rowsWithNumericBalance = 0;
+  
+  for (const row of rows) {
+    const rawValue = row[balanceField];
+    
+    // Skip null, undefined, empty
+    if (rawValue === undefined || rawValue === null || rawValue === '') {
+      continue;
+    }
+    
+    const numValue = parseFloat(String(rawValue));
+    
+    // Skip NaN
+    if (isNaN(numValue)) {
+      continue;
+    }
+    
+    rowsWithNumericBalance++;
+    total += numValue;
+  }
+  
+  // If no rows had numeric balance, treat as unknown
+  if (rowsWithNumericBalance === 0) {
+    return { 
+      amount: null, 
+      rowsWithNumericBalance: 0,
+      reason: 'No rows had a numeric balance value.'
+    };
   }
   
   // Round to cents
   total = Math.round(total * 100) / 100;
   
-  return { amount: total, balanceField: usedField };
+  console.log(`[property-taxes] Computed balance: ${total} from ${rowsWithNumericBalance}/${rows.length} rows using field '${balanceField}'`);
+  
+  return { 
+    amount: total, 
+    rowsWithNumericBalance,
+    reason: null
+  };
+}
+
+// Determine owed status based on strict rules
+function determineOwedStatus(
+  rowsCount: number,
+  balanceFieldUsed: string | null,
+  rowsWithNumericBalance: number,
+  currentAmountOwed: number | null
+): OwedStatus {
+  // Must have rows, a balance field, and numeric values to determine paid/due
+  if (rowsCount === 0 || !balanceFieldUsed || rowsWithNumericBalance === 0 || currentAmountOwed === null) {
+    return 'unknown';
+  }
+  
+  if (currentAmountOwed === 0) {
+    return 'paid';
+  }
+  
+  if (currentAmountOwed > 0) {
+    return 'due';
+  }
+  
+  // Negative balance (credit) - still treat as paid
+  return 'paid';
 }
 
 // Get the most recent date from rows
@@ -289,11 +380,14 @@ function processCharges(
   bblUsed: string,
   attempts: Attempt[]
 ): BaseTaxResult {
+  const dataSourceUsed = `NYC Open Data DOF Property Charges Balance (${DATASET_ID})`;
+  
   // If no rows, return explicit "no data found"
   if (rows.length === 0) {
     return {
       current_amount_owed: null,
       rows_count: 0,
+      rows_with_numeric_balance: 0,
       as_of: null,
       recent_rows: [],
       scope_used: scope,
@@ -303,11 +397,21 @@ function processCharges(
       matched_key: null,
       no_data_found: true,
       attempts,
+      balance_field_used: null,
+      owed_status: 'unknown',
+      owed_reason: 'No charge rows found for this parcel.',
+      data_source_used: dataSourceUsed,
     };
   }
   
-  // Compute amount owed
-  const { amount, balanceField } = computeAmountOwed(rows);
+  // Find balance field
+  const balanceFieldUsed = findBalanceField(rows);
+  
+  // Compute amount owed with strict parsing
+  const { amount, rowsWithNumericBalance, reason } = computeAmountOwed(rows, balanceFieldUsed);
+  
+  // Determine owed status
+  const owedStatus = determineOwedStatus(rows.length, balanceFieldUsed, rowsWithNumericBalance, amount);
   
   // Get as_of date
   const asOf = getAsOfDate(rows);
@@ -319,11 +423,12 @@ function processCharges(
     return dateB.localeCompare(dateA);
   });
   
-  console.log(`[property-taxes] Processed ${rows.length} rows using ${balanceField}, computed balance: ${amount}, as_of: ${asOf}`);
+  console.log(`[property-taxes] Processed ${rows.length} rows, balance_field: ${balanceFieldUsed}, numeric_rows: ${rowsWithNumericBalance}, amount: ${amount}, status: ${owedStatus}`);
   
   return {
     current_amount_owed: amount,
     rows_count: rows.length,
+    rows_with_numeric_balance: rowsWithNumericBalance,
     as_of: asOf,
     recent_rows: sortedRows.slice(0, 25),
     scope_used: scope,
@@ -333,6 +438,10 @@ function processCharges(
     matched_key: matchedKey,
     no_data_found: false,
     attempts,
+    balance_field_used: balanceFieldUsed,
+    owed_status: owedStatus,
+    owed_reason: reason,
+    data_source_used: dataSourceUsed,
   };
 }
 
