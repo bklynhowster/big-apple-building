@@ -31,9 +31,12 @@ export interface Attempt {
   error?: string;
 }
 
+export type OwedStatus = 'paid' | 'due' | 'unknown';
+
 export interface PropertyTaxResult {
   current_amount_owed: number | null;  // null = "not available"
   rows_count: number;
+  rows_with_numeric_balance: number;
   as_of: string | null;
   recent_rows: ChargeRow[];
   scope_used: 'unit' | 'building' | 'direct';
@@ -46,6 +49,11 @@ export interface PropertyTaxResult {
   api_error?: string;
   cache_status: 'HIT' | 'MISS';
   cached_at: string | null;
+  // Strict balance tracking
+  balance_field_used: string | null;
+  owed_status: OwedStatus;
+  owed_reason: string | null;
+  data_source_used: string;
 }
 
 interface UsePropertyTaxesResult {
