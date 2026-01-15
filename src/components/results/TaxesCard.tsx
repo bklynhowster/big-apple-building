@@ -334,6 +334,18 @@ export function TaxesCard({ viewBbl, buildingBbl, address, isUnitPage = false }:
               </Alert>
             )}
             
+            {/* Cache status debug info */}
+            {data.cache_status && (
+              <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+                <Badge variant="outline" className={`text-[10px] px-1.5 py-0 ${data.cache_status === 'HIT' ? 'bg-primary/10' : ''}`}>
+                  Cache: {data.cache_status}
+                </Badge>
+                {data.cached_at && (
+                  <span>Cached at: {formatDate(data.cached_at)}</span>
+                )}
+              </div>
+            )}
+            
             {/* Debug: Attempts list (collapsible) */}
             {attempts.length > 0 && (
               <Collapsible open={attemptsOpen} onOpenChange={setAttemptsOpen}>

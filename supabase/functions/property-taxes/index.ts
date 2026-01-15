@@ -5,9 +5,16 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-// In-memory cache with 6-hour TTL
-const cache = new Map<string, { data: unknown; timestamp: number }>();
-const CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
+// In-memory cache with different TTLs based on result type
+interface CacheEntry {
+  data: unknown;
+  timestamp: number;
+  hasRows: boolean;
+  cacheKey: string;
+}
+const cache = new Map<string, CacheEntry>();
+const SUCCESS_CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours for successful responses with rows
+const NO_DATA_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes for "no data found" responses
 
 // NYC Open Data DOF Property Charges Balance dataset
 const DATASET_ID = 'scjx-j6np';
@@ -43,7 +50,7 @@ interface Attempt {
   error?: string;
 }
 
-interface TaxResult {
+interface BaseTaxResult {
   current_amount_owed: number | null;
   rows_count: number;
   as_of: string | null;
@@ -56,6 +63,11 @@ interface TaxResult {
   no_data_found: boolean;
   attempts: Attempt[];
   api_error?: string;
+}
+
+interface TaxResult extends BaseTaxResult {
+  cache_status: 'HIT' | 'MISS';
+  cached_at: string | null;
 }
 
 // Normalize BBL to proper format: 1 borough + 5 block (padded) + 4 lot (padded)
@@ -276,7 +288,7 @@ function processCharges(
   matchedKey: string | null,
   bblUsed: string,
   attempts: Attempt[]
-): TaxResult {
+): BaseTaxResult {
   // If no rows, return explicit "no data found"
   if (rows.length === 0) {
     return {
@@ -352,15 +364,29 @@ serve(async (req) => {
     const normalizedViewBbl = normalizeBbl(viewBbl);
     const normalizedBuildingBbl = buildingBbl ? normalizeBbl(buildingBbl) : null;
     
-    // Check cache
-    const cacheKey = `multikey:${normalizedViewBbl}:${normalizedBuildingBbl || ''}`;
-    const cached = cache.get(cacheKey);
-    if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
-      console.log(`[property-taxes] Cache hit for ${cacheKey}`);
-      return new Response(
-        JSON.stringify(cached.data),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+    // Check cache with appropriate TTL based on result type
+    const baseCacheKey = `multikey:${normalizedViewBbl}:${normalizedBuildingBbl || ''}`;
+    const cached = cache.get(baseCacheKey);
+    
+    if (cached) {
+      const age = Date.now() - cached.timestamp;
+      const ttl = cached.hasRows ? SUCCESS_CACHE_TTL_MS : NO_DATA_CACHE_TTL_MS;
+      
+      if (age < ttl) {
+        console.log(`[property-taxes] Cache HIT for ${baseCacheKey} (hasRows: ${cached.hasRows}, age: ${Math.round(age / 1000)}s)`);
+        const cachedResult = {
+          ...(cached.data as object),
+          cache_status: 'HIT' as const,
+          cached_at: new Date(cached.timestamp).toISOString(),
+        };
+        return new Response(
+          JSON.stringify(cachedResult),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      } else {
+        console.log(`[property-taxes] Cache expired for ${baseCacheKey} (hasRows: ${cached.hasRows}, age: ${Math.round(age / 1000)}s, ttl: ${ttl / 1000}s)`);
+        cache.delete(baseCacheKey);
+      }
     }
     
     // Try unit BBL first (multi-key lookup)
@@ -382,7 +408,7 @@ serve(async (req) => {
     }
     
     // Process results
-    const result = processCharges(
+    const baseResult = processCharges(
       lookupResult.rows,
       scope,
       lookupResult.matchedField,
@@ -391,8 +417,35 @@ serve(async (req) => {
       allAttempts
     );
     
-    // Cache the result
-    cache.set(cacheKey, { data: result, timestamp: Date.now() });
+    // Build final cache key including match details for precision
+    const finalCacheKey = baseResult.rows_count > 0 
+      ? `${baseCacheKey}:${baseResult.matched_field}:${baseResult.matched_key}:${baseResult.scope_used}`
+      : baseCacheKey;
+    
+    const now = Date.now();
+    
+    // Only cache successful responses (no API errors in attempts that we relied on)
+    const hasApiError = baseResult.attempts.some(a => a.error && a.rows_found === 0);
+    const shouldCache = !hasApiError || baseResult.rows_count > 0;
+    
+    if (shouldCache) {
+      cache.set(baseCacheKey, { 
+        data: baseResult, 
+        timestamp: now,
+        hasRows: baseResult.rows_count > 0,
+        cacheKey: finalCacheKey,
+      });
+      console.log(`[property-taxes] Cached result (hasRows: ${baseResult.rows_count > 0}, key: ${baseCacheKey})`);
+    } else {
+      console.log(`[property-taxes] NOT caching due to API errors`);
+    }
+    
+    // Add cache status to response
+    const result = {
+      ...baseResult,
+      cache_status: 'MISS' as const,
+      cached_at: null,
+    };
     
     console.log(`[property-taxes] Result - scope: ${result.scope_used}, matched: ${result.matched_field}='${result.matched_key}', amount: ${result.current_amount_owed}, rows: ${result.rows_count}, no_data: ${result.no_data_found}`);
     
