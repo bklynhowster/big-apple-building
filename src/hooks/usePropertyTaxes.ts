@@ -13,19 +13,23 @@ export interface DebugInfo {
     liability: string[];
     balance: string[];
     code: string[];
+    tax_year: string[];
+    period: string[];
   };
   first_row_keys: string[];
-  sample_rows: Array<{
+  running_balance_detected: boolean;
+  latest_period_key: string | null;
+  periods: Array<{
     due_date: string | null;
-    liability: number | null;
-    balance: number | null;
-    code: string | null;
+    max_liab: number;
+    max_bal: number;
+    row_count: number;
+    codes: string[];
   }>;
-  all_due_dates: string[];
   computation_log: string[];
 }
 
-// Result from the ledger-based property-taxes edge function
+// Result from the period-based property-taxes edge function
 export interface PropertyTaxResult {
   // Primary outputs
   latest_bill_amount: number | null;
@@ -47,9 +51,7 @@ export interface PropertyTaxResult {
   matched_field: string | null;
   matched_key: string | null;
   total_rows_fetched: number;
-  bill_rows_used: number;
-  rows_excluded: number;
-  exclusion_reasons: string[];
+  period_count: number;
   rows_in_latest_period: number;
   data_source: string;
   no_data_found: boolean;

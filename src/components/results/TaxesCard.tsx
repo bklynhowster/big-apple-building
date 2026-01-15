@@ -31,11 +31,6 @@ function formatUSD(n: number | null | undefined): string {
   return n.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
 }
 
-// Legacy wrapper for backwards compatibility
-function formatCurrency(amount: number): string {
-  return formatUSD(amount);
-}
-
 function getDOFCityPayUrl(): string {
   return 'https://a836-citypay.nyc.gov/citypay/PropertyTax';
 }
@@ -123,7 +118,8 @@ export function TaxesCard({ viewBbl, buildingBbl, address, isUnitPage = false }:
                 </TooltipTrigger>
                 <TooltipContent className="max-w-xs">
                   <p className="text-sm">
-                    Tax bill data from NYC DOF ledger records.
+                    Tax bill data from NYC DOF public ledger records.
+                    Amounts shown are estimates based on available data.
                     You may not receive a bill if taxes are paid through a bank or mortgage servicing company.
                   </p>
                 </TooltipContent>
@@ -161,12 +157,13 @@ export function TaxesCard({ viewBbl, buildingBbl, address, isUnitPage = false }:
         {/* Data Display */}
         {data && (
           <>
-            {/* Primary: Latest Quarterly Property Tax Bill */}
+            {/* Primary: Latest Bill Amount (public ledger) */}
             <div className="rounded-lg border border-border bg-muted/30 p-4">
               <div className="flex items-start justify-between">
                 <div className="space-y-1">
                   <p className="text-xs text-muted-foreground uppercase tracking-wide">
-                    Latest {billingCycle === 'Semiannual' ? 'Semiannual' : 'Quarterly'} Property Tax Bill
+                    Latest Bill Amount
+                    <span className="normal-case ml-1 opacity-70">(public ledger)</span>
                   </p>
                   {latestBillAmount !== null && Number.isFinite(latestBillAmount) ? (
                     <p className="text-2xl font-bold text-foreground">
@@ -207,12 +204,12 @@ export function TaxesCard({ viewBbl, buildingBbl, address, isUnitPage = false }:
               )}
             </div>
             
-            {/* Arrears Status */}
+            {/* Arrears Status (public ledger estimate) */}
             <div className="flex items-center gap-2 text-sm">
               {arrearsAvailable ? (
                 arrears !== null && Number.isFinite(arrears) && arrears > 0 ? (
                   <Badge variant="destructive" className="text-xs">
-                    Arrears: {formatUSD(arrears)}
+                    Arrears (estimate): {formatUSD(arrears)}
                   </Badge>
                 ) : (
                   <Badge variant="outline" className="bg-primary/10 text-primary border-primary/20 text-xs">
@@ -224,18 +221,18 @@ export function TaxesCard({ viewBbl, buildingBbl, address, isUnitPage = false }:
                   Arrears: Unavailable
                 </Badge>
               )}
-              {arrearsNote && (
-                <TooltipProvider>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <HelpCircle className="h-3 w-3 text-muted-foreground cursor-help" />
-                    </TooltipTrigger>
-                    <TooltipContent className="max-w-xs">
-                      <p className="text-xs">{arrearsNote}</p>
-                    </TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
-              )}
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <HelpCircle className="h-3 w-3 text-muted-foreground cursor-help" />
+                  </TooltipTrigger>
+                  <TooltipContent className="max-w-xs">
+                    <p className="text-xs">
+                      {arrearsNote || 'Arrears estimate based on public ledger data. May not reflect actual DOF balance.'}
+                    </p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
             </div>
             
             {/* BBL display with copy button */}
@@ -275,7 +272,7 @@ export function TaxesCard({ viewBbl, buildingBbl, address, isUnitPage = false }:
                 </Badge>
               )}
               {data.total_rows_fetched > 0 && (
-                <span>{data.bill_rows_used} of {data.total_rows_fetched} rows used</span>
+                <span>{data.period_count} periods from {data.total_rows_fetched} rows</span>
               )}
             </div>
             
@@ -286,7 +283,7 @@ export function TaxesCard({ viewBbl, buildingBbl, address, isUnitPage = false }:
                   <Button variant="outline" size="sm" className="w-full justify-between h-8 px-2 border-amber-500/50 bg-amber-500/10">
                     <div className="flex items-center gap-2">
                       <Bug className="h-3 w-3 text-amber-600" />
-                      <span className="text-xs text-amber-700 dark:text-amber-400">View ledger rows (debug)</span>
+                      <span className="text-xs text-amber-700 dark:text-amber-400">View period buckets (debug)</span>
                     </div>
                     {debugOpen ? (
                       <ChevronUp className="h-4 w-4 text-amber-600" />
@@ -313,20 +310,19 @@ export function TaxesCard({ viewBbl, buildingBbl, address, isUnitPage = false }:
                         <div><strong>liability:</strong> {data.debug.fields_used.liability.join(', ')}</div>
                         <div><strong>balance:</strong> {data.debug.fields_used.balance.join(', ')}</div>
                         <div><strong>code:</strong> {data.debug.fields_used.code.join(', ')}</div>
+                        <div><strong>tax_year:</strong> {data.debug.fields_used.tax_year.join(', ')}</div>
+                        <div><strong>period:</strong> {data.debug.fields_used.period.join(', ')}</div>
                       </div>
                     </div>
                     
                     {/* Counts */}
                     <div>
-                      <p className="font-medium text-amber-700 dark:text-amber-400 mb-1">Row Counts:</p>
+                      <p className="font-medium text-amber-700 dark:text-amber-400 mb-1">Counts:</p>
                       <div className="bg-muted p-2 rounded text-[10px] space-y-1">
-                        <div>Total rows fetched: {data.total_rows_fetched}</div>
-                        <div>Bill rows used: {data.bill_rows_used}</div>
-                        <div>Rows excluded: {data.rows_excluded}</div>
+                        <div>Total raw rows fetched: {data.total_rows_fetched}</div>
+                        <div>Unique period buckets: {data.period_count}</div>
                         <div>Rows in latest period: {data.rows_in_latest_period}</div>
-                        {data.exclusion_reasons.length > 0 && (
-                          <div>Exclusion reasons: {data.exclusion_reasons.join('; ')}</div>
-                        )}
+                        <div>Running balance detected: {data.debug.running_balance_detected ? 'Yes' : 'No'}</div>
                       </div>
                     </div>
                     
@@ -340,20 +336,9 @@ export function TaxesCard({ viewBbl, buildingBbl, address, isUnitPage = false }:
                         <div>payment_status: {data.payment_status}</div>
                         <div>billing_cycle: {data.billing_cycle} ({data.billing_cycle_evidence})</div>
                         <div>arrears: {formatUSD(data.arrears)} ({data.arrears_note})</div>
+                        <div>latest_period_key: {data.debug.latest_period_key || 'null'}</div>
                       </div>
                     </div>
-                    
-                    {/* All Due Dates */}
-                    {data.debug.all_due_dates.length > 0 && (
-                      <div>
-                        <p className="font-medium text-amber-700 dark:text-amber-400 mb-1">
-                          All Due Dates ({data.debug.all_due_dates.length}):
-                        </p>
-                        <code className="block bg-muted p-2 rounded text-[10px] break-all">
-                          {data.debug.all_due_dates.join(', ')}
-                        </code>
-                      </div>
-                    )}
                     
                     {/* First Row Keys */}
                     {data.debug.first_row_keys.length > 0 && (
@@ -367,29 +352,35 @@ export function TaxesCard({ viewBbl, buildingBbl, address, isUnitPage = false }:
                       </div>
                     )}
                     
-                    {/* Sample Rows */}
-                    {data.debug.sample_rows.length > 0 && (
+                    {/* Period Buckets Table */}
+                    {data.debug.periods.length > 0 && (
                       <div>
                         <p className="font-medium text-amber-700 dark:text-amber-400 mb-1">
-                          Sample Rows ({data.debug.sample_rows.length}):
+                          Period Buckets ({data.debug.periods.length} shown):
                         </p>
-                        <div className="bg-muted p-2 rounded overflow-auto max-h-48">
+                        <div className="bg-muted p-2 rounded overflow-auto max-h-64">
                           <table className="text-[10px] w-full">
                             <thead>
                               <tr className="border-b border-border">
                                 <th className="text-left p-1">due_date</th>
-                                <th className="text-right p-1">liability</th>
-                                <th className="text-right p-1">balance</th>
-                                <th className="text-left p-1">code</th>
+                                <th className="text-right p-1">max_liab</th>
+                                <th className="text-right p-1">max_bal</th>
+                                <th className="text-right p-1">rows</th>
+                                <th className="text-left p-1">codes</th>
                               </tr>
                             </thead>
                             <tbody>
-                              {data.debug.sample_rows.map((row, idx) => (
+                              {data.debug.periods.map((period, idx) => (
                                 <tr key={idx} className="border-b border-border/50">
-                                  <td className="p-1">{row.due_date || '—'}</td>
-                                  <td className="text-right p-1 font-mono">{row.liability !== null && Number.isFinite(row.liability) ? row.liability.toFixed(2) : '—'}</td>
-                                  <td className="text-right p-1 font-mono">{row.balance !== null && Number.isFinite(row.balance) ? row.balance.toFixed(2) : '—'}</td>
-                                  <td className="p-1">{row.code || '—'}</td>
+                                  <td className="p-1">{period.due_date || '—'}</td>
+                                  <td className="text-right p-1 font-mono">
+                                    {Number.isFinite(period.max_liab) ? period.max_liab.toFixed(2) : '—'}
+                                  </td>
+                                  <td className="text-right p-1 font-mono">
+                                    {Number.isFinite(period.max_bal) ? period.max_bal.toFixed(2) : '—'}
+                                  </td>
+                                  <td className="text-right p-1">{period.row_count}</td>
+                                  <td className="p-1">{period.codes.join(', ') || '—'}</td>
                                 </tr>
                               ))}
                             </tbody>
