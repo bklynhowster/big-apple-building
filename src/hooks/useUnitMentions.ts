@@ -292,6 +292,55 @@ function extractUnitFromRecord(record: Record<string, unknown>): string | null {
   return result?.normalizedUnit ?? null;
 }
 
+// ============================================================================
+// DEDUPE HELPERS (stable IDs per category)
+// ============================================================================
+
+function getDobViolationStableId(record: ViolationRecord, raw: Record<string, unknown>): string {
+  const rawId =
+    (raw.dob_violation_number as string | undefined) ||
+    (raw.violation_number as string | undefined) ||
+    (raw.violationid as string | undefined);
+  return (rawId && String(rawId)) || record.recordId;
+}
+
+function getEcbStableId(record: ECBRecord, raw: Record<string, unknown>): string {
+  const rawId =
+    (raw.ecb_violation_number as string | undefined) ||
+    (raw.ecb_number as string | undefined) ||
+    (raw.ecb_violation_no as string | undefined);
+  return (rawId && String(rawId)) || record.recordId;
+}
+
+function getHPDStableId(
+  record: HPDViolationRecord | HPDComplaintRecord,
+  raw: Record<string, unknown>
+): string {
+  const rawId =
+    (raw.violation_id as string | undefined) ||
+    (raw.violationid as string | undefined) ||
+    (raw.complaintid as string | undefined) ||
+    (raw.complaint_id as string | undefined);
+  return (rawId && String(rawId)) || record.recordId;
+}
+
+function getPermitStableId(record: PermitRecord, raw: Record<string, unknown>): string {
+  const rawId =
+    (raw.job_number as string | undefined) ||
+    (raw.jobnumber as string | undefined) ||
+    (raw.permit_number as string | undefined) ||
+    (raw.permitnumber as string | undefined);
+  return (rawId && String(rawId)) || record.jobNumber || record.recordId;
+}
+
+function get311StableId(record: ServiceRequestRecord, raw: Record<string, unknown>): string {
+  const rawId =
+    (raw.unique_key as string | undefined) ||
+    (raw.service_request_id as string | undefined) ||
+    (raw.sr_id as string | undefined);
+  return (rawId && String(rawId)) || record.recordId;
+}
+
 function processFilingsUnits(
   dobFilingsUnits: UnitFromFilings[],
   unitMap: Map<string, CombinedUnitStats>
@@ -1176,7 +1225,49 @@ export function useUnitMentions(
     allLoadingComplete,
     stage: progress.stage,
   }), [dataSources, stats, totalSourceRecords, allLoadingComplete, progress.stage]);
-  
+
+  // DEV-only: sanity-check that counts are deduped and stable for one unit row.
+  // Logs raw mentions vs deduped IDs per category.
+  const dedupeDebugLoggedForBblRef = useRef<string>('');
+  useEffect(() => {
+    if (!DEBUG_MODE) return;
+    if (dedupeDebugLoggedForBblRef.current === bbl) return;
+    if (stats.length === 0) return;
+
+    const targetUnit = stats[0].unit;
+
+    const summarize = <T extends { recordId: string; raw: Record<string, unknown> }>(
+      records: T[],
+      stableIdFor: (r: T, rawRecord: Record<string, unknown>) => string
+    ) => {
+      let rawMentions = 0;
+      const ids = new Set<string>();
+      for (const r of records) {
+        const rawRecord = toRawRecord(r);
+        if (!rawRecord) continue;
+        const extraction = extractUnitFromRecordWithTrace(rawRecord);
+        if (!extraction) continue;
+        if (extraction.normalizedUnit !== targetUnit) continue;
+        rawMentions++;
+        ids.add(stableIdFor(r, rawRecord));
+      }
+      return { rawMentions, deduped: ids.size };
+    };
+
+    const summary = {
+      unit: targetUnit,
+      permits: summarize(dataSources.dobPermits, (r, raw) => getPermitStableId(r, raw)),
+      hpdViolations: summarize(dataSources.hpdViolations, (r, raw) => getHPDStableId(r, raw)),
+      hpdComplaints: summarize(dataSources.hpdComplaints, (r, raw) => getHPDStableId(r, raw)),
+      threeOneOne: summarize(dataSources.serviceRequests, (r, raw) => get311StableId(r, raw)),
+      dobViolations: summarize(dataSources.dobViolations, (r, raw) => getDobViolationStableId(r, raw)),
+      ecbViolations: summarize(dataSources.ecbViolations, (r, raw) => getEcbStableId(r, raw)),
+    };
+
+    console.debug('[UnitMentions] dedupe summary (raw vs deduped) for one unit', summary);
+    dedupeDebugLoggedForBblRef.current = bbl;
+  }, [bbl, stats, dataSources]);
+
   const stopScanning = useCallback(() => {
     abortRef.current = true;
     setIsPaused(true);
