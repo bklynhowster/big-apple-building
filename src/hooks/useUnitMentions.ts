@@ -5,9 +5,7 @@ import {
   clearNumericUnitDebugStats,
   type UnitConfidence,
   type UnitType,
-
-// DEV-only debug mode
-const DEBUG_MODE = import.meta.env.DEV && typeof window !== 'undefined' && window.location.search.includes('debug=1');
+} from '@/utils/unit';
 import type { HPDComplaintRecord, HPDViolationRecord } from '@/hooks/useHPD';
 import type { ServiceRequestRecord } from '@/hooks/use311';
 import type { UnitRosterEntry } from '@/hooks/useCoopUnitRoster';
@@ -120,12 +118,12 @@ interface CachedResult {
 
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
 // Cache versioning to prevent "stuck at zero" after deployments
-// BUMPED to v6 to invalidate all old caches after dedupe fix
-const UNIT_MENTIONS_CACHE_VERSION = 6;
+// BUMPED to v7 to invalidate caches after stricter numeric unit matching fix
+const UNIT_MENTIONS_CACHE_VERSION = 7;
 const CACHE_KEY_PREFIX = `unit_mentions_cache_v${UNIT_MENTIONS_CACHE_VERSION}_`;
 
-// DEV-only debug mode (Vite-safe). Enabled only with ?debug=1.
-const DEBUG_MODE = import.meta.env.DEV && typeof window !== 'undefined' && window.location.search.includes('debug=1');
+// DEV-only debug mode (SSR-safe). Enabled only with ?debug=1.
+const DEBUG_MODE = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('debug');
 
 // ============================================================================
 // SOURCE DIAGNOSTICS (DEV-only)
@@ -993,29 +991,78 @@ export function useUnitMentions(
     stage,
   }), [dataSources, computedStats, totalSourceRecords, allLoadingComplete, stage]);
 
-  // DEV-only: Debug panel data
+  // DEV-only: Debug panel data - comprehensive numeric unit debug output
   const debugPanelRef = useRef<{ logged: boolean; bbl: string }>({ logged: false, bbl: '' });
   useEffect(() => {
     if (!DEBUG_MODE) return;
     if (debugPanelRef.current.bbl === bbl && debugPanelRef.current.logged) return;
     if (!allLoadingComplete) return;
-    if (computedStats.length === 0) return;
     
-    // Log dedupe summary for first unit
-    const targetUnit = computedStats[0].unit;
-    const targetStat = computedStats[0];
+    // Clear previous debug stats before logging new ones
+    clearNumericUnitDebugStats();
     
-    console.debug('[UnitMentions] DEDUPE DEBUG PANEL', {
-      unit: targetUnit,
-      records_received: totalSourceRecords,
-      vio_ids_raw_length: dataSources.dobViolations.length + dataSources.ecbViolations.length,
-      vio_ids_unique_length: targetStat.dobViolationsCount + targetStat.ecbViolationsCount,
-      fetch_count: 1, // We don't track this, but the computation is idempotent
-      hpd_unique: targetStat.hpdCount,
-      threeOneOne_unique: targetStat.threeOneOneCount,
-      permits_unique: targetStat.permitsCount,
-      isStable: true, // Counts are now derived from Sets
+    // Get numeric unit debug stats from the extraction module
+    const numericStats = getNumericUnitDebugStats();
+    
+    // Log comprehensive debug info
+    console.group('[UnitMentions] DEBUG PANEL - ?debug=1');
+    
+    console.log('📊 EXTRACTION SUMMARY:', {
+      totalRecordsScanned: totalSourceRecords,
+      uniqueUnitsFound: computedStats.length,
+      sources: {
+        dobViolations: dataSources.dobViolations.length,
+        ecbViolations: dataSources.ecbViolations.length,
+        hpdViolations: dataSources.hpdViolations.length,
+        hpdComplaints: dataSources.hpdComplaints.length,
+        serviceRequests311: dataSources.serviceRequests.length,
+        permits: dataSources.dobPermits.length,
+      }
     });
+    
+    // Log per-unit counts
+    if (computedStats.length > 0) {
+      console.log('📋 TOP UNITS BY VIO COUNT:');
+      const sortedByVio = [...computedStats]
+        .sort((a, b) => (b.dobViolationsCount + b.ecbViolationsCount) - (a.dobViolationsCount + a.ecbViolationsCount))
+        .slice(0, 10);
+      
+      sortedByVio.forEach(stat => {
+        const vioTotal = stat.dobViolationsCount + stat.ecbViolationsCount;
+        console.log(`  Unit "${stat.unit}": VIO=${vioTotal} (DOB=${stat.dobViolationsCount}, ECB=${stat.ecbViolationsCount}), HPD=${stat.hpdCount}, 311=${stat.threeOneOneCount}`);
+      });
+    }
+    
+    // Log numeric unit stats if any
+    if (numericStats.length > 0) {
+      console.log('🔢 NUMERIC UNIT DEBUG (units that are pure numbers):');
+      numericStats.forEach(stat => {
+        console.log(`  Unit "${stat.unitLabel}":`, {
+          regexUsed: stat.regexUsed,
+          matchesBySource: stat.matchesBySource,
+          sampleSnippets: stat.sampleSnippets,
+        });
+      });
+    } else {
+      console.log('✅ No numeric-only units extracted (good for condo buildings with labels like 1, 2, 3)');
+    }
+    
+    // Find unit "2" specifically if it exists (common false positive)
+    const unit2 = computedStats.find(s => s.unit === '2');
+    if (unit2) {
+      console.warn('⚠️ UNIT "2" FOUND - potential false positive:', {
+        vioCount: unit2.dobViolationsCount + unit2.ecbViolationsCount,
+        hpdCount: unit2.hpdCount,
+        threeOneOneCount: unit2.threeOneOneCount,
+        violationRefs: unit2.violationRefs.slice(0, 5).map(r => ({
+          id: r.id,
+          sourceField: r.sourceField,
+          snippet: r.snippet?.slice(0, 80),
+        })),
+      });
+    }
+    
+    console.groupEnd();
     
     debugPanelRef.current = { logged: true, bbl };
   }, [allLoadingComplete, computedStats, bbl, totalSourceRecords, dataSources]);

@@ -381,25 +381,27 @@ function isNumericOnly(token: string): boolean {
 /**
  * For numeric-only tokens, check additional context to reduce false positives.
  * Returns false if the context suggests the number is NOT a unit reference.
+ * 
+ * CRITICAL: Be conservative - if we can't confidently confirm it's a unit, reject it.
  */
 function validateNumericContextual(text: string, matchIndex: number, matchLength: number, numericToken: string): boolean {
-  // Get surrounding context (50 chars before and after)
-  const start = Math.max(0, matchIndex - 50);
-  const end = Math.min(text.length, matchIndex + matchLength + 50);
+  // Get surrounding context (80 chars before and after for thorough checking)
+  const start = Math.max(0, matchIndex - 80);
+  const end = Math.min(text.length, matchIndex + matchLength + 80);
   const context = text.slice(start, end).toUpperCase();
+  const fullTextUpper = text.toUpperCase();
   
-  // Reject if this looks like a date pattern (2025-02-01, 02/01/2025, etc.)
-  // Check if the numeric token is part of a date-like sequence
+  // 1) Reject if this looks like a date pattern
   const datePatterns = [
-    /\b\d{4}[-\/]\d{1,2}[-\/]\d{1,2}\b/,  // ISO date
-    /\b\d{1,2}[-\/]\d{1,2}[-\/]\d{2,4}\b/,  // US date
+    /\b\d{4}[-\/]\d{1,2}[-\/]\d{1,2}\b/,     // ISO date: 2025-02-01
+    /\b\d{1,2}[-\/]\d{1,2}[-\/]\d{2,4}\b/,   // US date: 02/01/2025
     /\b(?:JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)[A-Z]*\s*\d{1,2}/i,  // Month DD
+    /\b\d{1,2}\s*(?:JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)/i,        // DD Month
   ];
   
   for (const dp of datePatterns) {
     const dateMatch = context.match(dp);
     if (dateMatch) {
-      // Check if our numeric token is part of this date
       const dateStr = dateMatch[0];
       if (dateStr.includes(numericToken)) {
         debugLog('NumericContext.reject_date', { context: context.slice(0, 80), numericToken, dateStr });
@@ -408,17 +410,38 @@ function validateNumericContextual(text: string, matchIndex: number, matchLength
     }
   }
   
-  // Reject if preceded by section symbol, article, paragraph markers
-  const priorContext = text.slice(Math.max(0, matchIndex - 10), matchIndex).toUpperCase();
-  if (/[§¶]|SECTION|ARTICLE|PARAGRAPH|SUBSECTION|PART|ITEM|NO\.|NUMBER|ISSUE|CASE|REF|ID/i.test(priorContext)) {
+  // 2) Reject if preceded by legal/code markers (within 15 chars before the match)
+  const priorContext = text.slice(Math.max(0, matchIndex - 15), matchIndex).toUpperCase();
+  const legalMarkers = /[§¶]|SECTION|ARTICLE|PARAGRAPH|SUBSECTION|PART|ITEM|NO\.|NUMBER|ISSUE|CASE|REF|ID|ADM\s*CODE|ADMIN\s*CODE|HMC|MDL|MMC|BC\s*§|NYC\s*ADMIN/i;
+  if (legalMarkers.test(priorContext)) {
     debugLog('NumericContext.reject_legal_marker', { priorContext, numericToken });
     return false;
   }
   
-  // Reject if this is clearly a count/quantity (e.g., "2 violations", "3 floors")
-  const postContext = text.slice(matchIndex + matchLength, matchIndex + matchLength + 20).toUpperCase();
-  if (/^\s*(VIOLATION|FLOOR|STORY|STORIES|LEVEL|DAY|WEEK|MONTH|YEAR|HOUR|MINUTE|ITEM|ISSUE|COUNT|TIME|UNIT)S?\b/i.test(postContext)) {
+  // 3) Reject if this is clearly a count/quantity (e.g., "2 violations", "3 floors")
+  const postContext = text.slice(matchIndex + matchLength, matchIndex + matchLength + 25).toUpperCase();
+  const quantityWords = /^\s*(VIOLATION|FLOOR|STORY|STORIES|LEVEL|DAY|WEEK|MONTH|YEAR|HOUR|MINUTE|ITEM|ISSUE|COUNT|TIME|UNIT|DWELLING|FAMILY|FAMILIES|ROOM|BEDROOM|BATHROOM|PERSON|PEOPLE|COMPLAINT|CONDITION|DEFECT|HAZARD|INFRACTION|OFFENSE|CHARGE|PENALTY|FINE|DOLLAR|PERCENT|%)S?\b/i;
+  if (quantityWords.test(postContext)) {
     debugLog('NumericContext.reject_quantity', { postContext, numericToken });
+    return false;
+  }
+  
+  // 4) Reject if the number appears to be a year (4 digits starting with 19 or 20)
+  if (/^(19|20)\d{2}$/.test(numericToken)) {
+    debugLog('NumericContext.reject_year', { numericToken });
+    return false;
+  }
+  
+  // 5) Reject if preceded by common non-unit prefixes
+  const nonUnitPrefixes = /\b(CLASS|TYPE|CODE|CATEGORY|PRIORITY|STATUS|PHASE|STEP|STAGE|LOT|BLOCK|BIN|BBL|JOB|PERMIT|APPLICATION|DOCKET|INDEX|SEQUENCE|ORDER|RANK)\s*#?\s*$/i;
+  if (nonUnitPrefixes.test(priorContext)) {
+    debugLog('NumericContext.reject_non_unit_prefix', { priorContext, numericToken });
+    return false;
+  }
+  
+  // 6) Reject if followed by ordinal suffix patterns that would make it a floor reference
+  if (/^\s*(ST|ND|RD|TH)\s*(FLOOR|FL|STORY|LEVEL)/i.test(postContext)) {
+    debugLog('NumericContext.reject_floor_ordinal', { postContext, numericToken });
     return false;
   }
   
