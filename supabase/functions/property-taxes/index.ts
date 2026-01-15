@@ -336,24 +336,30 @@ interface ArrearsResult {
 function computeArrears(periods: PeriodAgg[], latestDue: string | null): ArrearsResult {
   const today = new Date().toISOString().slice(0, 10);
   
-  // Filter to past-due periods only (due_date < today, exclude latest period)
+  // Filter to past-due periods only:
+  // 1. due_date must exist
+  // 2. due_date < today (past due)
+  // 3. MUST NOT be the latest billing period (even if unpaid, current period is not arrears)
   const pastDue = periods.filter(p => {
     if (!p.due_date) return false;
-    if (p.due_date >= today) return false;
+    // Exclude the latest period - current quarter is NEVER arrears, even if unpaid
     if (latestDue && p.due_date === latestDue) return false;
+    // Only include periods that are actually past due (before today)
+    if (p.due_date >= today) return false;
     return true;
   });
   
-  // Get positive balances from past-due periods
+  // Get positive balances from past-due periods (excluding latest)
   const pastPosBalances = pastDue
     .map(p => p.max_bal)
     .filter(b => b > 0);
   
+  // If no past-due periods with positive balances, arrears is 0
   if (pastPosBalances.length === 0) {
     return {
       arrears: 0,
       arrearsAvailable: true,
-      arrearsNote: pastDue.length === 0 ? 'No past-due periods found' : 'All past periods paid',
+      arrearsNote: 'No past-due balances (current period excluded)',
       runningBalanceDetected: false,
     };
   }
@@ -375,11 +381,11 @@ function computeArrears(periods: PeriodAgg[], latestDue: string | null): Arrears
   if (runningLikely) {
     // Running balance: take MAX (most recent cumulative balance)
     arrearsAmount = Math.max(...pastPosBalances);
-    arrearsNote = `Max balance from ${pastDue.length} past-due periods (running balance pattern detected)`;
+    arrearsNote = `Past-due balance from ${pastDue.length} prior periods (running balance detected)`;
   } else {
     // Discrete periods: SUM the balances
     arrearsAmount = pastPosBalances.reduce((s, v) => s + v, 0);
-    arrearsNote = `Sum of positive balances from ${pastPosBalances.length} past-due periods`;
+    arrearsNote = `Sum of ${pastPosBalances.length} past-due period balances`;
   }
   
   arrearsAmount = Math.round(arrearsAmount * 100) / 100;
@@ -388,7 +394,7 @@ function computeArrears(periods: PeriodAgg[], latestDue: string | null): Arrears
     return {
       arrears: 0,
       arrearsAvailable: true,
-      arrearsNote: 'All past periods paid',
+      arrearsNote: 'No past-due balances',
       runningBalanceDetected: runningLikely,
     };
   }
