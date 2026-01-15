@@ -1,9 +1,13 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   extractUnitFromRecordWithTrace,
+  getNumericUnitDebugStats,
+  clearNumericUnitDebugStats,
   type UnitConfidence,
   type UnitType,
-} from '@/utils/unit';
+
+// DEV-only debug mode
+const DEBUG_MODE = import.meta.env.DEV && typeof window !== 'undefined' && window.location.search.includes('debug=1');
 import type { HPDComplaintRecord, HPDViolationRecord } from '@/hooks/useHPD';
 import type { ServiceRequestRecord } from '@/hooks/use311';
 import type { UnitRosterEntry } from '@/hooks/useCoopUnitRoster';
