@@ -16,6 +16,12 @@ interface TaxesCardProps {
   isUnitPage?: boolean;
 }
 
+type TaxContext = 'building' | 'unit';
+
+function getTaxContextLabel(context: TaxContext): string {
+  return context === 'unit' ? 'Unit BBL taxes' : 'Billing BBL taxes';
+}
+
 function parseBBL(bbl: string): { borough: string; block: string; lot: string } | null {
   if (!bbl || bbl.length !== 10) return null;
   return {
@@ -63,11 +69,25 @@ export function TaxesCard({ viewBbl, buildingBbl, address, isUnitPage = false }:
   
   const { loading, error, data, fetch, retry } = usePropertyTaxes();
   
+  // CRITICAL: Context-aware tax querying
+  // - On unit pages: query ONLY the unit BBL, never pass buildingBbl
+  // - On building pages: query the viewBbl (which may be billing BBL)
+  // This prevents context leak where unit pages would inherit building tax data
+  const taxContext: TaxContext = isUnitPage ? 'unit' : 'building';
+  
   useEffect(() => {
     if (viewBbl && viewBbl.length === 10) {
-      fetch(viewBbl, buildingBbl);
+      // On unit pages, ONLY query unit BBL - no fallback to building
+      // On building pages, query the billing BBL directly (viewBbl is already the billing BBL)
+      if (isUnitPage) {
+        // Query unit BBL only - do NOT pass buildingBbl
+        fetch(viewBbl, undefined);
+      } else {
+        // Building context - query the provided BBL directly
+        fetch(viewBbl, undefined);
+      }
     }
-  }, [viewBbl, buildingBbl, fetch]);
+  }, [viewBbl, isUnitPage, fetch]);
   
   const handleCopy = async (value: string) => {
     try {
@@ -127,8 +147,11 @@ export function TaxesCard({ viewBbl, buildingBbl, address, isUnitPage = false }:
             </TooltipProvider>
           </div>
         </div>
-        <CardDescription>
-          NYC Department of Finance property tax
+        <CardDescription className="flex items-center gap-2">
+          <span>NYC Department of Finance property tax</span>
+          <Badge variant="outline" className="text-[10px] px-1.5 py-0">
+            {getTaxContextLabel(taxContext)}
+          </Badge>
         </CardDescription>
       </CardHeader>
       
@@ -257,11 +280,14 @@ export function TaxesCard({ viewBbl, buildingBbl, address, isUnitPage = false }:
               </div>
             </div>
             
-            {/* No data found message */}
+            {/* No data found message - context-aware */}
             {data.no_data_found && (
               <Alert className="py-2">
                 <AlertDescription className="text-xs text-muted-foreground">
-                  No ledger data found for this property in NYC DOF records.
+                  {isUnitPage 
+                    ? 'Unit-level tax ledger not available from NYC DOF.'
+                    : 'No ledger data found for this property in NYC DOF records.'
+                  }
                 </AlertDescription>
               </Alert>
             )}
