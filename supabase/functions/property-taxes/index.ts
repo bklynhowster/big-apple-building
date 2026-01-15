@@ -675,9 +675,14 @@ serve(async (req) => {
     const includeDebug = debugFromQuery || debugFromBody === true || debugFromBody === 1 || debugFromBody === '1';
     
     const viewBbl = view_bbl || bbl;
-    const primaryBbl = building_bbl || viewBbl;
+    // CRITICAL: No automatic fallback to building_bbl
+    // The frontend is responsible for context-aware querying:
+    // - Unit pages should pass only the unit BBL
+    // - Building pages should pass the billing BBL directly
+    // This prevents context leak where unit pages inherit building tax data
+    const primaryBbl = viewBbl;
     
-    console.log(`[property-taxes] Request - view_bbl: ${viewBbl}, building_bbl: ${building_bbl || 'none'}, primary: ${primaryBbl}, debug: ${includeDebug}`);
+    console.log(`[property-taxes] Request - view_bbl: ${viewBbl}, building_bbl: ${building_bbl || 'none (ignored)'}, primary: ${primaryBbl}, debug: ${includeDebug}`);
     
     if (!viewBbl || viewBbl.length < 8) {
       return new Response(
