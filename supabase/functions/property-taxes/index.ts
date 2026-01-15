@@ -5,67 +5,9 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-// NYC Open Data datasets
-const PLUTO_DATASET_ID = '64uk-42ks';
-const PLUTO_BASE_URL = `https://data.cityofnewyork.us/resource/${PLUTO_DATASET_ID}.json`;
-
-// DOF Assessment Roll dataset - primary source with billable assessed values
-// https://data.cityofnewyork.us/dataset/Property-Valuation-and-Assessment-Data/yjxr-fw8i
-const DOF_ASSESSMENT_DATASET_ID = 'yjxr-fw8i';
-const DOF_ASSESSMENT_BASE_URL = `https://data.cityofnewyork.us/resource/${DOF_ASSESSMENT_DATASET_ID}.json`;
-
-// NYC Tax Rates by Tax Class (FY 2024-25)
-// Source: https://www.nyc.gov/site/finance/property/property-tax-rates.page
-const NYC_TAX_RATES: Record<string, number> = {
-  '1': 0.19963,   // Class 1: 1-3 family residential
-  '2': 0.12235,   // Class 2: Multi-family residential
-  '2A': 0.12235,  // Class 2A: 4-6 unit rentals
-  '2B': 0.12235,  // Class 2B: 7-10 unit rentals
-  '2C': 0.12235,  // Class 2C: 2-10 unit co-ops/condos
-  '3': 0.11808,   // Class 3: Utility property
-  '4': 0.10362,   // Class 4: Commercial property
-};
-
-// Basis types for tracking data source
-type TaxBasis = 'dof_assessment' | 'pluto_estimate' | 'unavailable';
-type TaxConfidence = 'high' | 'estimated' | 'none';
-type ArrearsStatus = 'none_detected' | 'unavailable';
-
-// Quarter due dates - NYC property tax is billed quarterly
-// Q1: Jan 1, Q2: Apr 1, Q3: Jul 1, Q4: Oct 1
-function getNextQuarterDueDate(): { quarter: number; dueDate: string; dueDateFormatted: string } {
-  const now = new Date();
-  const month = now.getMonth(); // 0-based
-  const year = now.getFullYear();
-  
-  // Find the next upcoming due date
-  const quarters = [
-    { month: 0, day: 1, quarter: 1 },   // Jan 1
-    { month: 3, day: 1, quarter: 2 },   // Apr 1
-    { month: 6, day: 1, quarter: 3 },   // Jul 1
-    { month: 9, day: 1, quarter: 4 },   // Oct 1
-  ];
-  
-  for (const q of quarters) {
-    const dueDate = new Date(year, q.month, q.day);
-    if (dueDate > now) {
-      const formatted = dueDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
-      return {
-        quarter: q.quarter,
-        dueDate: `${year}-${String(q.month + 1).padStart(2, '0')}-01`,
-        dueDateFormatted: formatted,
-      };
-    }
-  }
-  
-  // If past Oct 1, next due date is Jan 1 of next year
-  const nextYear = year + 1;
-  return {
-    quarter: 1,
-    dueDate: `${nextYear}-01-01`,
-    dueDateFormatted: `January 1, ${nextYear}`,
-  };
-}
+// NYC Open Data DOF Property Charges Balance dataset (ledger rows)
+const DATASET_ID = 'scjx-j6np';
+const BASE_URL = `https://data.cityofnewyork.us/resource/${DATASET_ID}.json`;
 
 // In-memory cache
 interface CacheEntry {
@@ -74,6 +16,10 @@ interface CacheEntry {
 }
 const cache = new Map<string, CacheEntry>();
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
+
+// Billing cycle types
+type BillingCycle = 'Quarterly' | 'Semiannual' | 'Unknown';
+type PaymentStatus = 'paid' | 'unpaid' | 'unknown';
 
 // Normalize BBL to 10-digit format
 function normalizeBbl(bbl: string): string {
@@ -88,8 +34,45 @@ function normalizeBbl(bbl: string): string {
   return cleaned.padStart(10, '0');
 }
 
-// Get first matching field value from a row
-function getFieldValue(row: Record<string, unknown>, candidates: string[]): string | number | null {
+// Generate candidate keys for lookup
+function generateCandidateKeys(bbl: string): string[] {
+  const candidates: string[] = [];
+  const original = bbl.padStart(10, '0');
+  candidates.push(original);
+  candidates.push(original + '0'); // Some datasets use 11-digit parid
+  const normalized = normalizeBbl(bbl);
+  if (normalized !== original) {
+    candidates.push(normalized);
+    candidates.push(normalized + '0');
+  }
+  return [...new Set(candidates)];
+}
+
+// Raw row from NYC Open Data
+interface RawRow {
+  [key: string]: unknown;
+}
+
+// Parsed ledger row
+interface LedgerRow {
+  dueDate: Date | null;
+  dueDateStr: string | null;
+  liability: number | null;  // sum_liab - the charge amount
+  balance: number | null;    // sum_bal - remaining balance
+  code: string | null;       // charge code (CHG, PMT, etc.)
+  cycle: string | null;      // billing cycle indicator
+  rawRow: RawRow;
+}
+
+// Field candidates for extraction
+const DUE_DATE_FIELDS = ['due_date', 'dt_pd_begin', 'dt_pd_end', 'stmtdate', 'bill_date', 'effective_date'];
+const LIABILITY_FIELDS = ['sum_liab', 'amount', 'charge_amount', 'original_amount', 'billed_amount'];
+const BALANCE_FIELDS = ['sum_bal', 'open_balance', 'outstanding_amount', 'outstanding_balance', 'balance'];
+const CODE_FIELDS = ['code', 'type', 'charge_type', 'chargetype'];
+const CYCLE_FIELDS = ['cycle', 'billing_cycle'];
+
+// Get first matching field value
+function getFieldValue(row: RawRow, candidates: string[]): string | number | null {
   for (const field of candidates) {
     const val = row[field];
     if (val !== undefined && val !== null && val !== '') {
@@ -99,430 +82,414 @@ function getFieldValue(row: Record<string, unknown>, candidates: string[]): stri
   return null;
 }
 
+// Parse date string to Date object
+function parseDate(dateStr: string | null): Date | null {
+  if (!dateStr) return null;
+  try {
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return null;
+    return d;
+  } catch {
+    return null;
+  }
+}
+
 // Parse numeric value
-function parseNumericValue(value: string | number | null): number | null {
+function parseNumber(value: string | number | null): number | null {
   if (value === null) return null;
   const num = typeof value === 'number' ? value : parseFloat(value);
   return isNaN(num) ? null : num;
 }
 
-// Get tax rate for a tax class
-function getTaxRate(taxClass: string | null): { rate: number | null; rateDescription: string } {
-  if (!taxClass) {
-    return { rate: null, rateDescription: 'Unknown tax class' };
+// Format date for display
+function formatDateDisplay(date: Date): string {
+  return `${String(date.getMonth() + 1).padStart(2, '0')}/${String(date.getDate()).padStart(2, '0')}/${date.getFullYear()}`;
+}
+
+// Parse a raw row into structured LedgerRow
+function parseRow(raw: RawRow): LedgerRow {
+  const dueDateRaw = getFieldValue(raw, DUE_DATE_FIELDS);
+  const dueDateStr = dueDateRaw ? String(dueDateRaw) : null;
+  const dueDate = parseDate(dueDateStr);
+  
+  const liabilityRaw = getFieldValue(raw, LIABILITY_FIELDS);
+  const liability = parseNumber(liabilityRaw);
+  
+  const balanceRaw = getFieldValue(raw, BALANCE_FIELDS);
+  const balance = parseNumber(balanceRaw);
+  
+  const codeRaw = getFieldValue(raw, CODE_FIELDS);
+  const code = codeRaw ? String(codeRaw).toUpperCase().trim() : null;
+  
+  const cycleRaw = getFieldValue(raw, CYCLE_FIELDS);
+  const cycle = cycleRaw ? String(cycleRaw) : null;
+  
+  return { dueDate, dueDateStr, liability, balance, code, cycle, rawRow: raw };
+}
+
+// Infer billing cycle from due date patterns
+function inferBillingCycle(rows: LedgerRow[]): { cycle: BillingCycle; evidence: string } {
+  const now = new Date();
+  const oneYearAgo = new Date(now);
+  oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
+  
+  // Get unique due date months from last 12 months
+  const recentRows = rows.filter(r => r.dueDate && r.dueDate >= oneYearAgo);
+  const uniqueMonths = new Set<number>();
+  
+  for (const row of recentRows) {
+    if (row.dueDate) {
+      uniqueMonths.add(row.dueDate.getMonth());
+    }
   }
   
-  const normalizedClass = taxClass.toUpperCase().trim();
+  const monthsArray = Array.from(uniqueMonths).sort((a, b) => a - b);
   
-  // Try exact match first
-  if (NYC_TAX_RATES[normalizedClass]) {
+  // Quarterly pattern: Jan(0), Apr(3), Jul(6), Oct(9) - 4 months
+  // Semiannual pattern: Jan(0), Jul(6) - 2 months
+  const quarterlyMonths = [0, 3, 6, 9];
+  const semiannualMonths = [0, 6];
+  
+  // Check if matches quarterly pattern (any 3-4 of the quarterly months)
+  const matchedQuarterly = monthsArray.filter(m => quarterlyMonths.includes(m));
+  const matchedSemiannual = monthsArray.filter(m => semiannualMonths.includes(m));
+  
+  if (matchedQuarterly.length >= 3) {
     return { 
-      rate: NYC_TAX_RATES[normalizedClass], 
-      rateDescription: `Tax Class ${normalizedClass} (${(NYC_TAX_RATES[normalizedClass] * 100).toFixed(3)}%)` 
+      cycle: 'Quarterly', 
+      evidence: `Found ${matchedQuarterly.length} quarterly due date months: ${monthsArray.map(m => ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][m]).join(', ')}`
     };
   }
   
-  // Try first character (e.g., "2A" -> "2")
-  const baseClass = normalizedClass.charAt(0);
-  if (NYC_TAX_RATES[baseClass]) {
+  if (matchedSemiannual.length === 2 && monthsArray.length <= 3) {
     return { 
-      rate: NYC_TAX_RATES[baseClass], 
-      rateDescription: `Tax Class ${normalizedClass} (${(NYC_TAX_RATES[baseClass] * 100).toFixed(3)}%)` 
+      cycle: 'Semiannual', 
+      evidence: `Found semiannual pattern: ${monthsArray.map(m => ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][m]).join(', ')}`
     };
   }
   
-  return { rate: null, rateDescription: `Unknown tax class: ${taxClass}` };
+  if (uniqueMonths.size === 0) {
+    return { cycle: 'Unknown', evidence: 'No due dates found in last 12 months' };
+  }
+  
+  return { 
+    cycle: 'Unknown', 
+    evidence: `Inconclusive pattern: months found = ${monthsArray.map(m => ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][m]).join(', ')}`
+  };
+}
+
+// Filter to bill charge rows (positive liability, has due date)
+function filterBillRows(rows: LedgerRow[]): { billRows: LedgerRow[]; excludedCount: number; exclusionReasons: string[] } {
+  const exclusionReasons: string[] = [];
+  let excludedCount = 0;
+  
+  const billRows = rows.filter(row => {
+    // Must have a due date
+    if (!row.dueDate) {
+      excludedCount++;
+      return false;
+    }
+    
+    // Must have positive liability (a charge, not a payment/credit)
+    if (row.liability === null || row.liability <= 0) {
+      excludedCount++;
+      return false;
+    }
+    
+    // Exclude payment codes if identifiable
+    if (row.code === 'PMT' || row.code === 'PAY' || row.code === 'CRD' || row.code === 'REF') {
+      excludedCount++;
+      if (!exclusionReasons.includes(`Excluded code: ${row.code}`)) {
+        exclusionReasons.push(`Excluded code: ${row.code}`);
+      }
+      return false;
+    }
+    
+    return true;
+  });
+  
+  if (excludedCount > 0 && exclusionReasons.length === 0) {
+    exclusionReasons.push(`Excluded ${excludedCount} rows with no due_date or non-positive sum_liab`);
+  }
+  
+  return { billRows, excludedCount, exclusionReasons };
+}
+
+// Compute latest bill from bill rows
+function computeLatestBill(billRows: LedgerRow[]): {
+  latestDueDate: Date | null;
+  latestDueDateStr: string | null;
+  latestBillAmount: number | null;
+  latestPeriodBalance: number | null;
+  paymentStatus: PaymentStatus;
+  rowsInLatestPeriod: number;
+} {
+  if (billRows.length === 0) {
+    return {
+      latestDueDate: null,
+      latestDueDateStr: null,
+      latestBillAmount: null,
+      latestPeriodBalance: null,
+      paymentStatus: 'unknown',
+      rowsInLatestPeriod: 0,
+    };
+  }
+  
+  // Find max due date
+  let maxDate: Date | null = null;
+  for (const row of billRows) {
+    if (row.dueDate && (!maxDate || row.dueDate > maxDate)) {
+      maxDate = row.dueDate;
+    }
+  }
+  
+  if (!maxDate) {
+    return {
+      latestDueDate: null,
+      latestDueDateStr: null,
+      latestBillAmount: null,
+      latestPeriodBalance: null,
+      paymentStatus: 'unknown',
+      rowsInLatestPeriod: 0,
+    };
+  }
+  
+  // Filter to rows with the latest due date (compare by date string to handle time differences)
+  const maxDateStr = maxDate.toISOString().split('T')[0];
+  const latestPeriodRows = billRows.filter(row => {
+    if (!row.dueDate) return false;
+    return row.dueDate.toISOString().split('T')[0] === maxDateStr;
+  });
+  
+  // Sum liability for latest period (this is the bill amount)
+  let totalLiability = 0;
+  let totalBalance = 0;
+  let hasValidBalance = false;
+  
+  for (const row of latestPeriodRows) {
+    if (row.liability !== null && row.liability > 0) {
+      totalLiability += row.liability;
+    }
+    if (row.balance !== null) {
+      totalBalance += row.balance;
+      hasValidBalance = true;
+    }
+  }
+  
+  // Round to cents
+  totalLiability = Math.round(totalLiability * 100) / 100;
+  totalBalance = Math.round(totalBalance * 100) / 100;
+  
+  // Determine payment status
+  let paymentStatus: PaymentStatus = 'unknown';
+  if (hasValidBalance) {
+    if (totalBalance <= 0.01) { // Allow for small rounding errors
+      paymentStatus = 'paid';
+    } else {
+      paymentStatus = 'unpaid';
+    }
+  }
+  
+  return {
+    latestDueDate: maxDate,
+    latestDueDateStr: formatDateDisplay(maxDate),
+    latestBillAmount: totalLiability > 0 ? totalLiability : null,
+    latestPeriodBalance: hasValidBalance ? totalBalance : null,
+    paymentStatus,
+    rowsInLatestPeriod: latestPeriodRows.length,
+  };
+}
+
+// Compute arrears (past-due positive balances)
+function computeArrears(rows: LedgerRow[], latestDueDate: Date | null): {
+  arrears: number | null;
+  arrearsAvailable: boolean;
+  arrearsNote: string;
+} {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  
+  // Filter to rows with due_date < today (past due)
+  // and with positive balance
+  let totalArrears = 0;
+  let hasArrearsData = false;
+  let pastDueRowCount = 0;
+  
+  for (const row of rows) {
+    if (!row.dueDate) continue;
+    
+    // Skip if this is the latest period (not arrears)
+    if (latestDueDate && row.dueDate.toISOString().split('T')[0] === latestDueDate.toISOString().split('T')[0]) {
+      continue;
+    }
+    
+    // Only consider rows with due_date < today
+    if (row.dueDate >= today) continue;
+    
+    pastDueRowCount++;
+    
+    // Sum positive balances (amounts still owed)
+    if (row.balance !== null && row.balance > 0) {
+      totalArrears += row.balance;
+      hasArrearsData = true;
+    }
+  }
+  
+  if (!hasArrearsData) {
+    if (pastDueRowCount === 0) {
+      return {
+        arrears: 0,
+        arrearsAvailable: true,
+        arrearsNote: 'No past-due periods found',
+      };
+    }
+    return {
+      arrears: null,
+      arrearsAvailable: false,
+      arrearsNote: 'Balance data unavailable for past periods',
+    };
+  }
+  
+  totalArrears = Math.round(totalArrears * 100) / 100;
+  
+  if (totalArrears <= 0.01) {
+    return {
+      arrears: 0,
+      arrearsAvailable: true,
+      arrearsNote: 'All past periods paid',
+    };
+  }
+  
+  return {
+    arrears: totalArrears,
+    arrearsAvailable: true,
+    arrearsNote: `Sum of positive balances from ${pastDueRowCount} past-due periods`,
+  };
+}
+
+// Query NYC Open Data
+async function queryByFieldAndKey(
+  field: string,
+  key: string,
+  appToken: string
+): Promise<{ rows: RawRow[]; url: string; error?: string }> {
+  const whereClause = `${field}='${key}'`;
+  const url = `${BASE_URL}?$limit=500&$where=${encodeURIComponent(whereClause)}&$order=due_date DESC`;
+  
+  console.log(`[property-taxes] Query: ${field}='${key}'`);
+  
+  const headers: Record<string, string> = { 'Accept': 'application/json' };
+  if (appToken) headers['X-App-Token'] = appToken;
+  
+  try {
+    const response = await fetch(url, { headers });
+    
+    if (!response.ok) {
+      const errorBody = await response.text();
+      console.error(`[property-taxes] API error: ${response.status}`);
+      return { rows: [], url, error: `API ${response.status}: ${errorBody.substring(0, 200)}` };
+    }
+    
+    const data = await response.json();
+    
+    if (!Array.isArray(data)) {
+      return { rows: [], url, error: 'Unexpected response format' };
+    }
+    
+    console.log(`[property-taxes] ${field}='${key}' returned ${data.length} rows`);
+    return { rows: data as RawRow[], url };
+    
+  } catch (fetchError) {
+    const errMsg = fetchError instanceof Error ? fetchError.message : String(fetchError);
+    console.error(`[property-taxes] Fetch error: ${errMsg}`);
+    return { rows: [], url, error: `Network error: ${errMsg}` };
+  }
+}
+
+// Multi-key lookup
+async function fetchLedgerRows(bbl: string, appToken: string): Promise<{
+  rows: RawRow[];
+  matchedField: string | null;
+  matchedKey: string | null;
+  url: string;
+  error: string | null;
+}> {
+  const candidateKeys = generateCandidateKeys(bbl);
+  const fieldsToTry = ['parid', 'bble', 'bbl'];
+  
+  for (const key of candidateKeys) {
+    for (const field of fieldsToTry) {
+      const result = await queryByFieldAndKey(field, key, appToken);
+      
+      if (result.rows.length > 0) {
+        return {
+          rows: result.rows,
+          matchedField: field,
+          matchedKey: key,
+          url: result.url,
+          error: null,
+        };
+      }
+    }
+  }
+  
+  return {
+    rows: [],
+    matchedField: null,
+    matchedKey: null,
+    url: `${BASE_URL}?parid=${bbl}`,
+    error: 'No data found after trying multiple identifier formats',
+  };
 }
 
 interface TaxResult {
   // Primary outputs
-  quarterly_bill: number | null;
-  annual_tax: number | null;
-  billing_cycle: string;
-  due_date: string;
-  due_date_formatted: string;
+  latest_bill_amount: number | null;
+  latest_due_date: string | null;
+  billing_cycle: BillingCycle;
+  billing_cycle_evidence: string;
   
-  // Data source tracking
-  basis: TaxBasis;
-  confidence: TaxConfidence;
-  basis_explanation: string;
+  // Payment status
+  payment_status: PaymentStatus;
+  latest_period_balance: number | null;
   
-  // Assessment data used
-  tax_class: string | null;
-  tax_rate: number | null;
-  tax_rate_description: string;
-  assessed_value: number | null;
-  exempt_value: number | null;
-  taxable_billable_av: number | null;
-  
-  // Arrears (conservative)
+  // Arrears
   arrears: number | null;
-  arrears_status: ArrearsStatus;
+  arrears_available: boolean;
   arrears_note: string;
   
   // Metadata
   bbl_used: string;
-  address: string | null;
-  owner_name: string | null;
-  building_class: string | null;
+  matched_field: string | null;
+  matched_key: string | null;
+  total_rows_fetched: number;
+  bill_rows_used: number;
+  rows_excluded: number;
+  exclusion_reasons: string[];
+  rows_in_latest_period: number;
   data_source: string;
   no_data_found: boolean;
   cache_status: 'HIT' | 'MISS';
   cached_at: string | null;
   
-  // Debug info (only when debug=true)
+  // Debug (only when debug=true)
   debug?: {
-    step1_attempted: boolean;
-    step1_url: string | null;
-    step1_success: boolean;
-    step1_error: string | null;
-    step2_attempted: boolean;
-    step2_url: string | null;
-    step2_success: boolean;
-    step2_error: string | null;
-    raw_dof_row: Record<string, unknown> | null;
-    raw_pluto_row: Record<string, unknown> | null;
-    dof_row_keys: string[];
-    pluto_row_keys: string[];
-    calculation_steps: string[];
-  };
-}
-
-// DOF Assessment Roll field candidates
-const DOF_FIELDS = {
-  bbl: ['bbl', 'parid', 'boro_block_lot'],
-  taxClass: ['tc', 'tax_class', 'taxclass', 'cur_tc', 'tntc'],
-  billableAV: ['curavttxbt', 'cur_av_tot_txbl', 'billable_av', 'taxable_av', 'cav_tot_txbl'],
-  assessedTotal: ['curavttot', 'cur_av_tot', 'assessed_total', 'assessed_value'],
-  exemptTotal: ['curexttot', 'cur_ex_tot', 'exempt_total', 'exempttot'],
-  annualTax: ['curtxbtot', 'cur_txb_tot', 'annual_tax', 'tax_amount'],
-  address: ['staddr', 'address', 'addr', 'street_address'],
-  ownerName: ['owner', 'ownername', 'owner_name'],
-  buildingClass: ['bldg_cl', 'bldgclass', 'building_class'],
-};
-
-// PLUTO field candidates  
-const PLUTO_FIELDS = {
-  bbl: ['bbl'],
-  taxClass: ['taxclass', 'tax_class', 'tc'],
-  assessTotal: ['assesstot', 'assess_tot', 'assessedtotal', 'assessed_total'],
-  assessLand: ['assessland', 'assess_land', 'assessedland'],
-  exemptTotal: ['exempttot', 'exempt_tot', 'exemptedtotal'],
-  address: ['address', 'addr'],
-  ownerName: ['ownername', 'owner_name'],
-  buildingClass: ['bldgclass', 'building_class', 'buildingclass'],
-  landUse: ['landuse', 'land_use'],
-};
-
-// ============ STEP 1: DOF Assessment Roll ============
-
-interface Step1Result {
-  success: boolean;
-  quarterlyBill: number | null;
-  annualTax: number | null;
-  taxClass: string | null;
-  taxRate: number | null;
-  taxRateDescription: string;
-  billableAV: number | null;
-  assessedValue: number | null;
-  exemptValue: number | null;
-  address: string | null;
-  ownerName: string | null;
-  buildingClass: string | null;
-  url: string;
-  error: string | null;
-  row: Record<string, unknown> | null;
-  steps: string[];
-}
-
-async function tryStep1DofAssessment(bbl: string, appToken: string): Promise<Step1Result> {
-  const steps: string[] = [];
-  steps.push('Step 1: Attempting DOF Assessment Roll lookup...');
-  
-  // Try different BBL formats
-  const candidates = [bbl, bbl.replace(/^0+/, '')];
-  
-  for (const candidateBbl of [...new Set(candidates)]) {
-    const url = `${DOF_ASSESSMENT_BASE_URL}?bbl=${candidateBbl}&$limit=1`;
-    steps.push(`Trying DOF: bbl=${candidateBbl}`);
-    
-    const headers: Record<string, string> = { 'Accept': 'application/json' };
-    if (appToken) headers['X-App-Token'] = appToken;
-    
-    try {
-      const response = await fetch(url, { headers });
-      
-      if (!response.ok) {
-        steps.push(`DOF API error: ${response.status}`);
-        continue;
-      }
-      
-      const data = await response.json();
-      
-      if (!Array.isArray(data) || data.length === 0) {
-        steps.push('DOF returned no rows');
-        continue;
-      }
-      
-      const row = data[0] as Record<string, unknown>;
-      steps.push(`DOF returned row with keys: ${Object.keys(row).slice(0, 10).join(', ')}...`);
-      
-      // Check if DOF provides annual_tax directly
-      const annualTaxRaw = getFieldValue(row, DOF_FIELDS.annualTax);
-      const annualTaxDirect = parseNumericValue(annualTaxRaw);
-      
-      if (annualTaxDirect !== null && annualTaxDirect > 0) {
-        // DOF provides annual tax directly - use it!
-        const quarterlyBill = Math.round(annualTaxDirect / 4 * 100) / 100;
-        steps.push(`DOF provided annual_tax directly: $${annualTaxDirect.toLocaleString()}`);
-        steps.push(`Quarterly Bill: $${annualTaxDirect.toLocaleString()} ÷ 4 = $${quarterlyBill.toLocaleString()}`);
-        
-        const taxClassRaw = getFieldValue(row, DOF_FIELDS.taxClass);
-        const taxClass = taxClassRaw ? String(taxClassRaw) : null;
-        const { rate, rateDescription } = getTaxRate(taxClass);
-        
-        const billableAVRaw = getFieldValue(row, DOF_FIELDS.billableAV);
-        const billableAV = parseNumericValue(billableAVRaw);
-        
-        const assessedRaw = getFieldValue(row, DOF_FIELDS.assessedTotal);
-        const assessedValue = parseNumericValue(assessedRaw);
-        
-        const exemptRaw = getFieldValue(row, DOF_FIELDS.exemptTotal);
-        const exemptValue = parseNumericValue(exemptRaw) || 0;
-        
-        const addressRaw = getFieldValue(row, DOF_FIELDS.address);
-        const ownerRaw = getFieldValue(row, DOF_FIELDS.ownerName);
-        const bldgClassRaw = getFieldValue(row, DOF_FIELDS.buildingClass);
-        
-        return {
-          success: true,
-          quarterlyBill,
-          annualTax: annualTaxDirect,
-          taxClass,
-          taxRate: rate,
-          taxRateDescription: rateDescription,
-          billableAV,
-          assessedValue,
-          exemptValue,
-          address: addressRaw ? String(addressRaw) : null,
-          ownerName: ownerRaw ? String(ownerRaw) : null,
-          buildingClass: bldgClassRaw ? String(bldgClassRaw) : null,
-          url,
-          error: null,
-          row,
-          steps,
-        };
-      }
-      
-      // DOF doesn't have annual_tax, try billable AV + tax class
-      const billableAVRaw = getFieldValue(row, DOF_FIELDS.billableAV);
-      const billableAV = parseNumericValue(billableAVRaw);
-      
-      const taxClassRaw = getFieldValue(row, DOF_FIELDS.taxClass);
-      const taxClass = taxClassRaw ? String(taxClassRaw) : null;
-      
-      if (billableAV !== null && billableAV > 0 && taxClass) {
-        const { rate, rateDescription } = getTaxRate(taxClass);
-        
-        if (rate !== null) {
-          const annualTax = Math.round(billableAV * rate * 100) / 100;
-          const quarterlyBill = Math.round(annualTax / 4 * 100) / 100;
-          
-          steps.push(`DOF Billable AV: $${billableAV.toLocaleString()}`);
-          steps.push(`Tax Class: ${taxClass}, Rate: ${(rate * 100).toFixed(3)}%`);
-          steps.push(`Annual Tax: $${billableAV.toLocaleString()} × ${(rate * 100).toFixed(3)}% = $${annualTax.toLocaleString()}`);
-          steps.push(`Quarterly Bill: $${annualTax.toLocaleString()} ÷ 4 = $${quarterlyBill.toLocaleString()}`);
-          
-          const assessedRaw = getFieldValue(row, DOF_FIELDS.assessedTotal);
-          const assessedValue = parseNumericValue(assessedRaw);
-          
-          const exemptRaw = getFieldValue(row, DOF_FIELDS.exemptTotal);
-          const exemptValue = parseNumericValue(exemptRaw) || 0;
-          
-          const addressRaw = getFieldValue(row, DOF_FIELDS.address);
-          const ownerRaw = getFieldValue(row, DOF_FIELDS.ownerName);
-          const bldgClassRaw = getFieldValue(row, DOF_FIELDS.buildingClass);
-          
-          return {
-            success: true,
-            quarterlyBill,
-            annualTax,
-            taxClass,
-            taxRate: rate,
-            taxRateDescription: rateDescription,
-            billableAV,
-            assessedValue,
-            exemptValue,
-            address: addressRaw ? String(addressRaw) : null,
-            ownerName: ownerRaw ? String(ownerRaw) : null,
-            buildingClass: bldgClassRaw ? String(bldgClassRaw) : null,
-            url,
-            error: null,
-            row,
-            steps,
-          };
-        }
-      }
-      
-      steps.push('DOF row found but missing billable AV or tax class');
-      
-    } catch (error) {
-      steps.push(`DOF fetch error: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  }
-  
-  steps.push('Step 1 failed: No usable DOF data found');
-  
-  return {
-    success: false,
-    quarterlyBill: null,
-    annualTax: null,
-    taxClass: null,
-    taxRate: null,
-    taxRateDescription: 'No data',
-    billableAV: null,
-    assessedValue: null,
-    exemptValue: null,
-    address: null,
-    ownerName: null,
-    buildingClass: null,
-    url: `${DOF_ASSESSMENT_BASE_URL}?bbl=${bbl}`,
-    error: 'No usable DOF assessment data',
-    row: null,
-    steps,
-  };
-}
-
-// ============ STEP 2: PLUTO Fallback ============
-
-interface Step2Result {
-  success: boolean;
-  quarterlyBill: number | null;
-  annualTax: number | null;
-  taxClass: string | null;
-  taxRate: number | null;
-  taxRateDescription: string;
-  assessedValue: number | null;
-  exemptValue: number | null;
-  taxableValue: number | null;
-  address: string | null;
-  ownerName: string | null;
-  buildingClass: string | null;
-  url: string;
-  error: string | null;
-  row: Record<string, unknown> | null;
-  steps: string[];
-}
-
-async function tryStep2PlutoFallback(bbl: string, appToken: string): Promise<Step2Result> {
-  const steps: string[] = [];
-  steps.push('Step 2: Attempting PLUTO fallback...');
-  
-  const candidates = [bbl, bbl.replace(/^0+/, '')];
-  
-  for (const candidateBbl of [...new Set(candidates)]) {
-    const url = `${PLUTO_BASE_URL}?bbl=${candidateBbl}&$limit=1`;
-    steps.push(`Trying PLUTO: bbl=${candidateBbl}`);
-    
-    const headers: Record<string, string> = { 'Accept': 'application/json' };
-    if (appToken) headers['X-App-Token'] = appToken;
-    
-    try {
-      const response = await fetch(url, { headers });
-      
-      if (!response.ok) {
-        steps.push(`PLUTO API error: ${response.status}`);
-        continue;
-      }
-      
-      const data = await response.json();
-      
-      if (!Array.isArray(data) || data.length === 0) {
-        steps.push('PLUTO returned no rows');
-        continue;
-      }
-      
-      const row = data[0] as Record<string, unknown>;
-      steps.push(`PLUTO returned row with keys: ${Object.keys(row).slice(0, 10).join(', ')}...`);
-      
-      // Extract values
-      const taxClassRaw = getFieldValue(row, PLUTO_FIELDS.taxClass);
-      const taxClass = taxClassRaw ? String(taxClassRaw) : null;
-      steps.push(`Tax Class: ${taxClass || 'not found'}`);
-      
-      const assessTotalRaw = getFieldValue(row, PLUTO_FIELDS.assessTotal);
-      const assessedValue = parseNumericValue(assessTotalRaw);
-      steps.push(`Assessed Total Value: ${assessedValue !== null ? `$${assessedValue.toLocaleString()}` : 'not found'}`);
-      
-      const exemptTotalRaw = getFieldValue(row, PLUTO_FIELDS.exemptTotal);
-      const exemptValue = parseNumericValue(exemptTotalRaw) || 0;
-      steps.push(`Exempt Total Value: $${exemptValue.toLocaleString()}`);
-      
-      // Calculate taxable value (PLUTO doesn't have billable AV, so this is an estimate)
-      const taxableValue = assessedValue !== null ? Math.max(0, assessedValue - exemptValue) : null;
-      steps.push(`Taxable AV (estimated): ${taxableValue !== null ? `$${taxableValue.toLocaleString()}` : 'cannot calculate'}`);
-      
-      // Get tax rate
-      const { rate, rateDescription } = getTaxRate(taxClass);
-      steps.push(`Tax Rate: ${rate !== null ? `${(rate * 100).toFixed(3)}%` : 'unknown'}`);
-      
-      // Calculate tax
-      if (taxableValue !== null && rate !== null) {
-        const annualTax = Math.round(taxableValue * rate * 100) / 100;
-        const quarterlyBill = Math.round(annualTax / 4 * 100) / 100;
-        steps.push(`Annual Tax (estimated): $${taxableValue.toLocaleString()} × ${(rate * 100).toFixed(3)}% = $${annualTax.toLocaleString()}`);
-        steps.push(`Quarterly Bill (estimated): $${annualTax.toLocaleString()} ÷ 4 = $${quarterlyBill.toLocaleString()}`);
-        
-        const addressRaw = getFieldValue(row, PLUTO_FIELDS.address);
-        const ownerRaw = getFieldValue(row, PLUTO_FIELDS.ownerName);
-        const bldgClassRaw = getFieldValue(row, PLUTO_FIELDS.buildingClass);
-        
-        return {
-          success: true,
-          quarterlyBill,
-          annualTax,
-          taxClass,
-          taxRate: rate,
-          taxRateDescription: rateDescription,
-          assessedValue,
-          exemptValue,
-          taxableValue,
-          address: addressRaw ? String(addressRaw) : null,
-          ownerName: ownerRaw ? String(ownerRaw) : null,
-          buildingClass: bldgClassRaw ? String(bldgClassRaw) : null,
-          url,
-          error: null,
-          row,
-          steps,
-        };
-      }
-      
-      steps.push('PLUTO row found but cannot calculate tax (missing taxable value or rate)');
-      
-    } catch (error) {
-      steps.push(`PLUTO fetch error: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  }
-  
-  steps.push('Step 2 failed: No usable PLUTO data found');
-  
-  return {
-    success: false,
-    quarterlyBill: null,
-    annualTax: null,
-    taxClass: null,
-    taxRate: null,
-    taxRateDescription: 'No data',
-    assessedValue: null,
-    exemptValue: null,
-    taxableValue: null,
-    address: null,
-    ownerName: null,
-    buildingClass: null,
-    url: `${PLUTO_BASE_URL}?bbl=${bbl}`,
-    error: 'No usable PLUTO data',
-    row: null,
-    steps,
+    request_url: string;
+    fields_used: {
+      due_date: string[];
+      liability: string[];
+      balance: string[];
+      code: string[];
+    };
+    first_row_keys: string[];
+    sample_rows: Array<{
+      due_date: string | null;
+      liability: number | null;
+      balance: number | null;
+      code: string | null;
+    }>;
+    all_due_dates: string[];
+    computation_log: string[];
   };
 }
 
@@ -538,9 +505,7 @@ serve(async (req) => {
     const { bbl, building_bbl, view_bbl, debug: debugFromBody } = await req.json();
     const includeDebug = debugFromQuery || debugFromBody === true || debugFromBody === 1 || debugFromBody === '1';
     
-    // Use view_bbl if provided, otherwise bbl
     const viewBbl = view_bbl || bbl;
-    // For condo units, try building_bbl for assessment lookup
     const primaryBbl = building_bbl || viewBbl;
     
     console.log(`[property-taxes] Request - view_bbl: ${viewBbl}, building_bbl: ${building_bbl || 'none'}, primary: ${primaryBbl}, debug: ${includeDebug}`);
@@ -556,7 +521,7 @@ serve(async (req) => {
     const normalizedBbl = normalizeBbl(primaryBbl);
     
     // Check cache (skip if debug mode)
-    const cacheKey = `v4:${normalizedBbl}`;
+    const cacheKey = `v5:ledger:${normalizedBbl}`;
     if (!includeDebug) {
       const cached = cache.get(cacheKey);
       if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
@@ -572,138 +537,142 @@ serve(async (req) => {
       }
     }
     
-    // Get next due date
-    const { dueDate, dueDateFormatted } = getNextQuarterDueDate();
+    const computationLog: string[] = [];
     
-    // ============ 3-STEP DATA STRATEGY ============
+    // Fetch ledger rows
+    computationLog.push('Fetching ledger rows from DOF Property Charges Balance...');
+    const fetchResult = await fetchLedgerRows(normalizedBbl, appToken);
+    computationLog.push(`Fetched ${fetchResult.rows.length} rows`);
     
-    let basis: TaxBasis = 'unavailable';
-    let confidence: TaxConfidence = 'none';
-    let basisExplanation = 'Assessment/tax data not available for this parcel from public datasets.';
-    let quarterlyBill: number | null = null;
-    let annualTax: number | null = null;
-    let taxClass: string | null = null;
-    let taxRate: number | null = null;
-    let taxRateDescription = 'No data';
-    let billableAV: number | null = null;
-    let assessedValue: number | null = null;
-    let exemptValue: number | null = null;
-    let taxableValue: number | null = null;
-    let address: string | null = null;
-    let ownerName: string | null = null;
-    let buildingClass: string | null = null;
-    let dataSource = 'None';
-    let noDataFound = true;
-    
-    const allSteps: string[] = [];
-    let step1Result: Step1Result | null = null;
-    let step2Result: Step2Result | null = null;
-    
-    // STEP 1: Try DOF Assessment Roll first
-    step1Result = await tryStep1DofAssessment(normalizedBbl, appToken);
-    allSteps.push(...step1Result.steps);
-    
-    if (step1Result.success) {
-      // Use DOF data - highest confidence
-      basis = 'dof_assessment';
-      confidence = 'high';
-      basisExplanation = 'Derived from NYC DOF Assessment Roll data.';
-      quarterlyBill = step1Result.quarterlyBill;
-      annualTax = step1Result.annualTax;
-      taxClass = step1Result.taxClass;
-      taxRate = step1Result.taxRate;
-      taxRateDescription = step1Result.taxRateDescription;
-      billableAV = step1Result.billableAV;
-      assessedValue = step1Result.assessedValue;
-      exemptValue = step1Result.exemptValue;
-      taxableValue = billableAV; // DOF billable AV is the taxable value
-      address = step1Result.address;
-      ownerName = step1Result.ownerName;
-      buildingClass = step1Result.buildingClass;
-      dataSource = `NYC Open Data DOF Assessment (${DOF_ASSESSMENT_DATASET_ID})`;
-      noDataFound = false;
-      allSteps.push('✓ Step 1 SUCCESS: Using DOF Assessment data');
-    } else {
-      // STEP 2: Fall back to PLUTO
-      allSteps.push('Step 1 failed, proceeding to Step 2...');
-      step2Result = await tryStep2PlutoFallback(normalizedBbl, appToken);
-      allSteps.push(...step2Result.steps);
+    if (fetchResult.rows.length === 0) {
+      // No data found
+      const result: TaxResult = {
+        latest_bill_amount: null,
+        latest_due_date: null,
+        billing_cycle: 'Unknown',
+        billing_cycle_evidence: 'No data available',
+        payment_status: 'unknown',
+        latest_period_balance: null,
+        arrears: null,
+        arrears_available: false,
+        arrears_note: 'No ledger data available',
+        bbl_used: normalizedBbl,
+        matched_field: null,
+        matched_key: null,
+        total_rows_fetched: 0,
+        bill_rows_used: 0,
+        rows_excluded: 0,
+        exclusion_reasons: [],
+        rows_in_latest_period: 0,
+        data_source: `NYC Open Data DOF Property Charges (${DATASET_ID})`,
+        no_data_found: true,
+        cache_status: 'MISS',
+        cached_at: null,
+      };
       
-      if (step2Result.success) {
-        // Use PLUTO data - estimated confidence
-        basis = 'pluto_estimate';
-        confidence = 'estimated';
-        basisExplanation = 'Estimate derived from PLUTO assessed value; may differ from official DOF bill.';
-        quarterlyBill = step2Result.quarterlyBill;
-        annualTax = step2Result.annualTax;
-        taxClass = step2Result.taxClass;
-        taxRate = step2Result.taxRate;
-        taxRateDescription = step2Result.taxRateDescription;
-        assessedValue = step2Result.assessedValue;
-        exemptValue = step2Result.exemptValue;
-        taxableValue = step2Result.taxableValue;
-        address = step2Result.address;
-        ownerName = step2Result.ownerName;
-        buildingClass = step2Result.buildingClass;
-        dataSource = `NYC Open Data PLUTO (${PLUTO_DATASET_ID})`;
-        noDataFound = false;
-        allSteps.push('✓ Step 2 SUCCESS: Using PLUTO estimate');
-      } else {
-        // STEP 3: Fail-safe - no data available
-        allSteps.push('Step 2 failed, entering fail-safe mode (Step 3)');
-        allSteps.push('✗ No assessment data available from any source');
+      if (includeDebug) {
+        result.debug = {
+          request_url: fetchResult.url,
+          fields_used: {
+            due_date: DUE_DATE_FIELDS,
+            liability: LIABILITY_FIELDS,
+            balance: BALANCE_FIELDS,
+            code: CODE_FIELDS,
+          },
+          first_row_keys: [],
+          sample_rows: [],
+          all_due_dates: [],
+          computation_log: [...computationLog, 'No data found'],
+        };
       }
+      
+      return new Response(
+        JSON.stringify(result),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
     }
+    
+    // Parse all rows
+    computationLog.push('Parsing rows...');
+    const parsedRows = fetchResult.rows.map(parseRow);
+    
+    // Get first row keys for debug
+    const firstRowKeys = Object.keys(fetchResult.rows[0]).sort();
+    computationLog.push(`First row keys: ${firstRowKeys.slice(0, 10).join(', ')}...`);
+    
+    // Infer billing cycle
+    computationLog.push('Inferring billing cycle from due date patterns...');
+    const { cycle: billingCycle, evidence: billingCycleEvidence } = inferBillingCycle(parsedRows);
+    computationLog.push(`Billing cycle: ${billingCycle} (${billingCycleEvidence})`);
+    
+    // Filter to bill rows
+    computationLog.push('Filtering to bill charge rows (sum_liab > 0, has due_date)...');
+    const { billRows, excludedCount, exclusionReasons } = filterBillRows(parsedRows);
+    computationLog.push(`Found ${billRows.length} bill rows, excluded ${excludedCount} rows`);
+    
+    // Compute latest bill
+    computationLog.push('Computing latest bill...');
+    const latestBillResult = computeLatestBill(billRows);
+    computationLog.push(`Latest due date: ${latestBillResult.latestDueDateStr || 'none'}`);
+    computationLog.push(`Latest bill amount: $${latestBillResult.latestBillAmount?.toLocaleString() || 'null'}`);
+    computationLog.push(`Latest period balance: $${latestBillResult.latestPeriodBalance?.toLocaleString() || 'null'}`);
+    computationLog.push(`Payment status: ${latestBillResult.paymentStatus}`);
+    
+    // Compute arrears
+    computationLog.push('Computing arrears from past-due periods...');
+    const arrearsResult = computeArrears(parsedRows, latestBillResult.latestDueDate);
+    computationLog.push(`Arrears: ${arrearsResult.arrearsAvailable ? `$${arrearsResult.arrears?.toLocaleString() || '0'}` : 'unavailable'}`);
+    computationLog.push(`Arrears note: ${arrearsResult.arrearsNote}`);
+    
+    // Collect all unique due dates for debug
+    const allDueDates = [...new Set(parsedRows
+      .filter(r => r.dueDateStr)
+      .map(r => r.dueDateStr!)
+    )].sort().reverse();
     
     // Build result
     const result: TaxResult = {
-      quarterly_bill: quarterlyBill,
-      annual_tax: annualTax,
-      billing_cycle: 'Quarterly',
-      due_date: dueDate,
-      due_date_formatted: dueDateFormatted,
-      
-      basis,
-      confidence,
-      basis_explanation: basisExplanation,
-      
-      tax_class: taxClass,
-      tax_rate: taxRate,
-      tax_rate_description: taxRateDescription,
-      assessed_value: assessedValue,
-      exempt_value: exemptValue,
-      taxable_billable_av: taxableValue,
-      
-      // Arrears - always unavailable (we don't have reliable data)
-      arrears: null,
-      arrears_status: 'unavailable',
-      arrears_note: 'Arrears data not available from public records.',
-      
+      latest_bill_amount: latestBillResult.latestBillAmount,
+      latest_due_date: latestBillResult.latestDueDateStr,
+      billing_cycle: billingCycle,
+      billing_cycle_evidence: billingCycleEvidence,
+      payment_status: latestBillResult.paymentStatus,
+      latest_period_balance: latestBillResult.latestPeriodBalance,
+      arrears: arrearsResult.arrears,
+      arrears_available: arrearsResult.arrearsAvailable,
+      arrears_note: arrearsResult.arrearsNote,
       bbl_used: normalizedBbl,
-      address,
-      owner_name: ownerName,
-      building_class: buildingClass,
-      data_source: dataSource,
-      no_data_found: noDataFound,
+      matched_field: fetchResult.matchedField,
+      matched_key: fetchResult.matchedKey,
+      total_rows_fetched: fetchResult.rows.length,
+      bill_rows_used: billRows.length,
+      rows_excluded: excludedCount,
+      exclusion_reasons: exclusionReasons,
+      rows_in_latest_period: latestBillResult.rowsInLatestPeriod,
+      data_source: `NYC Open Data DOF Property Charges (${DATASET_ID})`,
+      no_data_found: false,
       cache_status: 'MISS',
       cached_at: null,
     };
     
     if (includeDebug) {
       result.debug = {
-        step1_attempted: true,
-        step1_url: step1Result?.url || null,
-        step1_success: step1Result?.success || false,
-        step1_error: step1Result?.error || null,
-        step2_attempted: step2Result !== null,
-        step2_url: step2Result?.url || null,
-        step2_success: step2Result?.success || false,
-        step2_error: step2Result?.error || null,
-        raw_dof_row: step1Result?.row || null,
-        raw_pluto_row: step2Result?.row || null,
-        dof_row_keys: step1Result?.row ? Object.keys(step1Result.row).sort() : [],
-        pluto_row_keys: step2Result?.row ? Object.keys(step2Result.row).sort() : [],
-        calculation_steps: allSteps,
+        request_url: fetchResult.url,
+        fields_used: {
+          due_date: DUE_DATE_FIELDS,
+          liability: LIABILITY_FIELDS,
+          balance: BALANCE_FIELDS,
+          code: CODE_FIELDS,
+        },
+        first_row_keys: firstRowKeys,
+        sample_rows: parsedRows.slice(0, 10).map(r => ({
+          due_date: r.dueDateStr,
+          liability: r.liability,
+          balance: r.balance,
+          code: r.code,
+        })),
+        all_due_dates: allDueDates.slice(0, 20),
+        computation_log: computationLog,
       };
     }
     
@@ -711,7 +680,7 @@ serve(async (req) => {
     const now = Date.now();
     cache.set(cacheKey, { data: result, timestamp: now });
     
-    console.log(`[property-taxes] Result - basis: ${result.basis}, quarterly: $${result.quarterly_bill}, annual: $${result.annual_tax}, class: ${result.tax_class}`);
+    console.log(`[property-taxes] Result - bill: $${result.latest_bill_amount}, due: ${result.latest_due_date}, status: ${result.payment_status}, cycle: ${result.billing_cycle}`);
     
     return new Response(
       JSON.stringify(result),
