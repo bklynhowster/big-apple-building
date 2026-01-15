@@ -43,6 +43,22 @@ interface Attempt {
 
 type OwedStatus = 'paid' | 'due' | 'unknown';
 
+interface DebugInfo {
+  socrata_request_url_used: string;
+  raw_rows_count: number;
+  raw_first_row: RawChargeRow | null;
+  raw_first_row_keys: string[];
+  raw_sample_keys_union: string[];
+  normalization_diagnostics: NormalizationDiagnostic[];
+}
+
+interface NormalizationDiagnostic {
+  field: string;
+  candidates_checked: string[];
+  matched_field: string | null;
+  value: string | number | null;
+}
+
 interface TaxResult {
   current_amount_owed: number | null;
   owed_status: OwedStatus;
@@ -59,7 +75,8 @@ interface TaxResult {
   data_source_used: string;
   cache_status: 'HIT' | 'MISS';
   cached_at: string | null;
-  // Debug info (only included when debug=true)
+  // Debug info (only included when debug=true/1)
+  debug?: DebugInfo;
   raw_rows?: RawChargeRow[];
   attempts?: Attempt[];
 }
@@ -147,6 +164,7 @@ async function multiKeyLookup(
   matchedKey: string | null;
   attempts: Attempt[];
   bblUsed: string;
+  urlUsed: string;
 }> {
   const attempts: Attempt[] = [];
   const candidateKeys = generateCandidateKeys(bbl);
@@ -166,60 +184,78 @@ async function multiKeyLookup(
       
       if (result.rows.length > 0) {
         console.log(`[property-taxes] ✓ Found ${result.rows.length} rows using ${field}='${key}'`);
-        return { rows: result.rows, matchedField: field, matchedKey: key, attempts, bblUsed: bbl };
+        return { rows: result.rows, matchedField: field, matchedKey: key, attempts, bblUsed: bbl, urlUsed: result.url };
       }
     }
   }
   
   console.log(`[property-taxes] No rows found after ${attempts.length} attempts`);
-  return { rows: [], matchedField: null, matchedKey: null, attempts, bblUsed: bbl };
+  const lastUrl = attempts.length > 0 ? attempts[attempts.length - 1].url : '';
+  return { rows: [], matchedField: null, matchedKey: null, attempts, bblUsed: bbl, urlUsed: lastUrl };
 }
 
 // Get first non-empty string value from a row
-function getFirstString(row: RawChargeRow, ...fields: string[]): string | null {
+function getFirstString(row: RawChargeRow, ...fields: string[]): { value: string | null; matchedField: string | null } {
   for (const field of fields) {
     const val = row[field];
     if (val !== undefined && val !== null && val !== '') {
       const str = String(val).trim();
-      if (str) return str;
+      if (str) return { value: str, matchedField: field };
     }
   }
-  return null;
+  return { value: null, matchedField: null };
 }
 
 // Get first numeric value from a row
-function getFirstNumber(row: RawChargeRow, ...fields: string[]): number | null {
+function getFirstNumber(row: RawChargeRow, ...fields: string[]): { value: number | null; matchedField: string | null } {
   for (const field of fields) {
     const val = row[field];
     if (val !== undefined && val !== null && val !== '') {
       const num = parseFloat(String(val));
-      if (!isNaN(num)) return num;
+      if (!isNaN(num)) return { value: num, matchedField: field };
     }
   }
-  return null;
+  return { value: null, matchedField: null };
 }
 
-// Normalize a raw row into a LineItem
-function normalizeRow(raw: RawChargeRow): LineItem {
+// Field candidates for normalization - updated based on actual NYC Open Data schema
+const DATE_FIELDS = ['due_date', 'dt_pd_begin', 'dt_pd_end', 'date', 'bill_date', 'effective_date', 'period', 'fiscal_year', 'stmtdate', 'activitythrough', 'bill_period', 'tax_year', 'taxyear', 'up_date', 'extractdt'];
+const DESCRIPTION_FIELDS = ['code', 'cycle', 'luc', 'valclass', 'rolltype', 'type', 'charge_type', 'charge_description', 'description', 'charge', 'tax_class', 'chargetype', 'dession', 'install'];
+const AMOUNT_FIELDS = ['sum_liab', 'amount', 'charge_amount', 'original_amount', 'billed_amount', 'value'];
+const BALANCE_FIELDS = ['sum_bal', 'open_balance', 'outstanding_amount', 'outstanding_balance', 'balance', 'amount_due'];
+const STATUS_FIELDS = ['status', 'charge_status', 'open_closed', 'payment_status', 'prior_owner_flag', 'city_owned_flag'];
+
+// NormalizationDiagnostic interface is defined at line 55
+
+// Normalize a raw row into a LineItem with diagnostics
+function normalizeRowWithDiagnostics(raw: RawChargeRow): { item: LineItem; diagnostics: NormalizationDiagnostic[] } {
+  const dateResult = getFirstString(raw, ...DATE_FIELDS);
+  const descResult = getFirstString(raw, ...DESCRIPTION_FIELDS);
+  const amountResult = getFirstNumber(raw, ...AMOUNT_FIELDS);
+  const balanceResult = getFirstNumber(raw, ...BALANCE_FIELDS);
+  const statusResult = getFirstString(raw, ...STATUS_FIELDS);
+  
   return {
-    date: getFirstString(raw, 
-      'date', 'bill_date', 'effective_date', 'period', 'fiscal_year', 
-      'stmtdate', 'activitythrough', 'bill_period', 'tax_year'
-    ),
-    description: getFirstString(raw, 
-      'type', 'charge_type', 'charge_description', 'description', 'charge', 'tax_class',
-      'chargetype', 'dession', 'install'
-    ),
-    amount: getFirstNumber(raw, 
-      'amount', 'charge_amount', 'original_amount', 'billed_amount', 'value'
-    ),
-    balance: getFirstNumber(raw, 
-      'open_balance', 'outstanding_amount', 'outstanding_balance', 'balance', 'amount_due'
-    ),
-    status: getFirstString(raw, 
-      'status', 'charge_status', 'open_closed', 'payment_status'
-    ),
+    item: {
+      date: dateResult.value,
+      description: descResult.value,
+      amount: amountResult.value,
+      balance: balanceResult.value,
+      status: statusResult.value,
+    },
+    diagnostics: [
+      { field: 'date', candidates_checked: DATE_FIELDS, matched_field: dateResult.matchedField, value: dateResult.value },
+      { field: 'description', candidates_checked: DESCRIPTION_FIELDS, matched_field: descResult.matchedField, value: descResult.value },
+      { field: 'amount', candidates_checked: AMOUNT_FIELDS, matched_field: amountResult.matchedField, value: amountResult.value },
+      { field: 'balance', candidates_checked: BALANCE_FIELDS, matched_field: balanceResult.matchedField, value: balanceResult.value },
+      { field: 'status', candidates_checked: STATUS_FIELDS, matched_field: statusResult.matchedField, value: statusResult.value },
+    ],
   };
+}
+
+// Simple normalize without diagnostics
+function normalizeRow(raw: RawChargeRow): LineItem {
+  return normalizeRowWithDiagnostics(raw).item;
 }
 
 // Compute current amount owed from normalized line items
@@ -289,7 +325,8 @@ function processCharges(
   matchedKey: string | null,
   bblUsed: string,
   attempts: Attempt[],
-  includeDebug: boolean
+  includeDebug: boolean,
+  socrataUrlUsed: string
 ): Omit<TaxResult, 'cache_status' | 'cached_at'> {
   const dataSourceUsed = `NYC Open Data DOF Property Charges Balance (${DATASET_ID})`;
   
@@ -310,17 +347,31 @@ function processCharges(
       data_source_used: dataSourceUsed,
     };
     if (includeDebug) {
+      baseResult.debug = {
+        socrata_request_url_used: socrataUrlUsed,
+        raw_rows_count: 0,
+        raw_first_row: null,
+        raw_first_row_keys: [],
+        raw_sample_keys_union: [],
+        normalization_diagnostics: [],
+      };
       baseResult.raw_rows = [];
       baseResult.attempts = attempts;
     }
     return baseResult;
   }
   
-  // Log available fields for debugging
-  if (rawRows.length > 0) {
-    const sampleFields = Object.keys(rawRows[0]);
-    console.log(`[property-taxes] Available fields in raw rows: ${sampleFields.join(', ')}`);
+  // Collect keys from first 5 rows for debugging
+  const sampleKeysSet = new Set<string>();
+  for (let i = 0; i < Math.min(5, rawRows.length); i++) {
+    Object.keys(rawRows[i]).forEach(k => sampleKeysSet.add(k));
   }
+  const sampleKeysUnion = Array.from(sampleKeysSet).sort();
+  
+  console.log(`[property-taxes] Available fields in raw rows: ${sampleKeysUnion.join(', ')}`);
+  
+  // Normalize first row with diagnostics for debug
+  const firstRowDiag = normalizeRowWithDiagnostics(rawRows[0]);
   
   // Normalize all rows
   const lineItems = rawRows.map(normalizeRow);
@@ -360,6 +411,14 @@ function processCharges(
   };
   
   if (includeDebug) {
+    result.debug = {
+      socrata_request_url_used: socrataUrlUsed,
+      raw_rows_count: rawRows.length,
+      raw_first_row: rawRows[0],
+      raw_first_row_keys: Object.keys(rawRows[0]).sort(),
+      raw_sample_keys_union: sampleKeysUnion,
+      normalization_diagnostics: firstRowDiag.diagnostics,
+    };
     result.raw_rows = rawRows.slice(0, 25);
     result.attempts = attempts;
   }
@@ -374,9 +433,10 @@ serve(async (req) => {
 
   try {
     const url = new URL(req.url);
-    const includeDebug = url.searchParams.get('debug') === 'true';
+    const debugFromQuery = url.searchParams.get('debug') === 'true' || url.searchParams.get('debug') === '1';
     
-    const { bbl, building_bbl, view_bbl } = await req.json();
+    const { bbl, building_bbl, view_bbl, debug: debugFromBody } = await req.json();
+    const includeDebug = debugFromQuery || debugFromBody === true || debugFromBody === 1 || debugFromBody === '1';
     
     const viewBbl = view_bbl || bbl;
     const buildingBbl = building_bbl;
@@ -423,6 +483,7 @@ serve(async (req) => {
     let lookupResult = await multiKeyLookup(normalizedViewBbl, buildingBbl ? 'unit' : 'direct', appToken);
     let allAttempts = lookupResult.attempts;
     let scope: 'unit' | 'building' | 'direct' = buildingBbl ? 'unit' : 'direct';
+    let urlUsed = lookupResult.urlUsed;
     
     // Fallback to building BBL
     if (lookupResult.rows.length === 0 && normalizedBuildingBbl && normalizedBuildingBbl !== normalizedViewBbl) {
@@ -434,6 +495,7 @@ serve(async (req) => {
       if (buildingResult.rows.length > 0) {
         lookupResult = buildingResult;
         scope = 'building';
+        urlUsed = buildingResult.urlUsed;
       }
     }
     
@@ -445,7 +507,8 @@ serve(async (req) => {
       lookupResult.matchedKey,
       scope === 'building' ? (normalizedBuildingBbl || normalizedViewBbl) : normalizedViewBbl,
       allAttempts,
-      includeDebug
+      includeDebug,
+      urlUsed
     );
     
     const now = Date.now();

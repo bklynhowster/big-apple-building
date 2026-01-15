@@ -8,7 +8,8 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { usePropertyTaxes, type LineItem, type OwedStatus } from '@/hooks/usePropertyTaxes';
+import { usePropertyTaxes, type LineItem, type OwedStatus, type DebugInfo } from '@/hooks/usePropertyTaxes';
+import { Bug } from 'lucide-react';
 
 interface TaxesCardProps {
   viewBbl: string;
@@ -64,6 +65,11 @@ function getDOFBillsUrl(): string {
 export function TaxesCard({ viewBbl, buildingBbl, address, isUnitPage = false }: TaxesCardProps) {
   const [copiedValue, setCopiedValue] = useState<string | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const [debugOpen, setDebugOpen] = useState(false);
+  
+  // Check if debug mode via URL query param
+  const isDebugMode = typeof window !== 'undefined' && 
+    (new URLSearchParams(window.location.search).get('debugTaxes') === '1');
   
   const { loading, error, data, fetch, retry } = usePropertyTaxes();
   
@@ -367,6 +373,73 @@ export function TaxesCard({ viewBbl, buildingBbl, address, isUnitPage = false }:
                   <span>Cached at: {formatDate(data.cached_at)}</span>
                 )}
               </div>
+            )}
+            
+            {/* Debug Panel - only visible when ?debugTaxes=1 and debug data exists */}
+            {isDebugMode && data.debug && (
+              <Collapsible open={debugOpen} onOpenChange={setDebugOpen}>
+                <CollapsibleTrigger asChild>
+                  <Button variant="outline" size="sm" className="w-full justify-between h-8 px-2 border-amber-500/50 bg-amber-500/10">
+                    <div className="flex items-center gap-2">
+                      <Bug className="h-3 w-3 text-amber-600" />
+                      <span className="text-xs text-amber-700 dark:text-amber-400">Debug Info</span>
+                    </div>
+                    {debugOpen ? (
+                      <ChevronUp className="h-4 w-4 text-amber-600" />
+                    ) : (
+                      <ChevronDown className="h-4 w-4 text-amber-600" />
+                    )}
+                  </Button>
+                </CollapsibleTrigger>
+                <CollapsibleContent>
+                  <div className="mt-2 space-y-3 p-3 rounded border border-amber-500/30 bg-amber-500/5 text-xs">
+                    {/* Socrata URL */}
+                    <div>
+                      <p className="font-medium text-amber-700 dark:text-amber-400 mb-1">Socrata Request URL:</p>
+                      <code className="block bg-muted p-2 rounded text-[10px] break-all">
+                        {data.debug.socrata_request_url_used || 'N/A'}
+                      </code>
+                    </div>
+                    
+                    {/* Raw rows count */}
+                    <div>
+                      <p className="font-medium text-amber-700 dark:text-amber-400">Raw Rows Count: <span className="font-mono">{data.debug.raw_rows_count}</span></p>
+                    </div>
+                    
+                    {/* Keys Union */}
+                    <div>
+                      <p className="font-medium text-amber-700 dark:text-amber-400 mb-1">Sample Keys Union (first 5 rows):</p>
+                      <code className="block bg-muted p-2 rounded text-[10px] break-all">
+                        {data.debug.raw_sample_keys_union.join(', ') || 'N/A'}
+                      </code>
+                    </div>
+                    
+                    {/* Normalization Diagnostics */}
+                    <div>
+                      <p className="font-medium text-amber-700 dark:text-amber-400 mb-1">Normalization Diagnostics:</p>
+                      <div className="space-y-1">
+                        {data.debug.normalization_diagnostics.map((diag, idx) => (
+                          <div key={idx} className="bg-muted p-2 rounded">
+                            <p className="font-medium">{diag.field}:</p>
+                            <p className="text-[10px]">Matched: <span className="font-mono text-primary">{diag.matched_field || '(none)'}</span></p>
+                            <p className="text-[10px]">Value: <span className="font-mono">{diag.value !== null ? String(diag.value) : '(null)'}</span></p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    
+                    {/* Raw First Row */}
+                    {data.debug.raw_first_row && (
+                      <div>
+                        <p className="font-medium text-amber-700 dark:text-amber-400 mb-1">Raw First Row (JSON):</p>
+                        <pre className="bg-muted p-2 rounded text-[10px] overflow-auto max-h-48">
+                          {JSON.stringify(data.debug.raw_first_row, null, 2)}
+                        </pre>
+                      </div>
+                    )}
+                  </div>
+                </CollapsibleContent>
+              </Collapsible>
             )}
           </>
         )}
