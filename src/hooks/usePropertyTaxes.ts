@@ -2,10 +2,10 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 
 export interface ChargeRow {
-  parid: string;
-  stmtdate: string;
-  activitythrough: string;
-  value: string;
+  parid?: string;
+  stmtdate?: string;
+  activitythrough?: string;
+  value?: string;
   dession?: string;
   chargetype?: string;
   install?: string;
@@ -16,14 +16,15 @@ export interface ChargeRow {
 }
 
 export interface PropertyTaxResult {
-  current_balance_due: number;
-  most_recent_bill_period: string | null;
-  most_recent_due_date: string | null;
-  last_payment_date: string | null;
-  line_items: ChargeRow[];
-  scope: 'unit' | 'building' | 'direct';
+  current_amount_owed: number | null;  // null = "not available"
+  rows_count: number;
+  as_of: string | null;
+  recent_rows: ChargeRow[];
+  scope_used: 'unit' | 'building' | 'direct';
   parid_used: string;
-  data_as_of: string | null;
+  bbl_used: string;
+  no_data_found: boolean;
+  api_error?: string;
 }
 
 interface UsePropertyTaxesResult {
