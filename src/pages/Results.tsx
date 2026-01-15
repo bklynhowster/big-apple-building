@@ -10,6 +10,8 @@ import { RiskSnapshotCard, type RecordCounts, type LoadingStates, type RecordArr
 import brooklynBridgeLines from '@/assets/brooklyn-bridge-lines.png';
 
 import { CondoUnitsCard } from '@/components/results/CondoUnitsCard';
+import { CondoUnitTaxesCard } from '@/components/results/CondoUnitTaxesCard';
+import type { CondoUnit, CondoUnitsInputRole } from '@/hooks/useCondoUnits';
 import { ResidentialUnitsCard } from '@/components/results/ResidentialUnitsCard';
 import { UnitInsightsCard } from '@/components/results/UnitInsightsCard';
 import { TaxesCard } from '@/components/results/TaxesCard';
@@ -287,6 +289,21 @@ export default function Results() {
   // Condo and scope state
   const [billingBbl, setBillingBbl] = useState<string | null>(null);
   const [currentUnitLabel, setCurrentUnitLabel] = useState<string | null>(null);
+  
+  // Condo units data for CondoUnitTaxesCard
+  const [condoUnitsData, setCondoUnitsData] = useState<{
+    units: CondoUnit[];
+    totalApprox: number;
+    isCondo: boolean;
+    inputRole: CondoUnitsInputRole;
+    loading: boolean;
+  }>({
+    units: [],
+    totalApprox: 0,
+    isCondo: false,
+    inputRole: 'unknown',
+    loading: false,
+  });
   const [hasCondoUnits, setHasCondoUnits] = useState(false);
   
   // Co-op unit context (UI-only, no API calls) - initialized from URL
@@ -386,6 +403,17 @@ export default function Results() {
   const handleBillingBblResolved = useCallback((resolvedBillingBbl: string) => {
     setBillingBbl(resolvedBillingBbl);
     setHasCondoUnits(true);
+  }, []);
+
+  // Handle condo data resolution for CondoUnitTaxesCard
+  const handleCondoDataResolved = useCallback((data: {
+    units: CondoUnit[];
+    totalApprox: number;
+    isCondo: boolean;
+    inputRole: CondoUnitsInputRole;
+    loading: boolean;
+  }) => {
+    setCondoUnitsData(data);
   }, []);
 
   // Sync tab changes to URL
@@ -538,13 +566,39 @@ export default function Results() {
                 onOwnershipOverrideChange={handleOwnershipOverrideChange}
               />
               
-              {/* Taxes Card - NYC DOF property tax links */}
-              <TaxesCard 
-                viewBbl={bbl}
-                buildingBbl={buildingBblParam || billingBbl || undefined}
-                address={address}
-                isUnitPage={isUnitLot}
-              />
+              {/* Taxes Card - Context-aware: Condo buildings show unit taxes, unit pages show unit taxes */}
+              {/* CONDO BUILDING: Show CondoUnitTaxesCard with lazy-loaded unit taxes */}
+              {!isUnitLot && !isCoop && condoUnitsData.isCondo && condoUnitsData.units.length > 0 && (
+                <CondoUnitTaxesCard
+                  units={condoUnitsData.units}
+                  totalUnitCount={condoUnitsData.totalApprox || condoUnitsData.units.length}
+                  billingBbl={billingBbl}
+                  buildingAddress={address}
+                  borough={borough}
+                  bin={bin}
+                  unitsLoading={condoUnitsData.loading}
+                />
+              )}
+              
+              {/* UNIT PAGE: Show regular TaxesCard for the unit BBL */}
+              {isUnitLot && (
+                <TaxesCard 
+                  viewBbl={bbl}
+                  buildingBbl={undefined}
+                  address={address}
+                  isUnitPage={true}
+                />
+              )}
+              
+              {/* NON-CONDO BUILDING: Show regular TaxesCard */}
+              {!isUnitLot && !isCoop && !condoUnitsData.isCondo && (
+                <TaxesCard 
+                  viewBbl={bbl}
+                  buildingBbl={buildingBblParam || billingBbl || undefined}
+                  address={address}
+                  isUnitPage={false}
+                />
+              )}
               
               {/* Condo Units Discovery - only show when NOT on a unit page and NOT a co-op */}
               {!isUnitLot && !isCoop && (
@@ -555,6 +609,7 @@ export default function Results() {
                   bin={bin}
                   onUnitLabelResolved={setCurrentUnitLabel}
                   onBillingBblResolved={handleBillingBblResolved}
+                  onCondoDataResolved={handleCondoDataResolved}
                 />
               )}
               
@@ -567,6 +622,7 @@ export default function Results() {
                   bin={bin}
                   onUnitLabelResolved={setCurrentUnitLabel}
                   onBillingBblResolved={handleBillingBblResolved}
+                  onCondoDataResolved={handleCondoDataResolved}
                   hidden
                 />
               )}

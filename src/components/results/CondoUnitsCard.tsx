@@ -22,7 +22,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
-import { useCondoUnits } from '@/hooks/useCondoUnits';
+import { useCondoUnits, type CondoUnit, type CondoUnitsInputRole } from '@/hooks/useCondoUnits';
 
 interface CondoUnitsCardProps {
   bbl: string;
@@ -31,6 +31,13 @@ interface CondoUnitsCardProps {
   bin?: string;
   onUnitLabelResolved?: (unitLabel: string | null) => void;
   onBillingBblResolved?: (billingBbl: string) => void;
+  onCondoDataResolved?: (data: {
+    units: CondoUnit[];
+    totalApprox: number;
+    isCondo: boolean;
+    inputRole: CondoUnitsInputRole;
+    loading: boolean;
+  }) => void;
   hidden?: boolean;
 }
 
@@ -78,7 +85,8 @@ export function CondoUnitsCard({
   borough: buildingBorough, 
   bin: buildingBin,
   onUnitLabelResolved, 
-  onBillingBblResolved, 
+  onBillingBblResolved,
+  onCondoDataResolved,
   hidden 
 }: CondoUnitsCardProps) {
   const navigate = useNavigate();
@@ -112,6 +120,19 @@ export function CondoUnitsCard({
       onBillingBblResolved(data?.billingBbl || null);
     }
   }, [data?.billingBbl, onBillingBblResolved]);
+
+  // Pass condo data up to parent for CondoUnitTaxesCard
+  useEffect(() => {
+    if (onCondoDataResolved) {
+      onCondoDataResolved({
+        units: data?.units || [],
+        totalApprox: data?.totalApprox || 0,
+        isCondo: data?.isCondo || false,
+        inputRole: data?.inputRole || 'unknown',
+        loading,
+      });
+    }
+  }, [data, loading, onCondoDataResolved]);
 
   useEffect(() => {
     if (bbl && bbl.length === 10) {
