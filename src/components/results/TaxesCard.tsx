@@ -204,16 +204,30 @@ export function TaxesCard({ viewBbl, buildingBbl, address, isUnitPage = false }:
               )}
             </div>
             
-            {/* Arrears Status (public ledger estimate) */}
+            {/* Arrears Status */}
             <div className="flex items-center gap-2 text-sm">
               {arrearsAvailable ? (
                 arrears !== null && Number.isFinite(arrears) && arrears > 0 ? (
-                  <Badge variant="destructive" className="text-xs">
-                    Arrears (estimate): {formatUSD(arrears)}
-                  </Badge>
+                  <>
+                    <Badge variant="destructive" className="text-xs">
+                      Arrears: {formatUSD(arrears)}
+                    </Badge>
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <HelpCircle className="h-3 w-3 text-muted-foreground cursor-help" />
+                        </TooltipTrigger>
+                        <TooltipContent className="max-w-xs">
+                          <p className="text-xs">
+                            {arrearsNote || 'Past-due balance from prior billing periods (current period excluded).'}
+                          </p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  </>
                 ) : (
                   <Badge variant="outline" className="bg-primary/10 text-primary border-primary/20 text-xs">
-                    No arrears detected
+                    Arrears: None
                   </Badge>
                 )
               ) : (
@@ -221,18 +235,6 @@ export function TaxesCard({ viewBbl, buildingBbl, address, isUnitPage = false }:
                   Arrears: Unavailable
                 </Badge>
               )}
-              <TooltipProvider>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <HelpCircle className="h-3 w-3 text-muted-foreground cursor-help" />
-                  </TooltipTrigger>
-                  <TooltipContent className="max-w-xs">
-                    <p className="text-xs">
-                      {arrearsNote || 'Arrears estimate based on public ledger data. May not reflect actual DOF balance.'}
-                    </p>
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
             </div>
             
             {/* BBL display with copy button */}
