@@ -346,57 +346,59 @@ interface ArrearsResult {
 function computeArrears(
   periods: PeriodAgg[], 
   latestDueDate: string | null,
-  latestPeriodBalance: number | null
+  latestPeriodBalance: number | null,
+  latestBillAmount: number | null
 ): ArrearsResult {
   // Get today in YYYY-MM-DD format
   const now = new Date();
   const today = now.toISOString().slice(0, 10);
   
-  console.log(`[computeArrears] today=${today}, latestDueDate=${latestDueDate}, latestPeriodBalance=${latestPeriodBalance}, periods=${periods.length}`);
+  console.log(`[computeArrears] today=${today}, latestDueDate=${latestDueDate}, latestPeriodBalance=${latestPeriodBalance}, latestBillAmount=${latestBillAmount}, periods=${periods.length}`);
   
-  // ARREARS RULES:
+  // ARREARS RULES - CONSERVATIVE APPROACH:
   // 1. due_date must exist
   // 2. max_bal > 0 (has outstanding balance)
   // 3. due_date < today (past the due date)
   // 4. due_date != latestDueDate (NEVER include the latest billing period)
+  // 5. Arrears = 0 if the only unpaid balance is the current bill
   
   const periodsIncludedInArrears: string[] = [];
   
-  const pastDue = periods.filter(p => {
-    if (!p.due_date) {
-      return false;
-    }
+  // Get all periods BEFORE the latest one that might have balances
+  const priorPeriods = periods.filter(p => {
+    if (!p.due_date) return false;
     
-    // Rule 4: ALWAYS exclude the latest period - current quarter is NEVER arrears
+    // Rule 4: ALWAYS exclude the latest period
     if (latestDueDate && p.due_date === latestDueDate) {
       console.log(`[computeArrears] Excluding latest period: ${p.due_date}`);
       return false;
     }
     
-    // Rule 3: Only include periods that are actually past due (before today)
+    // Rule 3: Only include periods before today
     if (p.due_date >= today) {
-      console.log(`[computeArrears] Excluding future/current period: ${p.due_date} >= ${today}`);
+      console.log(`[computeArrears] Excluding future period: ${p.due_date} >= ${today}`);
       return false;
     }
     
-    // Rule 2: Only include if there's a positive balance
+    return true;
+  });
+  
+  // Get past-due periods with positive balance
+  const pastDue = priorPeriods.filter(p => {
     if (p.max_bal <= 0) {
-      console.log(`[computeArrears] Excluding paid period: ${p.due_date} balance=${p.max_bal}`);
+      console.log(`[computeArrears] Period ${p.due_date} has zero/negative balance: ${p.max_bal}`);
       return false;
     }
     
-    console.log(`[computeArrears] Including in arrears consideration: ${p.due_date} balance=${p.max_bal}`);
-    periodsIncludedInArrears.push(p.due_date);
+    console.log(`[computeArrears] Prior period with balance: ${p.due_date} balance=${p.max_bal}`);
+    periodsIncludedInArrears.push(p.due_date!);
     return true;
   });
   
   console.log(`[computeArrears] Past-due periods with balance: ${pastDue.length}`);
   
-  // Get balances from past-due periods
-  const pastBalances = pastDue.map(p => p.max_bal);
-  
-  // If no past-due periods with positive balances, arrears is 0
-  if (pastBalances.length === 0) {
+  // If no prior periods have balance, arrears = 0
+  if (pastDue.length === 0) {
     return {
       arrears: 0,
       arrearsAvailable: true,
@@ -409,65 +411,106 @@ function computeArrears(
         periodsConsidered: periods.length,
         periodsIncludedInArrears: [],
         maxPriorBalance: null,
-        exclusionReason: 'No prior periods with positive balance found',
+        exclusionReason: 'No prior periods with positive balance',
       },
     };
   }
   
-  // Detect "running balance" pattern: many periods with mostly increasing/stable balances
-  // In running balance systems, each row shows cumulative balance
-  let runningLikely = false;
-  if (pastBalances.length >= 4) {
-    let stableOrIncCount = 0;
-    for (let i = 1; i < pastBalances.length; i++) {
-      if (pastBalances[i] >= pastBalances[i - 1] * 0.95) stableOrIncCount++; // Allow 5% variance
-    }
-    runningLikely = stableOrIncCount / (pastBalances.length - 1) > 0.7;
-  }
-  
-  // Also detect running balance if all periods have very similar balances
-  if (!runningLikely && pastBalances.length >= 2) {
-    const maxBal = Math.max(...pastBalances);
-    const minBal = Math.min(...pastBalances);
-    // If all balances are within 20% of each other, it's likely running balance
-    if (maxBal > 0 && (maxBal - minBal) / maxBal < 0.2) {
-      runningLikely = true;
-    }
-  }
-  
+  const pastBalances = pastDue.map(p => p.max_bal);
   const maxPriorBalance = Math.max(...pastBalances);
+  const minPriorBalance = Math.min(...pastBalances);
+  
+  // DETECT RUNNING BALANCE PATTERN:
+  // 1. All periods have similar balances (within 30% of each other)
+  // 2. OR balances are monotonically stable/increasing
+  // 3. OR the max prior balance is close to the current period balance
+  let runningLikely = false;
+  let runningBalanceReason = '';
+  
+  // Check 1: Similar balances across periods
+  if (pastBalances.length >= 2 && maxPriorBalance > 0) {
+    const variance = (maxPriorBalance - minPriorBalance) / maxPriorBalance;
+    if (variance < 0.3) {
+      runningLikely = true;
+      runningBalanceReason = `Similar balances across ${pastBalances.length} periods (variance=${(variance*100).toFixed(0)}%)`;
+    }
+  }
+  
+  // Check 2: Monotonically stable/increasing (running balance behavior)
+  if (!runningLikely && pastBalances.length >= 3) {
+    let stableCount = 0;
+    for (let i = 1; i < pastBalances.length; i++) {
+      if (pastBalances[i] >= pastBalances[i - 1] * 0.9) stableCount++;
+    }
+    if (stableCount / (pastBalances.length - 1) > 0.7) {
+      runningLikely = true;
+      runningBalanceReason = `Stable/increasing pattern (${stableCount} of ${pastBalances.length - 1} transitions)`;
+    }
+  }
+  
+  // Check 3: Max prior balance matches current period balance (strong signal)
+  if (!runningLikely && latestPeriodBalance !== null && latestPeriodBalance > 0) {
+    const diff = Math.abs(maxPriorBalance - latestPeriodBalance);
+    const tolerance = Math.max(latestPeriodBalance * 0.15, 50); // 15% or $50
+    if (diff <= tolerance) {
+      runningLikely = true;
+      runningBalanceReason = `Prior max balance matches current (diff=${formatCurrency(diff)})`;
+    }
+  }
+  
+  // Check 4: All prior balances match the current bill amount (classic running balance)
+  if (!runningLikely && latestBillAmount !== null && latestBillAmount > 0) {
+    const matchingBillCount = pastBalances.filter(b => 
+      Math.abs(b - latestBillAmount) < latestBillAmount * 0.1 // Within 10%
+    ).length;
+    if (matchingBillCount === pastBalances.length) {
+      runningLikely = true;
+      runningBalanceReason = 'All prior balances match current bill amount';
+    }
+  }
+  
+  console.log(`[computeArrears] Running balance detection: ${runningLikely} (${runningBalanceReason || 'discrete periods'})`);
+  
   let arrearsAmount: number;
   let arrearsNote: string;
   
   if (runningLikely) {
     // RUNNING BALANCE SYSTEM:
-    // The balance on past periods is cumulative. If the max past-due balance equals
-    // the latest period balance, it means no additional arrears beyond current bill.
-    // Arrears = MAX(past-due balances) - latest period balance (if positive)
-    
-    console.log(`[computeArrears] Running balance detected. maxPriorBalance=${maxPriorBalance}, latestPeriodBalance=${latestPeriodBalance}`);
+    // The balance shown in prior periods is cumulative. To find true arrears:
+    // - If max prior balance <= current period balance: Arrears = 0 (just reflecting current bill)
+    // - If max prior balance > current period balance: Arrears = difference
     
     if (latestPeriodBalance !== null && latestPeriodBalance > 0) {
-      // If the latest period balance is the same or greater than prior periods,
-      // it means the prior balance was paid off or is just the current bill reflected
-      const actualArrears = maxPriorBalance - latestPeriodBalance;
+      const delta = maxPriorBalance - latestPeriodBalance;
       
-      if (actualArrears <= 0.01) {
-        // No arrears beyond current bill - the running balance is just the current bill
+      if (delta <= 0.01) {
+        // Prior balance is same or less than current - no arrears
         arrearsAmount = 0;
-        arrearsNote = 'Running balance equals current bill (no prior arrears)';
+        arrearsNote = `Running balance: prior periods show current bill (${runningBalanceReason})`;
       } else {
-        // There are actual arrears from prior periods
-        arrearsAmount = actualArrears;
-        arrearsNote = `Prior unpaid balance exceeds current bill by ${formatCurrency(actualArrears)}`;
+        // Prior balance exceeds current - that's true arrears
+        arrearsAmount = delta;
+        arrearsNote = `Prior balance exceeds current by ${formatCurrency(delta)} (${runningBalanceReason})`;
+      }
+    } else if (latestBillAmount !== null && latestBillAmount > 0) {
+      // No current period balance, but we have the bill amount
+      const delta = maxPriorBalance - latestBillAmount;
+      
+      if (delta <= 0.01) {
+        arrearsAmount = 0;
+        arrearsNote = `Running balance matches bill amount (${runningBalanceReason})`;
+      } else {
+        arrearsAmount = delta;
+        arrearsNote = `Prior balance exceeds bill by ${formatCurrency(delta)} (${runningBalanceReason})`;
       }
     } else {
-      // No latest period balance to compare against - take max prior balance as arrears
-      arrearsAmount = maxPriorBalance;
-      arrearsNote = `Past-due balance (running balance, ${pastDue.length} prior periods)`;
+      // No reference point - be conservative, assume running balance = 0 arrears
+      arrearsAmount = 0;
+      arrearsNote = `Running balance detected but no reference (${runningBalanceReason})`;
     }
   } else {
-    // DISCRETE PERIODS: SUM the balances (each period's balance is independent)
+    // DISCRETE PERIODS: Each period's balance is independent
+    // Sum all past-due balances
     arrearsAmount = pastBalances.reduce((s, v) => s + v, 0);
     arrearsNote = `Sum of ${pastBalances.length} past-due period balances`;
   }
@@ -478,7 +521,7 @@ function computeArrears(
     return {
       arrears: 0,
       arrearsAvailable: true,
-      arrearsNote: runningLikely ? 'Running balance equals current bill (no prior arrears)' : 'No past-due balances',
+      arrearsNote: runningLikely ? arrearsNote : 'No past-due balances',
       runningBalanceDetected: runningLikely,
       debugInfo: {
         today,
@@ -487,7 +530,7 @@ function computeArrears(
         periodsConsidered: periods.length,
         periodsIncludedInArrears,
         maxPriorBalance,
-        exclusionReason: runningLikely ? 'Running balance system: prior balance matches current bill' : undefined,
+        exclusionReason: runningLikely ? runningBalanceReason : 'All prior balances paid',
       },
     };
   }
@@ -807,7 +850,7 @@ serve(async (req) => {
     computationLog.push('Computing arrears from past-due periods...');
     computationLog.push(`latestDueDate (raw ISO): ${latestBillResult.latestDueDate || 'null'}`);
     computationLog.push(`latestPeriodBalance: ${latestBillResult.latestPeriodBalance}`);
-    const arrearsResult = computeArrears(periods, latestBillResult.latestDueDate, latestBillResult.latestPeriodBalance);
+    const arrearsResult = computeArrears(periods, latestBillResult.latestDueDate, latestBillResult.latestPeriodBalance, latestBillResult.latestBillAmount);
     computationLog.push(`Arrears debug: today=${arrearsResult.debugInfo.today}, latestDueDate=${arrearsResult.debugInfo.latestDueDate}, maxPriorBalance=${arrearsResult.debugInfo.maxPriorBalance}`);
     computationLog.push(`Periods considered: ${arrearsResult.debugInfo.periodsConsidered}, included in arrears calc: ${arrearsResult.debugInfo.periodsIncludedInArrears.length}`);
     computationLog.push(`Running balance detected: ${arrearsResult.runningBalanceDetected}`);

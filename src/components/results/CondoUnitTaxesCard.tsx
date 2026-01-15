@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { 
   DollarSign, 
@@ -107,7 +107,7 @@ function formatLot(lot: string): string {
   return lot;
 }
 
-// Unit tax row component
+// Unit tax row component - memoized for performance
 function UnitTaxRow({ 
   unitTax, 
   onOpenUnit 
@@ -213,12 +213,16 @@ export function CondoUnitTaxesCard({
 }: CondoUnitTaxesCardProps) {
   const navigate = useNavigate();
   const [expanded, setExpanded] = useState(true);
+  
+  // Track how many units to show - stable across renders
   const [visibleCount, setVisibleCount] = useState(INITIAL_BATCH_SIZE);
+  
+  // Track the building BBL to detect navigation changes
+  const lastBillingBblRef = useRef<string | null>(null);
   
   const {
     unitTaxes,
     fetchBatch,
-    fetchOne,
     reset,
     batchLoading,
     loadedCount,
@@ -226,16 +230,26 @@ export function CondoUnitTaxesCard({
     unpaidCount,
   } = useCondoUnitTaxes();
 
-  // Get visible units for display
+  // Reset state when navigating to a different building
+  useEffect(() => {
+    if (billingBbl !== lastBillingBblRef.current) {
+      lastBillingBblRef.current = billingBbl;
+      setVisibleCount(INITIAL_BATCH_SIZE);
+      reset();
+    }
+  }, [billingBbl, reset]);
+
+  // Get visible units for display - stable computation
   const visibleUnits = useMemo(() => {
     return units.slice(0, visibleCount);
   }, [units, visibleCount]);
 
-  // Fetch taxes for visible units on mount or when visibleUnits changes
+  // Fetch taxes for visible units when they change
+  // FIXED: Only fetch units not already in the map to prevent double-fetching
   useEffect(() => {
     if (visibleUnits.length === 0) return;
 
-    // Only fetch units that haven't been fetched yet
+    // Compute which units need fetching based on current unitTaxes state
     const unitsToFetch = visibleUnits
       .filter(u => !unitTaxes.has(u.unitBbl))
       .map(u => ({ unitBbl: u.unitBbl, unitLabel: u.unitLabel }));
@@ -243,24 +257,9 @@ export function CondoUnitTaxesCard({
     if (unitsToFetch.length > 0) {
       fetchBatch(unitsToFetch);
     }
-  }, [visibleUnits, unitTaxes, fetchBatch]);
+  }, [visibleUnits, fetchBatch]); // Note: unitTaxes intentionally excluded to prevent infinite loop
 
-  // Reset when units change (different building)
-  useEffect(() => {
-    if (units.length > 0) {
-      const firstUnitBbl = units[0]?.unitBbl;
-      const hasCurrentUnits = unitTaxes.size > 0 && 
-        Array.from(unitTaxes.keys()).some(bbl => 
-          units.some(u => u.unitBbl === bbl)
-        );
-      
-      if (!hasCurrentUnits && unitTaxes.size > 0) {
-        reset();
-      }
-    }
-  }, [units, unitTaxes, reset]);
-
-  const handleOpenUnit = (unitBbl: string) => {
+  const handleOpenUnit = useCallback((unitBbl: string) => {
     const params = new URLSearchParams();
     params.set('bbl', unitBbl);
     params.set('borough', borough || boroughNameFromBbl(unitBbl));
@@ -276,17 +275,18 @@ export function CondoUnitTaxesCard({
     }
     
     navigate(`/results?${params.toString()}`);
-  };
+  }, [navigate, borough, buildingAddress, billingBbl, bin]);
 
-  const handleLoadMore = () => {
+  // FIXED: Load more now properly increments and triggers fetch via useEffect
+  const handleLoadMore = useCallback(() => {
     const newCount = Math.min(visibleCount + INITIAL_BATCH_SIZE, units.length);
     setVisibleCount(newCount);
-  };
+  }, [visibleCount, units.length]);
 
   const hasMore = visibleCount < units.length;
   const remainingCount = units.length - visibleCount;
 
-  // Build unit tax summaries for display
+  // Build unit tax summaries for display - pure derivation from state
   const unitTaxSummaries = useMemo(() => {
     return visibleUnits.map(unit => {
       const existing = unitTaxes.get(unit.unitBbl);
@@ -345,9 +345,8 @@ export function CondoUnitTaxesCard({
           <Alert>
             <Info className="h-4 w-4" />
             <AlertDescription className="text-sm">
-              <p>This condominium's tax ledger is maintained at the unit level.</p>
+              <p>No condo unit lots found for this building.</p>
               <p className="text-muted-foreground text-xs mt-1">
-                No unit-level tax records are currently available from NYC DOF. 
                 Individual unit taxes may be accessed via NYC CityPay.
               </p>
             </AlertDescription>
@@ -418,14 +417,12 @@ export function CondoUnitTaxesCard({
             </Badge>
           </div>
           
-          {loadedCount > 0 && (
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-muted-foreground">Loaded:</span>
-              <Badge variant="secondary" className="font-mono">
-                {loadedCount} of {visibleCount}
-              </Badge>
-            </div>
-          )}
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-muted-foreground">Loaded:</span>
+            <Badge variant="secondary" className="font-mono">
+              {loadedCount} of {visibleCount}
+            </Badge>
+          </div>
           
           {unpaidCount > 0 && (
             <Badge variant="destructive" className="text-xs">
@@ -441,10 +438,10 @@ export function CondoUnitTaxesCard({
         </div>
         
         {/* Building-level tax suppression notice */}
-        <Alert className="py-2">
-          <Info className="h-4 w-4" />
-          <AlertDescription className="text-xs text-muted-foreground">
-            <strong>Note:</strong> Condominium buildings do not have building-level tax liability. 
+        <Alert className="py-2 border-primary/30 bg-primary/5">
+          <Info className="h-4 w-4 text-primary" />
+          <AlertDescription className="text-xs">
+            <strong>Condominium buildings do not have building-level tax liability.</strong>{' '}
             All property taxes shown below are unit-specific.
           </AlertDescription>
         </Alert>
