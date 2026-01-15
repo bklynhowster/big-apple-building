@@ -25,12 +25,15 @@ function parseBBL(bbl: string): { borough: string; block: string; lot: string } 
   };
 }
 
+// Safe USD formatter - never returns $NaN
+function formatUSD(n: number | null | undefined): string {
+  if (n === null || n === undefined || !Number.isFinite(n)) return 'Unavailable';
+  return n.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+}
+
+// Legacy wrapper for backwards compatibility
 function formatCurrency(amount: number): string {
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    minimumFractionDigits: 2,
-  }).format(amount);
+  return formatUSD(amount);
 }
 
 function getDOFCityPayUrl(): string {
@@ -165,14 +168,19 @@ export function TaxesCard({ viewBbl, buildingBbl, address, isUnitPage = false }:
                   <p className="text-xs text-muted-foreground uppercase tracking-wide">
                     Latest {billingCycle === 'Semiannual' ? 'Semiannual' : 'Quarterly'} Property Tax Bill
                   </p>
-                  {latestBillAmount !== null ? (
+                  {latestBillAmount !== null && Number.isFinite(latestBillAmount) ? (
                     <p className="text-2xl font-bold text-foreground">
-                      {formatCurrency(latestBillAmount)}
+                      {formatUSD(latestBillAmount)}
                     </p>
                   ) : (
-                    <p className="text-xl font-medium text-muted-foreground">
-                      Unavailable
-                    </p>
+                    <div>
+                      <p className="text-xl font-medium text-muted-foreground">
+                        Unavailable
+                      </p>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        No bill rows found in public ledger data for this parcel.
+                      </p>
+                    </div>
                   )}
                 </div>
                 {statusBadge && (
@@ -202,9 +210,9 @@ export function TaxesCard({ viewBbl, buildingBbl, address, isUnitPage = false }:
             {/* Arrears Status */}
             <div className="flex items-center gap-2 text-sm">
               {arrearsAvailable ? (
-                arrears !== null && arrears > 0 ? (
+                arrears !== null && Number.isFinite(arrears) && arrears > 0 ? (
                   <Badge variant="destructive" className="text-xs">
-                    Arrears: {formatCurrency(arrears)}
+                    Arrears: {formatUSD(arrears)}
                   </Badge>
                 ) : (
                   <Badge variant="outline" className="bg-primary/10 text-primary border-primary/20 text-xs">
@@ -327,11 +335,11 @@ export function TaxesCard({ viewBbl, buildingBbl, address, isUnitPage = false }:
                       <p className="font-medium text-amber-700 dark:text-amber-400 mb-1">Computed Values:</p>
                       <div className="bg-muted p-2 rounded text-[10px] space-y-1">
                         <div>latest_due_date: {data.latest_due_date || 'null'}</div>
-                        <div>latest_bill_amount: {data.latest_bill_amount !== null ? `$${data.latest_bill_amount.toLocaleString()}` : 'null'}</div>
-                        <div>latest_period_balance: {data.latest_period_balance !== null ? `$${data.latest_period_balance.toLocaleString()}` : 'null'}</div>
+                        <div>latest_bill_amount: {formatUSD(data.latest_bill_amount)}</div>
+                        <div>latest_period_balance: {formatUSD(data.latest_period_balance)}</div>
                         <div>payment_status: {data.payment_status}</div>
                         <div>billing_cycle: {data.billing_cycle} ({data.billing_cycle_evidence})</div>
-                        <div>arrears: {data.arrears !== null ? `$${data.arrears.toLocaleString()}` : 'null'} ({data.arrears_note})</div>
+                        <div>arrears: {formatUSD(data.arrears)} ({data.arrears_note})</div>
                       </div>
                     </div>
                     
@@ -379,8 +387,8 @@ export function TaxesCard({ viewBbl, buildingBbl, address, isUnitPage = false }:
                               {data.debug.sample_rows.map((row, idx) => (
                                 <tr key={idx} className="border-b border-border/50">
                                   <td className="p-1">{row.due_date || '—'}</td>
-                                  <td className="text-right p-1 font-mono">{row.liability !== null ? row.liability.toFixed(2) : '—'}</td>
-                                  <td className="text-right p-1 font-mono">{row.balance !== null ? row.balance.toFixed(2) : '—'}</td>
+                                  <td className="text-right p-1 font-mono">{row.liability !== null && Number.isFinite(row.liability) ? row.liability.toFixed(2) : '—'}</td>
+                                  <td className="text-right p-1 font-mono">{row.balance !== null && Number.isFinite(row.balance) ? row.balance.toFixed(2) : '—'}</td>
                                   <td className="p-1">{row.code || '—'}</td>
                                 </tr>
                               ))}
