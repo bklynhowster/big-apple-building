@@ -19,6 +19,7 @@ export interface DebugInfo {
   first_row_keys: string[];
   running_balance_detected: boolean;
   latest_period_key: string | null;
+  latest_due_date_raw: string | null;
   periods: Array<{
     due_date: string | null;
     max_liab: number;
@@ -27,6 +28,16 @@ export interface DebugInfo {
     codes: string[];
   }>;
   computation_log: string[];
+  // Enhanced arrears debug
+  arrears_debug: {
+    today: string;
+    latest_due_date: string | null;
+    latest_period_balance: number | null;
+    periods_considered: number;
+    periods_included_in_arrears: string[];
+    max_prior_balance: number | null;
+    exclusion_reason?: string;
+  };
 }
 
 // Result from the period-based property-taxes edge function
