@@ -757,8 +757,10 @@ serve(async (req) => {
           arrears_debug: {
             today: new Date().toISOString().slice(0, 10),
             latest_due_date: null,
+            latest_period_balance: null,
             periods_considered: 0,
             periods_included_in_arrears: [],
+            max_prior_balance: null,
             exclusion_reason: 'No data available',
           },
         };
@@ -856,8 +858,10 @@ serve(async (req) => {
         arrears_debug: {
           today: arrearsResult.debugInfo.today,
           latest_due_date: arrearsResult.debugInfo.latestDueDate,
+          latest_period_balance: arrearsResult.debugInfo.latestPeriodBalance,
           periods_considered: arrearsResult.debugInfo.periodsConsidered,
           periods_included_in_arrears: arrearsResult.debugInfo.periodsIncludedInArrears,
+          max_prior_balance: arrearsResult.debugInfo.maxPriorBalance,
           exclusion_reason: arrearsResult.debugInfo.exclusionReason,
         },
       };
