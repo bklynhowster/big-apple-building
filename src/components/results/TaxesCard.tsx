@@ -332,7 +332,8 @@ export function TaxesCard({ viewBbl, buildingBbl, address, isUnitPage = false }:
                     <div>
                       <p className="font-medium text-amber-700 dark:text-amber-400 mb-1">Computed Values:</p>
                       <div className="bg-muted p-2 rounded text-[10px] space-y-1">
-                        <div>latest_due_date: {data.latest_due_date || 'null'}</div>
+                        <div>latest_due_date (display): {data.latest_due_date || 'null'}</div>
+                        <div>latest_due_date_raw (ISO): {data.debug.latest_due_date_raw || 'null'}</div>
                         <div>latest_bill_amount: {formatUSD(data.latest_bill_amount)}</div>
                         <div>latest_period_balance: {formatUSD(data.latest_period_balance)}</div>
                         <div>payment_status: {data.payment_status}</div>
@@ -341,6 +342,22 @@ export function TaxesCard({ viewBbl, buildingBbl, address, isUnitPage = false }:
                         <div>latest_period_key: {data.debug.latest_period_key || 'null'}</div>
                       </div>
                     </div>
+                    
+                    {/* Arrears Debug - Critical for verifying exclusion logic */}
+                    {data.debug.arrears_debug && (
+                      <div>
+                        <p className="font-medium text-red-600 dark:text-red-400 mb-1">Arrears Calculation Debug:</p>
+                        <div className="bg-red-500/10 p-2 rounded text-[10px] space-y-1 border border-red-500/30">
+                          <div><strong>today:</strong> {data.debug.arrears_debug.today}</div>
+                          <div><strong>latest_due_date (excluded):</strong> {data.debug.arrears_debug.latest_due_date || 'null'}</div>
+                          <div><strong>periods_considered:</strong> {data.debug.arrears_debug.periods_considered}</div>
+                          <div><strong>periods_included_in_arrears:</strong> {data.debug.arrears_debug.periods_included_in_arrears.length > 0 ? data.debug.arrears_debug.periods_included_in_arrears.join(', ') : 'NONE (arrears = 0)'}</div>
+                          {data.debug.arrears_debug.exclusion_reason && (
+                            <div><strong>exclusion_reason:</strong> {data.debug.arrears_debug.exclusion_reason}</div>
+                          )}
+                        </div>
+                      </div>
+                    )}
                     
                     {/* First Row Keys */}
                     {data.debug.first_row_keys.length > 0 && (
