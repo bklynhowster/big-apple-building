@@ -94,11 +94,16 @@ function parseDate(dateStr: string | null): Date | null {
   }
 }
 
-// Parse numeric value
-function parseNumber(value: string | number | null): number | null {
-  if (value === null) return null;
-  const num = typeof value === 'number' ? value : parseFloat(value);
-  return isNaN(num) ? null : num;
+// Robust numeric parsing - handles "$1,234.56", "1,234.56", "-1,234.56", etc.
+function toNumber(v: unknown): number | null {
+  if (v === null || v === undefined) return null;
+  if (typeof v === 'number' && Number.isFinite(v)) return v;
+  const s = String(v).trim();
+  if (!s) return null;
+  // Remove currency symbols and commas
+  const cleaned = s.replace(/[$,]/g, '');
+  const n = Number(cleaned);
+  return Number.isFinite(n) ? n : null;
 }
 
 // Format date for display
@@ -106,17 +111,32 @@ function formatDateDisplay(date: Date): string {
   return `${String(date.getMonth() + 1).padStart(2, '0')}/${String(date.getDate()).padStart(2, '0')}/${date.getFullYear()}`;
 }
 
+// Normalize date to ISO YYYY-MM-DD string or null
+function normalizeDateStr(dateStr: string | null): string | null {
+  if (!dateStr) return null;
+  try {
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return null;
+    // Return ISO date string (YYYY-MM-DD)
+    return d.toISOString().split('T')[0];
+  } catch {
+    return null;
+  }
+}
+
 // Parse a raw row into structured LedgerRow
 function parseRow(raw: RawRow): LedgerRow {
   const dueDateRaw = getFieldValue(raw, DUE_DATE_FIELDS);
-  const dueDateStr = dueDateRaw ? String(dueDateRaw) : null;
-  const dueDate = parseDate(dueDateStr);
+  const dueDateStrRaw = dueDateRaw ? String(dueDateRaw) : null;
+  const dueDate = parseDate(dueDateStrRaw);
+  const dueDateStr = normalizeDateStr(dueDateStrRaw);
   
+  // Use toNumber for robust parsing of currency values
   const liabilityRaw = getFieldValue(raw, LIABILITY_FIELDS);
-  const liability = parseNumber(liabilityRaw);
+  const liability = toNumber(liabilityRaw);
   
   const balanceRaw = getFieldValue(raw, BALANCE_FIELDS);
-  const balance = parseNumber(balanceRaw);
+  const balance = toNumber(balanceRaw);
   
   const codeRaw = getFieldValue(raw, CODE_FIELDS);
   const code = codeRaw ? String(codeRaw).toUpperCase().trim() : null;
