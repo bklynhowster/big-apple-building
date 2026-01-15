@@ -9,6 +9,10 @@
  * - Ordinals (1ST/2ND/3RD/4TH/12TH/etc.) are NEVER units.
  * - STOPLIST applies ONLY to alpha-only tokens (no digits).
  * - Do not add extraction-layer hard blocks. Validation lives in normalizeUnit/isLikelyUnitLabel only.
+ * 
+ * CRITICAL FIX (v2): Numeric-only tokens from text extraction require STRICTER matching:
+ * - Must be preceded by APT/APARTMENT/UNIT (not just # or RM/STE)
+ * - The # pattern alone is too prone to false positives (e.g., "Issue #2")
  */
 
 export type UnitType = 'APT' | 'UNIT' | 'PH' | 'UNKNOWN';
@@ -33,11 +37,52 @@ const EXTRACTION_DEBUG =
   window.location?.search?.includes('debug=1') &&
   (import.meta as any)?.env?.DEV;
 
+// Track debug stats for numeric unit matching
+interface NumericUnitDebugStats {
+  unitLabel: string;
+  regexUsed: string;
+  matchesBySource: Record<string, number>;
+  sampleSnippets: string[];
+}
+
+let numericUnitDebugStats: NumericUnitDebugStats[] = [];
+
+export function getNumericUnitDebugStats(): NumericUnitDebugStats[] {
+  return numericUnitDebugStats;
+}
+
+export function clearNumericUnitDebugStats(): void {
+  numericUnitDebugStats = [];
+}
+
 function debugLog(event: string, payload: Record<string, unknown>) {
   if (!EXTRACTION_DEBUG) return;
   // keep logs small to avoid spam
   const safe = JSON.parse(JSON.stringify(payload, (_, v) => (typeof v === 'string' && v.length > 180 ? v.slice(0, 180) + '…' : v)));
   console.log(`[${event}]`, safe);
+}
+
+function recordNumericDebug(unitLabel: string, regexUsed: string, sourceField: string, snippet: string | null) {
+  if (!EXTRACTION_DEBUG) return;
+  
+  // Only track for numeric-only labels
+  if (!/^\d+$/.test(unitLabel)) return;
+  
+  let stat = numericUnitDebugStats.find(s => s.unitLabel === unitLabel);
+  if (!stat) {
+    stat = {
+      unitLabel,
+      regexUsed,
+      matchesBySource: {},
+      sampleSnippets: [],
+    };
+    numericUnitDebugStats.push(stat);
+  }
+  
+  stat.matchesBySource[sourceField] = (stat.matchesBySource[sourceField] || 0) + 1;
+  if (stat.sampleSnippets.length < 5 && snippet) {
+    stat.sampleSnippets.push(snippet.slice(0, 100));
+  }
 }
 
 // ------------------------------
@@ -294,29 +339,97 @@ const TEXT_EXTRACTION_FIELDS = [
   'ecb_violation_description'
 ];
 
-// Explicit "strong evidence" patterns only (APT/UNIT/#/RM/STE/etc.)
-// CRITICAL: Use negative lookahead (?!S\b) to prevent matching plurals like "UNITS" -> "S"
-const UNIT_EXTRACTION_PATTERNS: { pattern: RegExp; keyword: string; strong: boolean }[] = [
+/**
+ * CRITICAL FIX: Separate patterns for numeric-only vs alphanumeric captures.
+ * 
+ * For NUMERIC-ONLY tokens (e.g., "2", "12", "100"), we require STRICTER prefixes:
+ * - Only APT, APARTMENT, UNIT are considered strong enough
+ * - # alone is NOT sufficient (too many false positives like "Issue #2", "§ 2")
+ * - RM/ROOM/STE/SUITE are NOT sufficient for bare numbers
+ * 
+ * For ALPHANUMERIC tokens (e.g., "2A", "12B", "PH"), the existing patterns are fine.
+ */
+
+// Patterns that ALWAYS provide strong evidence (for alphanumeric captures)
+const UNIT_EXTRACTION_PATTERNS_ALPHANUMERIC: { pattern: RegExp; keyword: string }[] = [
   // APT/APARTMENT - must not match "APTS" plural
-  { pattern: /\bAPT\.?(?!S\b)\s*#?\s*([A-Z0-9]{1,8})\b/i, keyword: 'APT', strong: true },
-  { pattern: /\bAPARTMENT(?!S\b)\s*#?\s*([A-Z0-9]{1,8})\b/i, keyword: 'APARTMENT', strong: true },
-  // UNIT - must not match "UNITS" plural (the most common false positive source)
-  { pattern: /\bUNIT(?!S\b)\s*#?\s*([A-Z0-9]{1,8})\b/i, keyword: 'UNIT', strong: true },
-  { pattern: /\bRM\.?(?!S\b)\s*#?\s*([A-Z0-9]{1,8})\b/i, keyword: 'RM', strong: true },
-  { pattern: /\bROOM(?!S\b)\s*#?\s*([A-Z0-9]{1,8})\b/i, keyword: 'ROOM', strong: true },
-  { pattern: /\bSTE\.?(?!S\b)\s*#?\s*([A-Z0-9]{1,8})\b/i, keyword: 'STE', strong: true },
-  { pattern: /\bSUITE(?!S\b)\s*#?\s*([A-Z0-9]{1,8})\b/i, keyword: 'SUITE', strong: true },
-  { pattern: /#\s*([A-Z0-9]{1,8})\b/i, keyword: '#', strong: true },
+  { pattern: /\bAPT\.?(?!S\b)\s*#?\s*([A-Z0-9]{1,8})\b/i, keyword: 'APT' },
+  { pattern: /\bAPARTMENT(?!S\b)\s*#?\s*([A-Z0-9]{1,8})\b/i, keyword: 'APARTMENT' },
+  // UNIT - must not match "UNITS" plural
+  { pattern: /\bUNIT(?!S\b)\s*#?\s*([A-Z0-9]{1,8})\b/i, keyword: 'UNIT' },
+  { pattern: /\bRM\.?(?!S\b)\s*#?\s*([A-Z0-9]{1,8})\b/i, keyword: 'RM' },
+  { pattern: /\bROOM(?!S\b)\s*#?\s*([A-Z0-9]{1,8})\b/i, keyword: 'ROOM' },
+  { pattern: /\bSTE\.?(?!S\b)\s*#?\s*([A-Z0-9]{1,8})\b/i, keyword: 'STE' },
+  { pattern: /\bSUITE(?!S\b)\s*#?\s*([A-Z0-9]{1,8})\b/i, keyword: 'SUITE' },
+  { pattern: /#\s*([A-Z0-9]{1,8})\b/i, keyword: '#' },
   // PH / PENTHOUSE are special tokens
-  { pattern: /\bPENTHOUSE\s*([A-Z0-9]{0,3})\b/i, keyword: 'PENTHOUSE', strong: true },
-  { pattern: /\bPH\s*([A-Z0-9]{0,3})\b/i, keyword: 'PH', strong: true }
+  { pattern: /\bPENTHOUSE\s*([A-Z0-9]{0,3})\b/i, keyword: 'PENTHOUSE' },
+  { pattern: /\bPH\s*([A-Z0-9]{0,3})\b/i, keyword: 'PH' }
 ];
+
+// Stricter patterns for NUMERIC-ONLY captures (e.g., "APT 2", "UNIT 12")
+// ONLY APT/APARTMENT/UNIT are strong enough to accept bare numbers
+const NUMERIC_STRONG_KEYWORDS = new Set(['APT', 'APARTMENT', 'UNIT']);
+
+/**
+ * Check if a captured token is numeric-only
+ */
+function isNumericOnly(token: string): boolean {
+  return /^\d+$/.test(token);
+}
+
+/**
+ * For numeric-only tokens, check additional context to reduce false positives.
+ * Returns false if the context suggests the number is NOT a unit reference.
+ */
+function validateNumericContextual(text: string, matchIndex: number, matchLength: number, numericToken: string): boolean {
+  // Get surrounding context (50 chars before and after)
+  const start = Math.max(0, matchIndex - 50);
+  const end = Math.min(text.length, matchIndex + matchLength + 50);
+  const context = text.slice(start, end).toUpperCase();
+  
+  // Reject if this looks like a date pattern (2025-02-01, 02/01/2025, etc.)
+  // Check if the numeric token is part of a date-like sequence
+  const datePatterns = [
+    /\b\d{4}[-\/]\d{1,2}[-\/]\d{1,2}\b/,  // ISO date
+    /\b\d{1,2}[-\/]\d{1,2}[-\/]\d{2,4}\b/,  // US date
+    /\b(?:JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)[A-Z]*\s*\d{1,2}/i,  // Month DD
+  ];
+  
+  for (const dp of datePatterns) {
+    const dateMatch = context.match(dp);
+    if (dateMatch) {
+      // Check if our numeric token is part of this date
+      const dateStr = dateMatch[0];
+      if (dateStr.includes(numericToken)) {
+        debugLog('NumericContext.reject_date', { context: context.slice(0, 80), numericToken, dateStr });
+        return false;
+      }
+    }
+  }
+  
+  // Reject if preceded by section symbol, article, paragraph markers
+  const priorContext = text.slice(Math.max(0, matchIndex - 10), matchIndex).toUpperCase();
+  if (/[§¶]|SECTION|ARTICLE|PARAGRAPH|SUBSECTION|PART|ITEM|NO\.|NUMBER|ISSUE|CASE|REF|ID/i.test(priorContext)) {
+    debugLog('NumericContext.reject_legal_marker', { priorContext, numericToken });
+    return false;
+  }
+  
+  // Reject if this is clearly a count/quantity (e.g., "2 violations", "3 floors")
+  const postContext = text.slice(matchIndex + matchLength, matchIndex + matchLength + 20).toUpperCase();
+  if (/^\s*(VIOLATION|FLOOR|STORY|STORIES|LEVEL|DAY|WEEK|MONTH|YEAR|HOUR|MINUTE|ITEM|ISSUE|COUNT|TIME|UNIT)S?\b/i.test(postContext)) {
+    debugLog('NumericContext.reject_quantity', { postContext, numericToken });
+    return false;
+  }
+  
+  return true;
+}
 
 function extractUnitFromText(text: string | null | undefined, fieldName: string): UnitExtractionResult | null {
   if (!text) return null;
   const s = String(text);
 
-  for (const { pattern, keyword, strong } of UNIT_EXTRACTION_PATTERNS) {
+  for (const { pattern, keyword } of UNIT_EXTRACTION_PATTERNS_ALPHANUMERIC) {
     const match = s.match(pattern);
     if (!match) continue;
 
@@ -326,6 +439,7 @@ function extractUnitFromText(text: string | null | undefined, fieldName: string)
     if (!rawToken && keyword !== 'PENTHOUSE' && keyword !== 'PH') continue;
     
     let normalized: string | null = null;
+    const matchIndex = match.index ?? 0;
 
     if (keyword === 'PENTHOUSE' || keyword === 'PH') {
       const suffix = rawToken ? rawToken.replace(/^PH/i, '') : '';
@@ -333,10 +447,27 @@ function extractUnitFromText(text: string | null | undefined, fieldName: string)
       if (!isLikelyUnitLabel(ph, true)) continue;
       normalized = ph;
     } else {
-      // CRITICAL: For single-letter units, verify exact phrase "UNIT <letter>" exists
-      // This prevents false positives from plurals like "UNITS" -> "S"
+      // CRITICAL FIX: For numeric-only tokens, apply stricter validation
+      if (isNumericOnly(rawToken)) {
+        // Only accept numeric-only if preceded by APT/APARTMENT/UNIT
+        if (!NUMERIC_STRONG_KEYWORDS.has(keyword)) {
+          debugLog('UnitExtract.reject_numeric_weak_keyword', { 
+            fieldName, 
+            keyword, 
+            rawToken,
+            reason: `Keyword "${keyword}" not strong enough for bare numeric "${rawToken}"`
+          });
+          continue;
+        }
+        
+        // Additional contextual validation for numeric tokens
+        if (!validateNumericContextual(s, matchIndex, match[0].length, rawToken)) {
+          continue;
+        }
+      }
+      
+      // For single-letter units, verify exact phrase exists
       if (/^[A-Z]$/.test(rawToken)) {
-        // Check that the source text contains an explicit singular reference
         const singleLetterPattern = new RegExp(
           `\\b${keyword}\\.?\\s*#?\\s*${rawToken}\\b`,
           'i'
@@ -347,7 +478,13 @@ function extractUnitFromText(text: string | null | undefined, fieldName: string)
         }
       }
       
-      normalized = normalizeUnit(rawToken, false, strong);
+      // Determine if this is strong evidence
+      // Numeric-only requires stricter keywords, alphanumeric can use any pattern
+      const hasStrongEvidence = isNumericOnly(rawToken) 
+        ? NUMERIC_STRONG_KEYWORDS.has(keyword)
+        : true; // All patterns are strong for alphanumeric
+      
+      normalized = normalizeUnit(rawToken, false, hasStrongEvidence);
       if (!normalized) continue;
     }
 
@@ -356,7 +493,10 @@ function extractUnitFromText(text: string | null | undefined, fieldName: string)
     const end = Math.min(s.length, idx + match[0].length + 30);
     const snippet = (start > 0 ? '…' : '') + s.slice(start, end).trim() + (end < s.length ? '…' : '');
 
-    debugLog('UnitExtract.accept_text', { fieldName, keyword, rawToken, normalized, strong });
+    debugLog('UnitExtract.accept_text', { fieldName, keyword, rawToken, normalized });
+    
+    // Record debug stats for numeric units
+    recordNumericDebug(normalized, pattern.toString(), fieldName, snippet);
 
     const { confidence, reason } = determineConfidence('pattern', `Explicit ${keyword} prefix`);
     return {
@@ -400,7 +540,7 @@ export function extractUnitFromRecordWithTrace(record: Record<string, unknown> |
   const lowerKeyMap = new Map<string, string>();
   for (const key of flat.keys()) lowerKeyMap.set(key.toLowerCase(), key);
 
-  // Direct fields (strong evidence)
+  // Direct fields (strong evidence) - this is the ONLY path that allows bare numeric from field values
   for (const field of UNIT_FIELDS) {
     const actualKey = lowerKeyMap.get(field.toLowerCase());
     if (!actualKey) continue;
@@ -414,6 +554,11 @@ export function extractUnitFromRecordWithTrace(record: Record<string, unknown> |
     }
 
     debugLog('UnitExtract.accept_direct', { field: actualKey, value, normalized });
+
+    // Record debug for numeric
+    if (isNumericOnly(normalized)) {
+      recordNumericDebug(normalized, 'direct_field', actualKey, value);
+    }
 
     const { confidence, reason } = determineConfidence('direct', 'Direct apartment/unit field');
     return {
@@ -624,6 +769,7 @@ declare global {
   interface Window {
     runUnitSanityChecks?: () => void;
     runUnitExtractionTests?: () => void;
+    getNumericUnitDebugStats?: () => NumericUnitDebugStats[];
   }
 }
 
@@ -632,4 +778,5 @@ if (typeof window !== 'undefined' && (import.meta as any)?.env?.DEV) {
     const res = runSanity();
     console.log('[UnitSanity]', res);
   };
+  window.getNumericUnitDebugStats = getNumericUnitDebugStats;
 }
