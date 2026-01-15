@@ -111,12 +111,13 @@ interface CachedResult {
   bbl: string;
   stats: CombinedUnitStats[];
   timestamp: number;
+  totalRecordsScanned?: number;
 }
 
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
 // Cache versioning to prevent "stuck at zero" after deployments
-// BUMPED to v5 to invalidate all old caches after toRawRecord fix
-const UNIT_MENTIONS_CACHE_VERSION = 5;
+// BUMPED to v6 to invalidate all old caches after dedupe fix
+const UNIT_MENTIONS_CACHE_VERSION = 6;
 const CACHE_KEY_PREFIX = `unit_mentions_cache_v${UNIT_MENTIONS_CACHE_VERSION}_`;
 
 // DEV-only debug mode (Vite-safe). Enabled only with ?debug=1.
@@ -135,7 +136,7 @@ export interface SourceDiagnostics {
   recordsWithValidatedUnits: number;
   topExtractedUnits: Array<{ unit: string; count: number }>;
   topRejectedTokens: Array<{ token: string; reason: string; count: number }>;
-  sampleRawKeys: string[]; // Top 5 keys from a sample converted record
+  sampleRawKeys: string[];
 }
 
 export interface DiagnosticsReport {
@@ -188,13 +189,6 @@ function getCacheKey(bbl: string): string {
   return `${CACHE_KEY_PREFIX}${bbl}`;
 }
 
-interface CachedResult {
-  bbl: string;
-  stats: CombinedUnitStats[];
-  timestamp: number;
-  totalRecordsScanned?: number; // Added to detect empty-cache poisoning
-}
-
 function loadFromCache(bbl: string): CombinedUnitStats[] | null {
   try {
     const cached = localStorage.getItem(getCacheKey(bbl));
@@ -229,7 +223,6 @@ function loadFromCache(bbl: string): CombinedUnitStats[] | null {
 
 function saveToCache(bbl: string, stats: CombinedUnitStats[], totalRecordsScanned: number): void {
   // BUGFIX: Don't cache empty results if we actually scanned records
-  // This prevents "cache poisoning" from incomplete/failed extractions
   if (stats.length === 0) {
     if (totalRecordsScanned > 0) {
       logDebug(`NOT caching empty results for BBL ${bbl} (scanned ${totalRecordsScanned} records - likely extraction issue)`);
@@ -284,47 +277,45 @@ export function clearUnitMentionsCache(bbl?: string): void {
 }
 
 // ============================================================================
-// EXTRACTION HELPERS
+// STABLE ID HELPERS (for deduplication)
 // ============================================================================
 
-function extractUnitFromRecord(record: Record<string, unknown>): string | null {
-  const result = extractUnitFromRecordWithTrace(record);
-  return result?.normalizedUnit ?? null;
-}
-
-// ============================================================================
-// DEDUPE HELPERS (stable IDs per category)
-// ============================================================================
-
-function getDobViolationStableId(record: ViolationRecord, raw: Record<string, unknown>): string {
+function getDobViolationStableId(record: ViolationRecord): string {
+  const raw = toRawRecord(record);
+  if (!raw) return record.recordId;
   const rawId =
     (raw.dob_violation_number as string | undefined) ||
     (raw.violation_number as string | undefined) ||
-    (raw.violationid as string | undefined);
+    (raw.violationid as string | undefined) ||
+    (raw.isn_dob_bis_viol as string | undefined);
   return (rawId && String(rawId)) || record.recordId;
 }
 
-function getEcbStableId(record: ECBRecord, raw: Record<string, unknown>): string {
+function getEcbStableId(record: ECBRecord): string {
+  const raw = toRawRecord(record);
+  if (!raw) return record.recordId;
   const rawId =
     (raw.ecb_violation_number as string | undefined) ||
     (raw.ecb_number as string | undefined) ||
-    (raw.ecb_violation_no as string | undefined);
+    (raw.ecb_violation_no as string | undefined) ||
+    (raw.isn_dob_bis_extract as string | undefined);
   return (rawId && String(rawId)) || record.recordId;
 }
 
-function getHPDStableId(
-  record: HPDViolationRecord | HPDComplaintRecord,
-  raw: Record<string, unknown>
-): string {
+function getHPDStableId(record: HPDViolationRecord | HPDComplaintRecord): string {
+  const raw = toRawRecord(record);
+  if (!raw) return record.recordId;
   const rawId =
-    (raw.violation_id as string | undefined) ||
     (raw.violationid as string | undefined) ||
+    (raw.violation_id as string | undefined) ||
     (raw.complaintid as string | undefined) ||
     (raw.complaint_id as string | undefined);
   return (rawId && String(rawId)) || record.recordId;
 }
 
-function getPermitStableId(record: PermitRecord, raw: Record<string, unknown>): string {
+function getPermitStableId(record: PermitRecord): string {
+  const raw = toRawRecord(record);
+  if (!raw) return record.jobNumber || record.recordId;
   const rawId =
     (raw.job_number as string | undefined) ||
     (raw.jobnumber as string | undefined) ||
@@ -333,7 +324,9 @@ function getPermitStableId(record: PermitRecord, raw: Record<string, unknown>): 
   return (rawId && String(rawId)) || record.jobNumber || record.recordId;
 }
 
-function get311StableId(record: ServiceRequestRecord, raw: Record<string, unknown>): string {
+function get311StableId(record: ServiceRequestRecord): string {
+  const raw = toRawRecord(record);
+  if (!raw) return record.recordId;
   const rawId =
     (raw.unique_key as string | undefined) ||
     (raw.service_request_id as string | undefined) ||
@@ -341,484 +334,371 @@ function get311StableId(record: ServiceRequestRecord, raw: Record<string, unknow
   return (rawId && String(rawId)) || record.recordId;
 }
 
-function processFilingsUnits(
-  dobFilingsUnits: UnitFromFilings[],
-  unitMap: Map<string, CombinedUnitStats>
-): void {
-  logDebug(`Processing ${dobFilingsUnits.length} DOB filings units`);
+// ============================================================================
+// PURE COMPUTATION: Build unit stats from scratch with deduplication
+// ============================================================================
+
+interface UnitAccumulator {
+  unit: string;
+  hpdIds: Set<string>;
+  threeOneOneIds: Set<string>;
+  filingsCount: number;
+  salesCount: number;
+  dobViolationIds: Set<string>;
+  ecbViolationIds: Set<string>;
+  permitIds: Set<string>;
+  lastActivity: Date | null;
+  filingRefs: FilingReference[];
+  sourceRefs: Map<string, { type: 'dob' | 'hpd' | '311' | 'sales' | 'dob-violation' | 'ecb' | 'permit'; id: string; label: string }>;
+  violationRefs: Map<string, ViolationMentionRef>;
+  permitRefs: Map<string, PermitMentionRef>;
+}
+
+function createEmptyAccumulator(unit: string): UnitAccumulator {
+  return {
+    unit,
+    hpdIds: new Set(),
+    threeOneOneIds: new Set(),
+    filingsCount: 0,
+    salesCount: 0,
+    dobViolationIds: new Set(),
+    ecbViolationIds: new Set(),
+    permitIds: new Set(),
+    lastActivity: null,
+    filingRefs: [],
+    sourceRefs: new Map(),
+    violationRefs: new Map(),
+    permitRefs: new Map(),
+  };
+}
+
+function updateLastActivity(acc: UnitAccumulator, dateStr: string | null | undefined): void {
+  if (!dateStr) return;
+  const date = new Date(dateStr);
+  if (isNaN(date.getTime())) return;
+  if (!acc.lastActivity || date > acc.lastActivity) {
+    acc.lastActivity = date;
+  }
+}
+
+interface DataSources {
+  dobFilingsUnits: UnitFromFilings[];
+  salesUnits: UnitRosterEntry[];
+  dobPermits: PermitRecord[];
+  hpdViolations: HPDViolationRecord[];
+  hpdComplaints: HPDComplaintRecord[];
+  serviceRequests: ServiceRequestRecord[];
+  dobViolations: ViolationRecord[];
+  ecbViolations: ECBRecord[];
+}
+
+/**
+ * PURE FUNCTION: Compute unit stats from data sources.
+ * Uses Set-based deduplication to ensure counts are idempotent.
+ * This function can be called multiple times with the same data and will return the same results.
+ */
+function computeUnitStats(dataSources: DataSources): CombinedUnitStats[] {
+  const unitMap = new Map<string, UnitAccumulator>();
   
-  for (const filingsEntry of dobFilingsUnits) {
-    const entry = getOrCreateUnit(unitMap, filingsEntry.unit);
-    entry.filingsCount = filingsEntry.count;
-    entry.totalCount += filingsEntry.count;
-    entry.filingRefs = filingsEntry.filings;
+  const getOrCreate = (unit: string): UnitAccumulator => {
+    let acc = unitMap.get(unit);
+    if (!acc) {
+      acc = createEmptyAccumulator(unit);
+      unitMap.set(unit, acc);
+    }
+    return acc;
+  };
+  
+  // 1. Process DOB filings units (already aggregated by useDobJobFilings hook)
+  for (const filingsEntry of dataSources.dobFilingsUnits) {
+    const acc = getOrCreate(filingsEntry.unit);
+    acc.filingsCount = filingsEntry.count; // Direct assignment, not +=
+    acc.filingRefs = filingsEntry.filings;
     
-    const lastSeenDate = filingsEntry.lastSeen ? new Date(filingsEntry.lastSeen) : null;
-    if (lastSeenDate && !isNaN(lastSeenDate.getTime()) && 
-        (!entry.lastActivity || lastSeenDate > entry.lastActivity)) {
-      entry.lastActivity = lastSeenDate;
+    if (filingsEntry.lastSeen) {
+      updateLastActivity(acc, filingsEntry.lastSeen);
     }
     
+    // Add DOB source refs (limit to first 3)
     for (const filing of filingsEntry.filings.slice(0, 3)) {
-      entry.sourceRefs.push({
-        type: 'dob',
-        id: filing.jobNumber,
-        label: `Job #${filing.jobNumber}`,
-      });
+      const refKey = `dob-${filing.jobNumber}`;
+      if (!acc.sourceRefs.has(refKey)) {
+        acc.sourceRefs.set(refKey, {
+          type: 'dob',
+          id: filing.jobNumber,
+          label: `Job #${filing.jobNumber}`,
+        });
+      }
     }
   }
   
-  logDebug(`After filings: ${unitMap.size} unique units`);
-}
-
-function processSalesUnits(
-  salesUnits: UnitRosterEntry[],
-  unitMap: Map<string, CombinedUnitStats>
-): void {
-  logDebug(`Processing ${salesUnits.length} sales units`);
-  
-  for (const salesEntry of salesUnits) {
-    const entry = getOrCreateUnit(unitMap, salesEntry.unit);
-    entry.salesCount = salesEntry.count;
-    entry.totalCount += salesEntry.count;
-    
-    const lastSeenDate = salesEntry.lastSeen ? new Date(salesEntry.lastSeen) : null;
-    if (lastSeenDate && !isNaN(lastSeenDate.getTime()) && 
-        (!entry.lastActivity || lastSeenDate > entry.lastActivity)) {
-      entry.lastActivity = lastSeenDate;
+  // 2. Process sales units (already aggregated by useCoopUnitRoster hook)
+  for (const salesEntry of dataSources.salesUnits) {
+    const acc = getOrCreate(salesEntry.unit);
+    acc.salesCount = salesEntry.count; // Direct assignment
+    if (salesEntry.lastSeen) {
+      updateLastActivity(acc, salesEntry.lastSeen);
     }
   }
   
-  logDebug(`After sales: ${unitMap.size} unique units`);
-}
-
-function processPermits(
-  dobPermits: PermitRecord[],
-  unitMap: Map<string, CombinedUnitStats>,
-  diagnostics?: SourceDiagnostics
-): { processed: number; validated: number; converted: number } {
-  let processed = 0;
-  let validated = 0;
-  let converted = 0;
-  const unitCounts = new Map<string, number>();
-  
-  for (const record of dobPermits) {
+  // 3. Process permits - dedupe by permit stable ID
+  for (const record of dataSources.dobPermits) {
     const rawRecord = toRawRecord(record);
     if (!rawRecord) continue;
-    converted++;
-    
-    // Sample keys for diagnostics
-    if (diagnostics && diagnostics.sampleRawKeys.length === 0) {
-      diagnostics.sampleRawKeys = Object.keys(rawRecord).slice(0, 5);
-    }
     
     const extraction = extractUnitFromRecordWithTrace(rawRecord);
-    if (extraction) {
-      validated++;
-      unitCounts.set(extraction.normalizedUnit, (unitCounts.get(extraction.normalizedUnit) || 0) + 1);
+    if (!extraction) continue;
+    
+    const acc = getOrCreate(extraction.normalizedUnit);
+    const stableId = getPermitStableId(record);
+    
+    // Only count if not already seen
+    if (!acc.permitIds.has(stableId)) {
+      acc.permitIds.add(stableId);
+      updateLastActivity(acc, record.issueDate);
       
-      const entry = getOrCreateUnit(unitMap, extraction.normalizedUnit);
-      entry.permitsCount += 1;
-      entry.totalCount += 1;
-      
-      if (record.issueDate) {
-        const issueDate = new Date(record.issueDate);
-        if (!isNaN(issueDate.getTime()) && (!entry.lastActivity || issueDate > entry.lastActivity)) {
-          entry.lastActivity = issueDate;
+      // Add source ref (limit to 5)
+      if (acc.sourceRefs.size < 5) {
+        const refKey = `permit-${stableId}`;
+        if (!acc.sourceRefs.has(refKey)) {
+          acc.sourceRefs.set(refKey, {
+            type: 'permit',
+            id: stableId,
+            label: record.jobNumber ? `Job #${record.jobNumber}` : `Permit #${record.recordId}`,
+          });
         }
       }
       
-      if (entry.sourceRefs.filter(r => r.type === 'permit').length < 5) {
-        const permitId = record.jobNumber || record.recordId;
-        entry.sourceRefs.push({
+      // Add permit ref (deduped by stableId)
+      if (!acc.permitRefs.has(stableId)) {
+        acc.permitRefs.set(stableId, {
           type: 'permit',
-          id: permitId,
+          id: record.recordId,
+          jobNumber: record.jobNumber,
           label: record.jobNumber ? `Job #${record.jobNumber}` : `Permit #${record.recordId}`,
-        });
-      }
-      
-      entry.permitRefs.push({
-        type: 'permit',
-        id: record.recordId,
-        jobNumber: record.jobNumber,
-        label: record.jobNumber ? `Job #${record.jobNumber}` : `Permit #${record.recordId}`,
-        status: record.status,
-        issueDate: record.issueDate,
-        description: record.description,
-        sourceField: extraction.sourceField,
-        snippet: extraction.snippet,
-        unitType: extraction.unitType,
-        confidence: extraction.confidence,
-        confidenceReason: extraction.confidenceReason,
-      });
-    }
-    processed++;
-  }
-  
-  // Update diagnostics
-  if (diagnostics) {
-    diagnostics.recordsConvertedToRaw = converted;
-    diagnostics.recordsWithValidatedUnits = validated;
-    diagnostics.topExtractedUnits = Array.from(unitCounts.entries())
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 10)
-      .map(([unit, count]) => ({ unit, count }));
-  }
-  
-  return { processed, validated, converted };
-}
-
-function processHPD(
-  hpdViolations: HPDViolationRecord[],
-  hpdComplaints: HPDComplaintRecord[],
-  unitMap: Map<string, CombinedUnitStats>,
-  diagnostics?: SourceDiagnostics
-): { processed: number; validated: number; converted: number } {
-  let processed = 0;
-  let validated = 0;
-  let converted = 0;
-  const unitCounts = new Map<string, number>();
-  
-  logDebug(`Processing HPD: ${hpdViolations.length} violations, ${hpdComplaints.length} complaints`);
-  
-  // Process violations
-  for (const record of hpdViolations) {
-    const rawRecord = toRawRecord(record);
-    if (!rawRecord) continue;
-    converted++;
-    
-    // Sample keys for diagnostics
-    if (diagnostics && diagnostics.sampleRawKeys.length === 0) {
-      diagnostics.sampleRawKeys = Object.keys(rawRecord).slice(0, 5);
-      if (DEBUG_MODE) {
-        logDebug(`HPD violation sample keys: ${diagnostics.sampleRawKeys.join(', ')}`);
-        const aptValue = rawRecord.apartment || rawRecord.apt || rawRecord.apartmentnumber;
-        if (aptValue) {
-          logDebug(`HPD violation has apartment field: "${aptValue}"`);
-        }
-      }
-    }
-    
-    const extraction = extractUnitFromRecordWithTrace(rawRecord);
-    if (extraction) {
-      validated++;
-      unitCounts.set(extraction.normalizedUnit, (unitCounts.get(extraction.normalizedUnit) || 0) + 1);
-      
-      const entry = getOrCreateUnit(unitMap, extraction.normalizedUnit);
-      entry.hpdCount += 1;
-      entry.totalCount += 1;
-      
-      if (record.issueDate) {
-        const issueDate = new Date(record.issueDate);
-        if (!isNaN(issueDate.getTime()) && (!entry.lastActivity || issueDate > entry.lastActivity)) {
-          entry.lastActivity = issueDate;
-        }
-      }
-      
-      if (entry.sourceRefs.filter(r => r.type === 'hpd').length < 3) {
-        entry.sourceRefs.push({
-          type: 'hpd',
-          id: record.recordId,
-          label: `HPD Violation #${record.recordId}`,
+          status: record.status,
+          issueDate: record.issueDate,
+          description: record.description,
+          sourceField: extraction.sourceField,
+          snippet: extraction.snippet,
+          unitType: extraction.unitType,
+          confidence: extraction.confidence,
+          confidenceReason: extraction.confidenceReason,
         });
       }
     }
-    processed++;
   }
-  logDebug(`HPD violations: ${validated} units found from ${hpdViolations.length} records (${converted} converted)`);
   
-  // Process complaints
-  const violationsValidated = validated;
-  for (const record of hpdComplaints) {
+  // 4. Process HPD violations - dedupe by HPD stable ID
+  for (const record of dataSources.hpdViolations) {
     const rawRecord = toRawRecord(record);
     if (!rawRecord) continue;
-    converted++;
     
     const extraction = extractUnitFromRecordWithTrace(rawRecord);
-    if (extraction) {
-      validated++;
-      unitCounts.set(extraction.normalizedUnit, (unitCounts.get(extraction.normalizedUnit) || 0) + 1);
+    if (!extraction) continue;
+    
+    const acc = getOrCreate(extraction.normalizedUnit);
+    const stableId = getHPDStableId(record);
+    
+    if (!acc.hpdIds.has(stableId)) {
+      acc.hpdIds.add(stableId);
+      updateLastActivity(acc, record.issueDate);
       
-      const entry = getOrCreateUnit(unitMap, extraction.normalizedUnit);
-      entry.hpdCount += 1;
-      entry.totalCount += 1;
+      if (acc.sourceRefs.size < 3) {
+        const refKey = `hpd-${stableId}`;
+        if (!acc.sourceRefs.has(refKey)) {
+          acc.sourceRefs.set(refKey, {
+            type: 'hpd',
+            id: stableId,
+            label: `HPD Violation #${stableId}`,
+          });
+        }
+      }
+    }
+  }
+  
+  // 5. Process HPD complaints - dedupe by HPD stable ID
+  for (const record of dataSources.hpdComplaints) {
+    const rawRecord = toRawRecord(record);
+    if (!rawRecord) continue;
+    
+    const extraction = extractUnitFromRecordWithTrace(rawRecord);
+    if (!extraction) continue;
+    
+    const acc = getOrCreate(extraction.normalizedUnit);
+    const stableId = getHPDStableId(record);
+    
+    if (!acc.hpdIds.has(stableId)) {
+      acc.hpdIds.add(stableId);
+      updateLastActivity(acc, record.issueDate);
       
-      if (record.issueDate) {
-        const issueDate = new Date(record.issueDate);
-        if (!isNaN(issueDate.getTime()) && (!entry.lastActivity || issueDate > entry.lastActivity)) {
-          entry.lastActivity = issueDate;
+      if (acc.sourceRefs.size < 3) {
+        const refKey = `hpd-${stableId}`;
+        if (!acc.sourceRefs.has(refKey)) {
+          acc.sourceRefs.set(refKey, {
+            type: 'hpd',
+            id: stableId,
+            label: `HPD Complaint #${stableId}`,
+          });
+        }
+      }
+    }
+  }
+  
+  // 6. Process 311 requests - dedupe by 311 stable ID
+  for (const record of dataSources.serviceRequests) {
+    const rawRecord = toRawRecord(record);
+    if (!rawRecord) continue;
+    
+    const extraction = extractUnitFromRecordWithTrace(rawRecord);
+    if (!extraction) continue;
+    
+    const acc = getOrCreate(extraction.normalizedUnit);
+    const stableId = get311StableId(record);
+    
+    if (!acc.threeOneOneIds.has(stableId)) {
+      acc.threeOneOneIds.add(stableId);
+      updateLastActivity(acc, record.issueDate);
+      
+      if (acc.sourceRefs.size < 3) {
+        const refKey = `311-${stableId}`;
+        if (!acc.sourceRefs.has(refKey)) {
+          acc.sourceRefs.set(refKey, {
+            type: '311',
+            id: stableId,
+            label: `SR #${stableId}`,
+          });
+        }
+      }
+    }
+  }
+  
+  // 7. Process DOB violations - dedupe by DOB violation stable ID
+  for (const record of dataSources.dobViolations) {
+    const rawRecord = toRawRecord(record);
+    if (!rawRecord) continue;
+    
+    const extraction = extractUnitFromRecordWithTrace(rawRecord);
+    if (!extraction) continue;
+    
+    const acc = getOrCreate(extraction.normalizedUnit);
+    const stableId = getDobViolationStableId(record);
+    
+    if (!acc.dobViolationIds.has(stableId)) {
+      acc.dobViolationIds.add(stableId);
+      updateLastActivity(acc, record.issueDate);
+      
+      if (acc.sourceRefs.size < 5) {
+        const refKey = `dob-violation-${stableId}`;
+        if (!acc.sourceRefs.has(refKey)) {
+          acc.sourceRefs.set(refKey, {
+            type: 'dob-violation',
+            id: stableId,
+            label: `DOB Vio #${stableId}`,
+          });
         }
       }
       
-      if (entry.sourceRefs.filter(r => r.type === 'hpd').length < 3) {
-        entry.sourceRefs.push({
-          type: 'hpd',
-          id: record.recordId,
-          label: `HPD Complaint #${record.recordId}`,
-        });
-      }
-    }
-    processed++;
-  }
-  logDebug(`HPD complaints: ${validated - violationsValidated} units found from ${hpdComplaints.length} records`);
-  logDebug(`After HPD: ${unitMap.size} unique units total`);
-  
-  // Update diagnostics
-  if (diagnostics) {
-    diagnostics.recordsConvertedToRaw = converted;
-    diagnostics.recordsWithValidatedUnits = validated;
-    diagnostics.topExtractedUnits = Array.from(unitCounts.entries())
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 10)
-      .map(([unit, count]) => ({ unit, count }));
-  }
-  
-  return { processed, validated, converted };
-}
-
-function process311(
-  serviceRequests: ServiceRequestRecord[],
-  unitMap: Map<string, CombinedUnitStats>,
-  diagnostics?: SourceDiagnostics
-): { processed: number; validated: number; converted: number } {
-  let processed = 0;
-  let validated = 0;
-  let converted = 0;
-  const unitCounts = new Map<string, number>();
-  
-  logDebug(`Processing 311: ${serviceRequests.length} requests`);
-  
-  for (const record of serviceRequests) {
-    const rawRecord = toRawRecord(record);
-    if (!rawRecord) continue;
-    converted++;
-    
-    // Sample keys for diagnostics
-    if (diagnostics && diagnostics.sampleRawKeys.length === 0) {
-      diagnostics.sampleRawKeys = Object.keys(rawRecord).slice(0, 5);
-      if (DEBUG_MODE) {
-        logDebug(`311 sample keys: ${diagnostics.sampleRawKeys.join(', ')}`);
-      }
-    }
-    
-    const extraction = extractUnitFromRecordWithTrace(rawRecord);
-    if (extraction) {
-      validated++;
-      unitCounts.set(extraction.normalizedUnit, (unitCounts.get(extraction.normalizedUnit) || 0) + 1);
-      
-      const entry = getOrCreateUnit(unitMap, extraction.normalizedUnit);
-      entry.threeOneOneCount += 1;
-      entry.totalCount += 1;
-      
-      if (record.issueDate) {
-        const issueDate = new Date(record.issueDate);
-        if (!isNaN(issueDate.getTime()) && (!entry.lastActivity || issueDate > entry.lastActivity)) {
-          entry.lastActivity = issueDate;
-        }
-      }
-      
-      if (entry.sourceRefs.filter(r => r.type === '311').length < 3) {
-        entry.sourceRefs.push({
-          type: '311',
-          id: record.recordId,
-          label: `SR #${record.recordId}`,
-        });
-      }
-    }
-    processed++;
-  }
-  
-  logDebug(`311: ${validated} units found from ${serviceRequests.length} records (${converted} converted)`);
-  
-  // Update diagnostics
-  if (diagnostics) {
-    diagnostics.recordsConvertedToRaw = converted;
-    diagnostics.recordsWithValidatedUnits = validated;
-    diagnostics.topExtractedUnits = Array.from(unitCounts.entries())
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 10)
-      .map(([unit, count]) => ({ unit, count }));
-  }
-  
-  return { processed, validated, converted };
-}
-
-function processViolations(
-  dobViolations: ViolationRecord[],
-  unitMap: Map<string, CombinedUnitStats>,
-  diagnostics?: SourceDiagnostics
-): { processed: number; validated: number; converted: number } {
-  let processed = 0;
-  let validated = 0;
-  let converted = 0;
-  const unitCounts = new Map<string, number>();
-  
-  for (const record of dobViolations) {
-    const rawRecord = toRawRecord(record);
-    if (!rawRecord) continue;
-    converted++;
-    
-    // Sample keys for diagnostics
-    if (diagnostics && diagnostics.sampleRawKeys.length === 0) {
-      diagnostics.sampleRawKeys = Object.keys(rawRecord).slice(0, 5);
-    }
-    
-    const extraction = extractUnitFromRecordWithTrace(rawRecord);
-    if (extraction) {
-      validated++;
-      unitCounts.set(extraction.normalizedUnit, (unitCounts.get(extraction.normalizedUnit) || 0) + 1);
-      
-      const entry = getOrCreateUnit(unitMap, extraction.normalizedUnit);
-      entry.dobViolationsCount += 1;
-      entry.totalCount += 1;
-      
-      if (record.issueDate) {
-        const issueDate = new Date(record.issueDate);
-        if (!isNaN(issueDate.getTime()) && (!entry.lastActivity || issueDate > entry.lastActivity)) {
-          entry.lastActivity = issueDate;
-        }
-      }
-      
-      if (entry.sourceRefs.filter(r => r.type === 'dob-violation').length < 5) {
-        entry.sourceRefs.push({
+      // Add violation ref (deduped)
+      if (!acc.violationRefs.has(stableId)) {
+        acc.violationRefs.set(stableId, {
           type: 'dob-violation',
           id: record.recordId,
-          label: `DOB Vio #${record.recordId}`,
+          label: `DOB Violation #${stableId}`,
+          status: record.status,
+          issueDate: record.issueDate,
+          description: record.description,
+          sourceField: extraction.sourceField,
+          snippet: extraction.snippet,
+          unitType: extraction.unitType,
+          confidence: extraction.confidence,
+          confidenceReason: extraction.confidenceReason,
         });
       }
-      
-      entry.violationRefs.push({
-        type: 'dob-violation',
-        id: record.recordId,
-        label: `DOB Violation #${record.recordId}`,
-        status: record.status,
-        issueDate: record.issueDate,
-        description: record.description,
-        sourceField: extraction.sourceField,
-        snippet: extraction.snippet,
-        unitType: extraction.unitType,
-        confidence: extraction.confidence,
-        confidenceReason: extraction.confidenceReason,
-      });
     }
-    processed++;
   }
   
-  // Update diagnostics
-  if (diagnostics) {
-    diagnostics.recordsConvertedToRaw = converted;
-    diagnostics.recordsWithValidatedUnits = validated;
-    diagnostics.topExtractedUnits = Array.from(unitCounts.entries())
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 10)
-      .map(([unit, count]) => ({ unit, count }));
-  }
-  
-  return { processed, validated, converted };
-}
-
-function processECB(
-  ecbViolations: ECBRecord[],
-  unitMap: Map<string, CombinedUnitStats>,
-  diagnostics?: SourceDiagnostics
-): { processed: number; validated: number; converted: number } {
-  let processed = 0;
-  let validated = 0;
-  let converted = 0;
-  const unitCounts = new Map<string, number>();
-  
-  for (const record of ecbViolations) {
+  // 8. Process ECB violations - dedupe by ECB stable ID
+  for (const record of dataSources.ecbViolations) {
     const rawRecord = toRawRecord(record);
     if (!rawRecord) continue;
-    converted++;
-    
-    // Sample keys for diagnostics
-    if (diagnostics && diagnostics.sampleRawKeys.length === 0) {
-      diagnostics.sampleRawKeys = Object.keys(rawRecord).slice(0, 5);
-    }
     
     const extraction = extractUnitFromRecordWithTrace(rawRecord);
-    if (extraction) {
-      validated++;
-      unitCounts.set(extraction.normalizedUnit, (unitCounts.get(extraction.normalizedUnit) || 0) + 1);
+    if (!extraction) continue;
+    
+    const acc = getOrCreate(extraction.normalizedUnit);
+    const stableId = getEcbStableId(record);
+    
+    if (!acc.ecbViolationIds.has(stableId)) {
+      acc.ecbViolationIds.add(stableId);
+      updateLastActivity(acc, record.issueDate);
       
-      const entry = getOrCreateUnit(unitMap, extraction.normalizedUnit);
-      entry.ecbViolationsCount += 1;
-      entry.totalCount += 1;
-      
-      if (record.issueDate) {
-        const issueDate = new Date(record.issueDate);
-        if (!isNaN(issueDate.getTime()) && (!entry.lastActivity || issueDate > entry.lastActivity)) {
-          entry.lastActivity = issueDate;
+      if (acc.sourceRefs.size < 5) {
+        const refKey = `ecb-${stableId}`;
+        if (!acc.sourceRefs.has(refKey)) {
+          acc.sourceRefs.set(refKey, {
+            type: 'ecb',
+            id: stableId,
+            label: `ECB #${stableId}`,
+          });
         }
       }
       
-      if (entry.sourceRefs.filter(r => r.type === 'ecb').length < 5) {
-        entry.sourceRefs.push({
+      // Add violation ref (deduped)
+      if (!acc.violationRefs.has(stableId)) {
+        acc.violationRefs.set(stableId, {
           type: 'ecb',
           id: record.recordId,
-          label: `ECB #${record.recordId}`,
+          label: `ECB Violation #${stableId}`,
+          status: record.status,
+          issueDate: record.issueDate,
+          description: record.description,
+          sourceField: extraction.sourceField,
+          snippet: extraction.snippet,
+          unitType: extraction.unitType,
+          confidence: extraction.confidence,
+          confidenceReason: extraction.confidenceReason,
         });
       }
-      
-      entry.violationRefs.push({
-        type: 'ecb',
-        id: record.recordId,
-        label: `ECB Violation #${record.recordId}`,
-        status: record.status,
-        issueDate: record.issueDate,
-        description: record.description,
-        sourceField: extraction.sourceField,
-        snippet: extraction.snippet,
-        unitType: extraction.unitType,
-        confidence: extraction.confidence,
-        confidenceReason: extraction.confidenceReason,
-      });
     }
-    processed++;
   }
   
-  // Update diagnostics
-  if (diagnostics) {
-    diagnostics.recordsConvertedToRaw = converted;
-    diagnostics.recordsWithValidatedUnits = validated;
-    diagnostics.topExtractedUnits = Array.from(unitCounts.entries())
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 10)
-      .map(([unit, count]) => ({ unit, count }));
-  }
+  // Convert accumulators to final stats
+  const results: CombinedUnitStats[] = [];
   
-  return { processed, validated, converted };
-}
-
-function getOrCreateUnit(unitMap: Map<string, CombinedUnitStats>, unit: string): CombinedUnitStats {
-  let entry = unitMap.get(unit);
-  if (!entry) {
-    entry = {
-      unit,
-      hpdCount: 0,
-      threeOneOneCount: 0,
-      salesCount: 0,
-      filingsCount: 0,
-      dobViolationsCount: 0,
-      ecbViolationsCount: 0,
-      permitsCount: 0,
-      totalCount: 0,
-      lastActivity: null,
-      filingRefs: [],
-      sourceRefs: [],
-      violationRefs: [],
-      permitRefs: [],
+  for (const acc of unitMap.values()) {
+    // Counts derived from Set sizes (idempotent!)
+    const hpdCount = acc.hpdIds.size;
+    const threeOneOneCount = acc.threeOneOneIds.size;
+    const dobViolationsCount = acc.dobViolationIds.size;
+    const ecbViolationsCount = acc.ecbViolationIds.size;
+    const permitsCount = acc.permitIds.size;
+    const totalCount = hpdCount + threeOneOneCount + acc.filingsCount + acc.salesCount + 
+                       dobViolationsCount + ecbViolationsCount + permitsCount;
+    
+    // Skip units with no traceable sources
+    if (totalCount === 0) continue;
+    
+    const stat: CombinedUnitStats = {
+      unit: acc.unit,
+      hpdCount,
+      threeOneOneCount,
+      salesCount: acc.salesCount,
+      filingsCount: acc.filingsCount,
+      dobViolationsCount,
+      ecbViolationsCount,
+      permitsCount,
+      totalCount,
+      lastActivity: acc.lastActivity,
+      filingRefs: acc.filingRefs,
+      sourceRefs: Array.from(acc.sourceRefs.values()),
+      violationRefs: Array.from(acc.violationRefs.values()),
+      permitRefs: Array.from(acc.permitRefs.values()),
       overallConfidence: 'low',
       confidenceDetails: '',
     };
-    unitMap.set(unit, entry);
-  }
-  return entry;
-}
-
-function calculateConfidence(stats: CombinedUnitStats[]): void {
-  for (const stat of stats) {
+    
+    // Calculate confidence
     const allRefs = [...stat.violationRefs, ...stat.permitRefs];
     const highCount = allRefs.filter(r => r.confidence === 'high').length;
     const mediumCount = allRefs.filter(r => r.confidence === 'medium').length;
@@ -842,20 +722,12 @@ function calculateConfidence(stats: CombinedUnitStats[]): void {
       stat.overallConfidence = 'low';
       stat.confidenceDetails = 'Single source or ambiguous pattern';
     }
+    
+    results.push(stat);
   }
-}
-
-function filterAndSortStats(unitMap: Map<string, CombinedUnitStats>): CombinedUnitStats[] {
-  const filtered = Array.from(unitMap.values()).filter(stat => {
-    const hasTraceableSource = stat.filingsCount > 0 || stat.hpdCount > 0 || 
-      stat.threeOneOneCount > 0 || stat.dobViolationsCount > 0 || 
-      stat.ecbViolationsCount > 0 || stat.permitsCount > 0;
-    return hasTraceableSource;
-  });
   
-  calculateConfidence(filtered);
-  
-  return filtered.sort((a, b) => {
+  // Sort by lastActivity desc, then by totalCount desc, then by unit name
+  results.sort((a, b) => {
     if (a.lastActivity && b.lastActivity) {
       const dateDiff = b.lastActivity.getTime() - a.lastActivity.getTime();
       if (dateDiff !== 0) return dateDiff;
@@ -867,22 +739,13 @@ function filterAndSortStats(unitMap: Map<string, CombinedUnitStats>): CombinedUn
     if (b.totalCount !== a.totalCount) return b.totalCount - a.totalCount;
     return a.unit.localeCompare(b.unit, undefined, { numeric: true });
   });
+  
+  return results;
 }
 
 // ============================================================================
 // HOOK
 // ============================================================================
-
-interface DataSources {
-  dobFilingsUnits: UnitFromFilings[];
-  salesUnits: UnitRosterEntry[];
-  dobPermits: PermitRecord[];
-  hpdViolations: HPDViolationRecord[];
-  hpdComplaints: HPDComplaintRecord[];
-  serviceRequests: ServiceRequestRecord[];
-  dobViolations: ViolationRecord[];
-  ecbViolations: ECBRecord[];
-}
 
 interface LoadingStates {
   filingsLoading: boolean;
@@ -918,264 +781,34 @@ export function useUnitMentions(
   dataSources: DataSources,
   loadingStates: LoadingStates
 ): UseUnitMentionsResult {
-  const [stats, setStats] = useState<CombinedUnitStats[]>([]);
-  const [progress, setProgress] = useState<ScanProgress>({
-    stage: 'idle',
-    scanned: 0,
-    total: 0,
-    stageLabel: '',
-    elapsedMs: 0,
-  });
-  const [isPaused, setIsPaused] = useState(false);
+  const [cachedStats, setCachedStats] = useState<CombinedUnitStats[] | null>(null);
   const [isCached, setIsCached] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
+  const [forceRefresh, setForceRefresh] = useState(0);
   
-  const unitMapRef = useRef<Map<string, CombinedUnitStats>>(new Map());
-  const abortRef = useRef(false);
   const startTimeRef = useRef<number>(Date.now());
   const lastBblRef = useRef<string>('');
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
+  const [elapsedMs, setElapsedMs] = useState(0);
   
   // Check cache on BBL change
   useEffect(() => {
     if (bbl !== lastBblRef.current) {
       lastBblRef.current = bbl;
-      abortRef.current = false;
       setIsPaused(false);
-      unitMapRef.current = new Map();
       
       const cached = loadFromCache(bbl);
       if (cached && cached.length > 0) {
-        setStats(cached);
+        setCachedStats(cached);
         setIsCached(true);
-        setProgress({ stage: 'complete', scanned: 0, total: 0, stageLabel: 'Loaded from cache', elapsedMs: 0 });
       } else {
-        setStats([]);
+        setCachedStats(null);
         setIsCached(false);
         startTimeRef.current = Date.now();
-        setProgress({ stage: 'idle', scanned: 0, total: 0, stageLabel: 'Starting...', elapsedMs: 0 });
+        setElapsedMs(0);
       }
     }
   }, [bbl]);
-  
-  // Update elapsed time
-  useEffect(() => {
-    if (progress.stage !== 'idle' && progress.stage !== 'complete' && progress.stage !== 'paused') {
-      intervalRef.current = setInterval(() => {
-        setProgress(p => ({ ...p, elapsedMs: Date.now() - startTimeRef.current }));
-      }, 500);
-    } else if (intervalRef.current) {
-      clearInterval(intervalRef.current);
-      intervalRef.current = null;
-    }
-    
-    return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-      }
-    };
-  }, [progress.stage]);
-  
-  // Stage 1: Process filings + sales (fast)
-  useEffect(() => {
-    if (abortRef.current || isCached || isPaused) return;
-    if (loadingStates.filingsLoading) {
-      setProgress(p => ({ ...p, stage: 'filings', stageLabel: 'Scanning DOB job filings...' }));
-      return;
-    }
-    
-    logDebug(`Stage 1 - Input data: filings=${dataSources.dobFilingsUnits.length}, sales=${dataSources.salesUnits.length}`);
-    
-    processFilingsUnits(dataSources.dobFilingsUnits, unitMapRef.current);
-    processSalesUnits(dataSources.salesUnits, unitMapRef.current);
-    
-    const sorted = filterAndSortStats(unitMapRef.current);
-    logDebug(`Stage 1 complete: ${sorted.length} units after filings/sales`);
-    if (sorted.length > 0) {
-      setStats(sorted);
-    }
-  }, [loadingStates.filingsLoading, dataSources.dobFilingsUnits, dataSources.salesUnits, isCached, isPaused]);
-  
-  // Stage 2: Process permits
-  useEffect(() => {
-    if (abortRef.current || isCached || isPaused) return;
-    if (loadingStates.permitsLoading) {
-      setProgress(p => ({ 
-        ...p, 
-        stage: 'permits', 
-        stageLabel: 'Scanning permits...',
-        total: p.total + dataSources.dobPermits.length,
-      }));
-      return;
-    }
-    
-    if (dataSources.dobPermits.length > 0) {
-      const result = processPermits(dataSources.dobPermits, unitMapRef.current);
-      setProgress(p => ({ ...p, scanned: p.scanned + result.processed }));
-      
-      const sorted = filterAndSortStats(unitMapRef.current);
-      setStats(sorted);
-    }
-  }, [loadingStates.permitsLoading, dataSources.dobPermits, isCached, isPaused]);
-  
-  // Stage 3: Process HPD
-  useEffect(() => {
-    if (abortRef.current || isCached || isPaused) return;
-    if (loadingStates.hpdLoading) {
-      setProgress(p => ({ 
-        ...p, 
-        stage: 'hpd', 
-        stageLabel: 'Scanning HPD complaints & violations...',
-        total: p.total + dataSources.hpdViolations.length + dataSources.hpdComplaints.length,
-      }));
-      return;
-    }
-    
-    if (dataSources.hpdViolations.length > 0 || dataSources.hpdComplaints.length > 0) {
-      const result = processHPD(dataSources.hpdViolations, dataSources.hpdComplaints, unitMapRef.current);
-      setProgress(p => ({ ...p, scanned: p.scanned + result.processed }));
-      
-      const sorted = filterAndSortStats(unitMapRef.current);
-      setStats(sorted);
-    }
-  }, [loadingStates.hpdLoading, dataSources.hpdViolations, dataSources.hpdComplaints, isCached, isPaused]);
-  
-  // Stage 4: Process 311
-  useEffect(() => {
-    if (abortRef.current || isCached || isPaused) return;
-    if (loadingStates.threeOneOneLoading) {
-      setProgress(p => ({ 
-        ...p, 
-        stage: '311', 
-        stageLabel: 'Scanning 311 requests...',
-        total: p.total + dataSources.serviceRequests.length,
-      }));
-      return;
-    }
-    
-    if (dataSources.serviceRequests.length > 0) {
-      const result = process311(dataSources.serviceRequests, unitMapRef.current);
-      setProgress(p => ({ ...p, scanned: p.scanned + result.processed }));
-      
-      const sorted = filterAndSortStats(unitMapRef.current);
-      setStats(sorted);
-    }
-  }, [loadingStates.threeOneOneLoading, dataSources.serviceRequests, isCached, isPaused]);
-  
-  // Stage 5: Process DOB Violations (text-heavy)
-  useEffect(() => {
-    if (abortRef.current || isCached || isPaused) return;
-    if (loadingStates.violationsLoading) {
-      setProgress(p => ({ 
-        ...p, 
-        stage: 'violations', 
-        stageLabel: 'Scanning DOB violations...',
-        total: p.total + dataSources.dobViolations.length,
-      }));
-      return;
-    }
-    
-    if (dataSources.dobViolations.length > 0) {
-      const result = processViolations(dataSources.dobViolations, unitMapRef.current);
-      setProgress(p => ({ ...p, scanned: p.scanned + result.processed }));
-      
-      const sorted = filterAndSortStats(unitMapRef.current);
-      setStats(sorted);
-    }
-  }, [loadingStates.violationsLoading, dataSources.dobViolations, isCached, isPaused]);
-  
-  // Stage 6: Process ECB (text-heavy)
-  useEffect(() => {
-    if (abortRef.current || isCached || isPaused) return;
-    if (loadingStates.ecbLoading) {
-      setProgress(p => ({ 
-        ...p, 
-        stage: 'ecb', 
-        stageLabel: 'Scanning ECB violations...',
-        total: p.total + dataSources.ecbViolations.length,
-      }));
-      return;
-    }
-    
-    if (dataSources.ecbViolations.length > 0) {
-      const result = processECB(dataSources.ecbViolations, unitMapRef.current);
-      setProgress(p => ({ ...p, scanned: p.scanned + result.processed }));
-    }
-    
-    // Final results
-    const sorted = filterAndSortStats(unitMapRef.current);
-    setStats(sorted);
-    
-    // Check if all loading is complete
-    const allDone = !loadingStates.filingsLoading && !loadingStates.permitsLoading && 
-      !loadingStates.hpdLoading && !loadingStates.threeOneOneLoading && 
-      !loadingStates.violationsLoading && !loadingStates.ecbLoading;
-    
-    if (allDone && !abortRef.current && !isPaused) {
-      setProgress(p => ({ 
-        ...p, 
-        stage: 'complete', 
-        stageLabel: 'Scan complete',
-        elapsedMs: Date.now() - startTimeRef.current,
-      }));
-      
-      // FALLBACK CHECK: If we found 0 units but records have unit-like patterns, log a warning
-      if (sorted.length === 0) {
-        const totalRecords = dataSources.dobFilingsUnits.length + dataSources.dobPermits.length +
-          dataSources.hpdViolations.length + dataSources.hpdComplaints.length +
-          dataSources.serviceRequests.length + dataSources.dobViolations.length +
-          dataSources.ecbViolations.length;
-        
-        if (totalRecords > 0) {
-          // Check a sample of records for unit-like patterns
-          const sampleRecords: (Record<string, unknown> | null)[] = [];
-          
-          // Add raw data from various sources using toRawRecord adapter
-          dataSources.hpdViolations.slice(0, 10).forEach(r => sampleRecords.push(toRawRecord(r)));
-          dataSources.hpdComplaints.slice(0, 10).forEach(r => sampleRecords.push(toRawRecord(r)));
-          dataSources.serviceRequests.slice(0, 10).forEach(r => sampleRecords.push(toRawRecord(r)));
-          dataSources.dobViolations.slice(0, 10).forEach(r => sampleRecords.push(toRawRecord(r)));
-          
-          const validRecords = sampleRecords.filter(Boolean) as Record<string, unknown>[];
-          
-          // Check for unit-like patterns in record text
-          let foundPatterns = 0;
-          const patternExamples: string[] = [];
-          
-          for (const record of validRecords) {
-            const textFields = Object.values(record).filter(v => typeof v === 'string') as string[];
-            for (const text of textFields) {
-              if (UNIT_PATTERN_INDICATORS.test(text)) {
-                foundPatterns++;
-                if (patternExamples.length < 3) {
-                  const match = text.match(UNIT_PATTERN_INDICATORS);
-                  if (match) {
-                    patternExamples.push(`"...${text.substring(Math.max(0, match.index! - 20), match.index! + match[0].length + 20)}..."`);
-                  }
-                }
-                break; // Only count once per record
-              }
-            }
-          }
-          
-          if (foundPatterns > 0) {
-            console.warn(
-              `[UnitMentions] FALLBACK WARNING: Extracted 0 units from ${totalRecords} records, ` +
-              `but found ${foundPatterns} records with unit-like patterns in sample of ${validRecords.length}.\n` +
-              `This may indicate overly strict validation. Sample patterns found:\n` +
-              patternExamples.join('\n')
-            );
-          }
-        }
-      }
-      
-      // Cache results (with totalRecords to prevent poisoning)
-      const totalRecords = dataSources.dobFilingsUnits.length + dataSources.dobPermits.length +
-        dataSources.hpdViolations.length + dataSources.hpdComplaints.length +
-        dataSources.serviceRequests.length + dataSources.dobViolations.length +
-        dataSources.ecbViolations.length;
-      saveToCache(bbl, sorted, totalRecords);
-    }
-  }, [loadingStates.ecbLoading, dataSources.ecbViolations, bbl, isCached, isPaused, loadingStates, dataSources]);
   
   // Determine if all loading states are complete
   const allLoadingComplete = useMemo(() => {
@@ -1184,13 +817,37 @@ export function useUnitMentions(
       !loadingStates.violationsLoading && !loadingStates.ecbLoading;
   }, [loadingStates]);
   
-  const isScanning = useMemo(() => {
-    // If all loading is complete, we're not scanning anymore
-    if (allLoadingComplete && progress.stage !== 'complete') {
-      return false;
+  // Compute stats as PURE FUNCTION of data (no mutable refs!)
+  // This is the key fix: stats are always derived from current data, never accumulated
+  const computedStats = useMemo(() => {
+    // If we have cached stats and haven't forced a refresh, use cache
+    if (cachedStats && isCached) {
+      return cachedStats;
     }
-    return progress.stage !== 'idle' && progress.stage !== 'complete' && progress.stage !== 'paused';
-  }, [progress.stage, allLoadingComplete]);
+    
+    // If paused, don't recompute
+    if (isPaused) {
+      return cachedStats ?? [];
+    }
+    
+    // Compute from scratch - completely idempotent
+    return computeUnitStats(dataSources);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    cachedStats,
+    isCached,
+    isPaused,
+    forceRefresh,
+    // Data sources - when these change, recompute
+    dataSources.dobFilingsUnits,
+    dataSources.salesUnits,
+    dataSources.dobPermits,
+    dataSources.hpdViolations,
+    dataSources.hpdComplaints,
+    dataSources.serviceRequests,
+    dataSources.dobViolations,
+    dataSources.ecbViolations,
+  ]);
   
   // Count total source records
   const totalSourceRecords = useMemo(() => {
@@ -1204,9 +861,115 @@ export function useUnitMentions(
       dataSources.ecbViolations.length;
   }, [dataSources]);
   
+  // Determine current stage based on loading states
+  const stage = useMemo((): ScanStage => {
+    if (isCached) return 'complete';
+    if (isPaused) return 'paused';
+    if (loadingStates.filingsLoading) return 'filings';
+    if (loadingStates.permitsLoading) return 'permits';
+    if (loadingStates.hpdLoading) return 'hpd';
+    if (loadingStates.threeOneOneLoading) return '311';
+    if (loadingStates.violationsLoading) return 'violations';
+    if (loadingStates.ecbLoading) return 'ecb';
+    if (allLoadingComplete) return 'complete';
+    return 'idle';
+  }, [loadingStates, allLoadingComplete, isCached, isPaused]);
+  
+  const stageLabel = useMemo(() => {
+    switch (stage) {
+      case 'filings': return 'Scanning DOB job filings...';
+      case 'permits': return 'Scanning permits...';
+      case 'hpd': return 'Scanning HPD complaints & violations...';
+      case '311': return 'Scanning 311 requests...';
+      case 'violations': return 'Scanning DOB violations...';
+      case 'ecb': return 'Scanning ECB violations...';
+      case 'complete': return isCached ? 'Loaded from cache' : 'Scan complete';
+      case 'paused': return 'Scanning paused';
+      default: return 'Starting...';
+    }
+  }, [stage, isCached]);
+  
+  // Update elapsed time
+  useEffect(() => {
+    if (stage !== 'idle' && stage !== 'complete' && stage !== 'paused') {
+      intervalRef.current = setInterval(() => {
+        setElapsedMs(Date.now() - startTimeRef.current);
+      }, 500);
+    } else if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+    
+    return () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+      }
+    };
+  }, [stage]);
+  
+  // Cache results when complete
+  useEffect(() => {
+    if (allLoadingComplete && !isCached && !isPaused && computedStats.length > 0) {
+      saveToCache(bbl, computedStats, totalSourceRecords);
+      
+      // FALLBACK CHECK: If we found 0 units but records have unit-like patterns, log a warning
+      if (computedStats.length === 0 && totalSourceRecords > 0) {
+        // Check a sample of records for unit-like patterns
+        const sampleRecords: (Record<string, unknown> | null)[] = [];
+        
+        dataSources.hpdViolations.slice(0, 10).forEach(r => sampleRecords.push(toRawRecord(r)));
+        dataSources.hpdComplaints.slice(0, 10).forEach(r => sampleRecords.push(toRawRecord(r)));
+        dataSources.serviceRequests.slice(0, 10).forEach(r => sampleRecords.push(toRawRecord(r)));
+        dataSources.dobViolations.slice(0, 10).forEach(r => sampleRecords.push(toRawRecord(r)));
+        
+        const validRecords = sampleRecords.filter(Boolean) as Record<string, unknown>[];
+        
+        let foundPatterns = 0;
+        const patternExamples: string[] = [];
+        
+        for (const record of validRecords) {
+          const textFields = Object.values(record).filter(v => typeof v === 'string') as string[];
+          for (const text of textFields) {
+            if (UNIT_PATTERN_INDICATORS.test(text)) {
+              foundPatterns++;
+              if (patternExamples.length < 3) {
+                const match = text.match(UNIT_PATTERN_INDICATORS);
+                if (match) {
+                  patternExamples.push(`"...${text.substring(Math.max(0, match.index! - 20), match.index! + match[0].length + 20)}..."`);
+                }
+              }
+              break;
+            }
+          }
+        }
+        
+        if (foundPatterns > 0) {
+          console.warn(
+            `[UnitMentions] FALLBACK WARNING: Extracted 0 units from ${totalSourceRecords} records, ` +
+            `but found ${foundPatterns} records with unit-like patterns in sample of ${validRecords.length}.\n` +
+            `This may indicate overly strict validation. Sample patterns found:\n` +
+            patternExamples.join('\n')
+          );
+        }
+      }
+    }
+  }, [allLoadingComplete, isCached, isPaused, computedStats, bbl, totalSourceRecords, dataSources]);
+  
+  const progress = useMemo((): ScanProgress => ({
+    stage,
+    scanned: allLoadingComplete ? totalSourceRecords : 0,
+    total: totalSourceRecords,
+    stageLabel,
+    elapsedMs: isCached ? 0 : elapsedMs,
+  }), [stage, allLoadingComplete, totalSourceRecords, stageLabel, isCached, elapsedMs]);
+  
+  const isScanning = useMemo(() => {
+    return stage !== 'idle' && stage !== 'complete' && stage !== 'paused';
+  }, [stage]);
+  
   const hasAnyData = useMemo(() => {
-    return stats.length > 0 || totalSourceRecords > 0;
-  }, [stats, totalSourceRecords]);
+    return computedStats.length > 0 || totalSourceRecords > 0;
+  }, [computedStats, totalSourceRecords]);
   
   // Debug stats for troubleshooting
   const debugStats = useMemo(() => ({
@@ -1221,73 +984,55 @@ export function useUnitMentions(
       ecbViolations: dataSources.ecbViolations.length,
     },
     totalRecords: totalSourceRecords,
-    extractedUnits: stats.length,
+    extractedUnits: computedStats.length,
     allLoadingComplete,
-    stage: progress.stage,
-  }), [dataSources, stats, totalSourceRecords, allLoadingComplete, progress.stage]);
+    stage,
+  }), [dataSources, computedStats, totalSourceRecords, allLoadingComplete, stage]);
 
-  // DEV-only: sanity-check that counts are deduped and stable for one unit row.
-  // Logs raw mentions vs deduped IDs per category.
-  const dedupeDebugLoggedForBblRef = useRef<string>('');
+  // DEV-only: Debug panel data
+  const debugPanelRef = useRef<{ logged: boolean; bbl: string }>({ logged: false, bbl: '' });
   useEffect(() => {
     if (!DEBUG_MODE) return;
-    if (dedupeDebugLoggedForBblRef.current === bbl) return;
-    if (stats.length === 0) return;
-
-    const targetUnit = stats[0].unit;
-
-    const summarize = <T extends { recordId: string; raw: Record<string, unknown> }>(
-      records: T[],
-      stableIdFor: (r: T, rawRecord: Record<string, unknown>) => string
-    ) => {
-      let rawMentions = 0;
-      const ids = new Set<string>();
-      for (const r of records) {
-        const rawRecord = toRawRecord(r);
-        if (!rawRecord) continue;
-        const extraction = extractUnitFromRecordWithTrace(rawRecord);
-        if (!extraction) continue;
-        if (extraction.normalizedUnit !== targetUnit) continue;
-        rawMentions++;
-        ids.add(stableIdFor(r, rawRecord));
-      }
-      return { rawMentions, deduped: ids.size };
-    };
-
-    const summary = {
+    if (debugPanelRef.current.bbl === bbl && debugPanelRef.current.logged) return;
+    if (!allLoadingComplete) return;
+    if (computedStats.length === 0) return;
+    
+    // Log dedupe summary for first unit
+    const targetUnit = computedStats[0].unit;
+    const targetStat = computedStats[0];
+    
+    console.debug('[UnitMentions] DEDUPE DEBUG PANEL', {
       unit: targetUnit,
-      permits: summarize(dataSources.dobPermits, (r, raw) => getPermitStableId(r, raw)),
-      hpdViolations: summarize(dataSources.hpdViolations, (r, raw) => getHPDStableId(r, raw)),
-      hpdComplaints: summarize(dataSources.hpdComplaints, (r, raw) => getHPDStableId(r, raw)),
-      threeOneOne: summarize(dataSources.serviceRequests, (r, raw) => get311StableId(r, raw)),
-      dobViolations: summarize(dataSources.dobViolations, (r, raw) => getDobViolationStableId(r, raw)),
-      ecbViolations: summarize(dataSources.ecbViolations, (r, raw) => getEcbStableId(r, raw)),
-    };
-
-    console.debug('[UnitMentions] dedupe summary (raw vs deduped) for one unit', summary);
-    dedupeDebugLoggedForBblRef.current = bbl;
-  }, [bbl, stats, dataSources]);
+      records_received: totalSourceRecords,
+      vio_ids_raw_length: dataSources.dobViolations.length + dataSources.ecbViolations.length,
+      vio_ids_unique_length: targetStat.dobViolationsCount + targetStat.ecbViolationsCount,
+      fetch_count: 1, // We don't track this, but the computation is idempotent
+      hpd_unique: targetStat.hpdCount,
+      threeOneOne_unique: targetStat.threeOneOneCount,
+      permits_unique: targetStat.permitsCount,
+      isStable: true, // Counts are now derived from Sets
+    });
+    
+    debugPanelRef.current = { logged: true, bbl };
+  }, [allLoadingComplete, computedStats, bbl, totalSourceRecords, dataSources]);
 
   const stopScanning = useCallback(() => {
-    abortRef.current = true;
     setIsPaused(true);
-    setProgress(p => ({ ...p, stage: 'paused', stageLabel: 'Scanning paused' }));
   }, []);
   
   const refreshData = useCallback(() => {
     // Clear cache and restart
     localStorage.removeItem(getCacheKey(bbl));
-    abortRef.current = false;
     setIsPaused(false);
     setIsCached(false);
-    unitMapRef.current = new Map();
+    setCachedStats(null);
     startTimeRef.current = Date.now();
-    setStats([]);
-    setProgress({ stage: 'idle', scanned: 0, total: 0, stageLabel: 'Restarting...', elapsedMs: 0 });
+    setElapsedMs(0);
+    setForceRefresh(prev => prev + 1); // Trigger recomputation
   }, [bbl]);
   
   return {
-    stats,
+    stats: computedStats,
     progress,
     isScanning,
     isPaused,
