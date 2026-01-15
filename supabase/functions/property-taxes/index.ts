@@ -33,6 +33,19 @@ interface LineItem {
   status: string | null;
 }
 
+// Friendly labels for charge codes
+const CODE_LABELS: Record<string, string> = {
+  'CHG': 'Charge',
+  'PMT': 'Payment',
+  'ADJ': 'Adjustment',
+  'INT': 'Interest',
+  'PEN': 'Penalty',
+  'REF': 'Refund',
+  'ABT': 'Abatement',
+  'EXM': 'Exemption',
+  'CRD': 'Credit',
+};
+
 interface Attempt {
   field: string;
   key: string;
@@ -60,11 +73,17 @@ interface NormalizationDiagnostic {
 }
 
 interface TaxResult {
+  // New: amount due for latest period only
+  amount_due_latest_period: number | null;
+  amount_charged_latest_period: number | null;
+  latest_due_date: string | null;
+  // Keep for backward compat but compute differently
   current_amount_owed: number | null;
   owed_status: OwedStatus;
   owed_reason: string | null;
   rows_count: number;
   rows_with_numeric_balance: number;
+  rows_in_latest_period: number;
   as_of: string | null;
   line_items: LineItem[];
   scope_used: 'unit' | 'building' | 'direct';
@@ -227,6 +246,13 @@ const STATUS_FIELDS = ['status', 'charge_status', 'open_closed', 'payment_status
 
 // NormalizationDiagnostic interface is defined at line 55
 
+// Map code to friendly label
+function getDescriptionLabel(code: string | null): string | null {
+  if (!code) return null;
+  const upperCode = code.toUpperCase().trim();
+  return CODE_LABELS[upperCode] || code;
+}
+
 // Normalize a raw row into a LineItem with diagnostics
 function normalizeRowWithDiagnostics(raw: RawChargeRow): { item: LineItem; diagnostics: NormalizationDiagnostic[] } {
   const dateResult = getFirstString(raw, ...DATE_FIELDS);
@@ -235,10 +261,15 @@ function normalizeRowWithDiagnostics(raw: RawChargeRow): { item: LineItem; diagn
   const balanceResult = getFirstNumber(raw, ...BALANCE_FIELDS);
   const statusResult = getFirstString(raw, ...STATUS_FIELDS);
   
+  // Format date as YYYY-MM-DD
+  const formattedDate = formatDateForDisplay(dateResult.value);
+  // Map description code to friendly label
+  const friendlyDesc = getDescriptionLabel(descResult.value);
+  
   return {
     item: {
-      date: dateResult.value,
-      description: descResult.value,
+      date: formattedDate,
+      description: friendlyDesc,
       amount: amountResult.value,
       balance: balanceResult.value,
       status: statusResult.value,
@@ -258,49 +289,129 @@ function normalizeRow(raw: RawChargeRow): LineItem {
   return normalizeRowWithDiagnostics(raw).item;
 }
 
-// Compute current amount owed from normalized line items
-function computeAmountOwed(items: LineItem[]): { 
-  amount: number | null; 
+// Parse date string to comparable format (returns null if unparseable)
+function parseDate(dateStr: string | null): Date | null {
+  if (!dateStr) return null;
+  try {
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return null;
+    return d;
+  } catch {
+    return null;
+  }
+}
+
+// Format date as YYYY-MM-DD for display
+function formatDateForDisplay(dateStr: string | null): string | null {
+  if (!dateStr) return null;
+  const d = parseDate(dateStr);
+  if (!d) return dateStr; // Return original if can't parse
+  return d.toISOString().split('T')[0];
+}
+
+// Compute amount owed for the LATEST due_date period only
+function computeLatestPeriodOwed(items: LineItem[]): { 
+  amountDueLatestPeriod: number | null;
+  amountChargedLatestPeriod: number | null;
+  latestDueDate: string | null;
   rowsWithNumericBalance: number;
+  rowsInLatestPeriod: number;
   reason: string | null;
 } {
-  let total = 0;
+  // Find all items with parseable dates
+  const itemsWithDates = items
+    .map(item => ({ item, parsedDate: parseDate(item.date) }))
+    .filter((x): x is { item: LineItem; parsedDate: Date } => x.parsedDate !== null);
+  
+  if (itemsWithDates.length === 0) {
+    return { 
+      amountDueLatestPeriod: null, 
+      amountChargedLatestPeriod: null,
+      latestDueDate: null,
+      rowsWithNumericBalance: 0,
+      rowsInLatestPeriod: 0,
+      reason: 'No rows had a parseable due_date.'
+    };
+  }
+  
+  // Find the latest due_date
+  let maxDate = itemsWithDates[0].parsedDate;
+  for (const { parsedDate } of itemsWithDates) {
+    if (parsedDate > maxDate) {
+      maxDate = parsedDate;
+    }
+  }
+  
+  const latestDateStr = maxDate.toISOString().split('T')[0];
+  
+  // Filter to rows matching the latest due_date (compare by date portion only)
+  const latestPeriodItems = itemsWithDates.filter(({ parsedDate }) => {
+    return parsedDate.toISOString().split('T')[0] === latestDateStr;
+  });
+  
+  // Sum balance (sum_bal) for latest period where balance > 0
+  let totalDue = 0;
+  let totalCharged = 0;
   let rowsWithNumericBalance = 0;
   
-  for (const item of items) {
+  for (const { item } of latestPeriodItems) {
     if (item.balance !== null) {
       rowsWithNumericBalance++;
-      total += item.balance;
+      if (item.balance > 0) {
+        totalDue += item.balance;
+      }
+    }
+    if (item.amount !== null) {
+      totalCharged += item.amount;
+    }
+  }
+  
+  // Count all rows with numeric balance across ALL items (for metadata)
+  let totalRowsWithBalance = 0;
+  for (const item of items) {
+    if (item.balance !== null) {
+      totalRowsWithBalance++;
     }
   }
   
   if (rowsWithNumericBalance === 0) {
     return { 
-      amount: null, 
-      rowsWithNumericBalance: 0,
-      reason: 'No rows had a numeric balance value.'
+      amountDueLatestPeriod: null, 
+      amountChargedLatestPeriod: null,
+      latestDueDate: latestDateStr,
+      rowsWithNumericBalance: totalRowsWithBalance,
+      rowsInLatestPeriod: latestPeriodItems.length,
+      reason: 'No rows in latest period had a numeric balance value.'
     };
   }
   
   // Round to cents
-  total = Math.round(total * 100) / 100;
+  totalDue = Math.round(totalDue * 100) / 100;
+  totalCharged = Math.round(totalCharged * 100) / 100;
   
-  console.log(`[property-taxes] Computed balance: ${total} from ${rowsWithNumericBalance}/${items.length} items`);
+  console.log(`[property-taxes] Latest period ${latestDateStr}: due=${totalDue}, charged=${totalCharged} from ${latestPeriodItems.length} items`);
   
-  return { amount: total, rowsWithNumericBalance, reason: null };
+  return { 
+    amountDueLatestPeriod: totalDue, 
+    amountChargedLatestPeriod: totalCharged,
+    latestDueDate: latestDateStr,
+    rowsWithNumericBalance: totalRowsWithBalance,
+    rowsInLatestPeriod: latestPeriodItems.length,
+    reason: null 
+  };
 }
 
-// Determine owed status
+// Determine owed status based on latest period amount
 function determineOwedStatus(
   rowsCount: number,
-  rowsWithNumericBalance: number,
-  currentAmountOwed: number | null
+  rowsInLatestPeriod: number,
+  amountDueLatestPeriod: number | null
 ): OwedStatus {
-  if (rowsCount === 0 || rowsWithNumericBalance === 0 || currentAmountOwed === null) {
+  if (rowsCount === 0 || rowsInLatestPeriod === 0 || amountDueLatestPeriod === null) {
     return 'unknown';
   }
   
-  if (currentAmountOwed <= 0) return 'paid';
+  if (amountDueLatestPeriod <= 0) return 'paid';
   return 'due';
 }
 
@@ -332,11 +443,15 @@ function processCharges(
   
   if (rawRows.length === 0) {
     const baseResult: Omit<TaxResult, 'cache_status' | 'cached_at'> = {
+      amount_due_latest_period: null,
+      amount_charged_latest_period: null,
+      latest_due_date: null,
       current_amount_owed: null,
       owed_status: 'unknown',
       owed_reason: 'No charge rows found for this parcel.',
       rows_count: 0,
       rows_with_numeric_balance: 0,
+      rows_in_latest_period: 0,
       as_of: null,
       line_items: [],
       scope_used: scope,
@@ -383,23 +498,34 @@ function processCharges(
     return dateB.localeCompare(dateA);
   });
   
-  // Compute amount owed
-  const { amount, rowsWithNumericBalance, reason } = computeAmountOwed(lineItems);
+  // Compute amount owed for latest period only
+  const { 
+    amountDueLatestPeriod, 
+    amountChargedLatestPeriod, 
+    latestDueDate, 
+    rowsWithNumericBalance, 
+    rowsInLatestPeriod,
+    reason 
+  } = computeLatestPeriodOwed(lineItems);
   
-  // Determine owed status
-  const owedStatus = determineOwedStatus(rawRows.length, rowsWithNumericBalance, amount);
+  // Determine owed status based on latest period
+  const owedStatus = determineOwedStatus(rawRows.length, rowsInLatestPeriod, amountDueLatestPeriod);
   
-  // Get as_of date
-  const asOf = getAsOfDate(lineItems);
+  // Get as_of date (same as latest due date)
+  const asOf = latestDueDate;
   
-  console.log(`[property-taxes] Processed ${rawRows.length} rows -> ${lineItems.length} items, balance_rows: ${rowsWithNumericBalance}, amount: ${amount}, status: ${owedStatus}`);
+  console.log(`[property-taxes] Processed ${rawRows.length} rows -> ${lineItems.length} items, latest_period: ${latestDueDate}, rows_in_period: ${rowsInLatestPeriod}, due: ${amountDueLatestPeriod}, status: ${owedStatus}`);
   
   const result: Omit<TaxResult, 'cache_status' | 'cached_at'> = {
-    current_amount_owed: amount,
+    amount_due_latest_period: amountDueLatestPeriod,
+    amount_charged_latest_period: amountChargedLatestPeriod,
+    latest_due_date: latestDueDate,
+    current_amount_owed: amountDueLatestPeriod, // alias for backward compat
     owed_status: owedStatus,
     owed_reason: reason,
     rows_count: rawRows.length,
     rows_with_numeric_balance: rowsWithNumericBalance,
+    rows_in_latest_period: rowsInLatestPeriod,
     as_of: asOf,
     line_items: lineItems.slice(0, 25),
     scope_used: scope,

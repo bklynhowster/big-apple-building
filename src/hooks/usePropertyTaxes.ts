@@ -29,11 +29,17 @@ export interface DebugInfo {
 }
 
 export interface PropertyTaxResult {
+  // New: amount due for latest period only
+  amount_due_latest_period: number | null;
+  amount_charged_latest_period: number | null;
+  latest_due_date: string | null;
+  // Keep for backward compat
   current_amount_owed: number | null;
   owed_status: OwedStatus;
   owed_reason: string | null;
   rows_count: number;
   rows_with_numeric_balance: number;
+  rows_in_latest_period: number;
   as_of: string | null;
   line_items: LineItem[];
   scope_used: 'unit' | 'building' | 'direct';
