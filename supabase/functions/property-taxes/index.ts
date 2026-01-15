@@ -5,551 +5,334 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-// In-memory cache with different TTLs based on result type
+// NYC Open Data PLUTO dataset for assessment data
+const PLUTO_DATASET_ID = '64uk-42ks';
+const PLUTO_BASE_URL = `https://data.cityofnewyork.us/resource/${PLUTO_DATASET_ID}.json`;
+
+// NYC Tax Rates by Tax Class (FY 2024-25)
+// Source: https://www.nyc.gov/site/finance/property/property-tax-rates.page
+const NYC_TAX_RATES: Record<string, number> = {
+  '1': 0.19963,   // Class 1: 1-3 family residential
+  '2': 0.12235,   // Class 2: Multi-family residential
+  '2A': 0.12235,  // Class 2A: 4-6 unit rentals
+  '2B': 0.12235,  // Class 2B: 7-10 unit rentals
+  '2C': 0.12235,  // Class 2C: 2-10 unit co-ops/condos
+  '3': 0.11808,   // Class 3: Utility property
+  '4': 0.10362,   // Class 4: Commercial property
+};
+
+// Quarter due dates - NYC property tax is billed quarterly
+// Q1 = July 1 (FY start), Q2 = October 1, Q3 = January 1, Q4 = April 1
+function getCurrentQuarter(): { quarter: number; fiscalYear: number; dueDate: string; billingPeriod: string } {
+  const now = new Date();
+  const month = now.getMonth(); // 0-based
+  const year = now.getFullYear();
+  
+  // NYC fiscal year starts July 1
+  // Q1: Jul 1 - Sep 30 (due Jul 1)
+  // Q2: Oct 1 - Dec 31 (due Oct 1)
+  // Q3: Jan 1 - Mar 31 (due Jan 1)
+  // Q4: Apr 1 - Jun 30 (due Apr 1)
+  
+  let quarter: number;
+  let fiscalYear: number;
+  let dueDate: string;
+  
+  if (month >= 6 && month <= 8) { // Jul-Sep
+    quarter = 1;
+    fiscalYear = year + 1; // FY starts July
+    dueDate = `${year}-07-01`;
+  } else if (month >= 9 && month <= 11) { // Oct-Dec
+    quarter = 2;
+    fiscalYear = year + 1;
+    dueDate = `${year}-10-01`;
+  } else if (month >= 0 && month <= 2) { // Jan-Mar
+    quarter = 3;
+    fiscalYear = year;
+    dueDate = `${year}-01-01`;
+  } else { // Apr-Jun
+    quarter = 4;
+    fiscalYear = year;
+    dueDate = `${year}-04-01`;
+  }
+  
+  return {
+    quarter,
+    fiscalYear,
+    dueDate,
+    billingPeriod: `Q${quarter} FY${fiscalYear}`,
+  };
+}
+
+// Format due date as user-friendly string
+function formatDueDate(dueDate: string): string {
+  const date = new Date(dueDate);
+  return date.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+}
+
+// In-memory cache
 interface CacheEntry {
   data: unknown;
   timestamp: number;
-  hasRows: boolean;
-  cacheKey: string;
 }
 const cache = new Map<string, CacheEntry>();
-const SUCCESS_CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours for successful responses with rows
-const NO_DATA_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes for "no data found" responses
+const CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
 
-// NYC Open Data DOF Property Charges Balance dataset
-const DATASET_ID = 'scjx-j6np';
-
-// Raw row from NYC Open Data (can have any fields)
-interface RawChargeRow {
-  [key: string]: unknown;
-}
-
-// Normalized line item for the UI
-interface LineItem {
-  date: string | null;
-  description: string | null;
-  amount: number | null;
-  balance: number | null;
-  status: string | null;
-}
-
-// Friendly labels for charge codes
-const CODE_LABELS: Record<string, string> = {
-  'CHG': 'Charge',
-  'PMT': 'Payment',
-  'ADJ': 'Adjustment',
-  'INT': 'Interest',
-  'PEN': 'Penalty',
-  'REF': 'Refund',
-  'ABT': 'Abatement',
-  'EXM': 'Exemption',
-  'CRD': 'Credit',
-};
-
-interface Attempt {
-  field: string;
-  key: string;
-  url: string;
-  rows_found: number;
-  error?: string;
-}
-
-type OwedStatus = 'paid' | 'due' | 'unknown';
-
-interface DebugInfo {
-  socrata_request_url_used: string;
-  raw_rows_count: number;
-  raw_first_row: RawChargeRow | null;
-  raw_first_row_keys: string[];
-  raw_sample_keys_union: string[];
-  normalization_diagnostics: NormalizationDiagnostic[];
-}
-
-interface NormalizationDiagnostic {
-  field: string;
-  candidates_checked: string[];
-  matched_field: string | null;
-  value: string | number | null;
-}
-
-interface TaxResult {
-  // New: amount due for latest period only
-  amount_due_latest_period: number | null;
-  amount_charged_latest_period: number | null;
-  latest_due_date: string | null;
-  // Keep for backward compat but compute differently
-  current_amount_owed: number | null;
-  owed_status: OwedStatus;
-  owed_reason: string | null;
-  rows_count: number;
-  rows_with_numeric_balance: number;
-  rows_in_latest_period: number;
-  as_of: string | null;
-  line_items: LineItem[];
-  scope_used: 'unit' | 'building' | 'direct';
-  bbl_used: string;
-  matched_field: string | null;
-  matched_key: string | null;
-  no_data_found: boolean;
-  data_source_used: string;
-  cache_status: 'HIT' | 'MISS';
-  cached_at: string | null;
-  // Debug info (only included when debug=true/1)
-  debug?: DebugInfo;
-  raw_rows?: RawChargeRow[];
-  attempts?: Attempt[];
-}
-
-// Normalize BBL to proper format: 1 borough + 5 block (padded) + 4 lot (padded)
+// Normalize BBL to 10-digit format
 function normalizeBbl(bbl: string): string {
   if (!bbl || bbl.length < 5) return bbl;
-  
   const cleaned = bbl.replace(/\D/g, '');
-  
   if (cleaned.length === 10) {
     const borough = cleaned.charAt(0);
     const block = cleaned.slice(1, 6).padStart(5, '0');
     const lot = cleaned.slice(6, 10).padStart(4, '0');
     return `${borough}${block}${lot}`;
   }
-  
   return cleaned.padStart(10, '0');
 }
 
-// Generate candidate keys from a BBL
-function generateCandidateKeys(bbl: string): string[] {
-  const candidates: string[] = [];
-  
-  const original = bbl.padStart(10, '0');
-  candidates.push(original);
-  candidates.push(original + '0');
-  
-  const normalized = normalizeBbl(bbl);
-  if (normalized !== original) {
-    candidates.push(normalized);
-    candidates.push(normalized + '0');
+// PLUTO field candidates (schema may vary)
+const PLUTO_FIELDS = {
+  bbl: ['bbl'],
+  taxClass: ['taxclass', 'tax_class', 'tc'],
+  assessTotal: ['assesstot', 'assess_tot', 'assessedtotal', 'assessed_total'],
+  assessLand: ['assessland', 'assess_land', 'assessedland'],
+  exemptTotal: ['exempttot', 'exempt_tot', 'exemptedtotal'],
+  address: ['address', 'addr'],
+  ownerName: ['ownername', 'owner_name'],
+  buildingClass: ['bldgclass', 'building_class', 'buildingclass'],
+  landUse: ['landuse', 'land_use'],
+};
+
+// Get first matching field value from a row
+function getFieldValue(row: Record<string, unknown>, candidates: string[]): string | number | null {
+  for (const field of candidates) {
+    const val = row[field];
+    if (val !== undefined && val !== null && val !== '') {
+      return typeof val === 'number' ? val : String(val);
+    }
   }
-  
-  return [...new Set(candidates)];
+  return null;
 }
 
-// Query NYC Open Data with a specific field and key
-async function queryByFieldAndKey(
-  field: string, 
-  key: string, 
-  appToken: string
-): Promise<{ rows: RawChargeRow[]; url: string; error?: string }> {
-  const whereClause = `${field}='${key}'`;
-  const url = `https://data.cityofnewyork.us/resource/${DATASET_ID}.json?$limit=200&$where=${encodeURIComponent(whereClause)}`;
-  
-  console.log(`[property-taxes] Query: ${field}='${key}' -> ${url}`);
-  
-  const headers: Record<string, string> = { 'Accept': 'application/json' };
-  if (appToken) headers['X-App-Token'] = appToken;
-  
-  try {
-    const response = await fetch(url, { headers });
-    
-    if (!response.ok) {
-      const errorBody = await response.text();
-      console.error(`[property-taxes] API error for ${field}=${key}: ${response.status}`);
-      return { rows: [], url, error: `API ${response.status}: ${errorBody.substring(0, 200)}` };
-    }
-    
-    const data = await response.json();
-    
-    if (!Array.isArray(data)) {
-      return { rows: [], url, error: 'Unexpected response format' };
-    }
-    
-    console.log(`[property-taxes] ${field}='${key}' returned ${data.length} rows`);
-    return { rows: data as RawChargeRow[], url };
-    
-  } catch (fetchError) {
-    const errMsg = fetchError instanceof Error ? fetchError.message : String(fetchError);
-    console.error(`[property-taxes] Fetch error: ${errMsg}`);
-    return { rows: [], url, error: `Network error: ${errMsg}` };
-  }
+// Parse numeric value
+function parseNumericValue(value: string | number | null): number | null {
+  if (value === null) return null;
+  const num = typeof value === 'number' ? value : parseFloat(value);
+  return isNaN(num) ? null : num;
 }
 
-// Multi-key lookup
-async function multiKeyLookup(
-  bbl: string, 
-  scope: 'unit' | 'building' | 'direct',
+// Get tax rate for a tax class
+function getTaxRate(taxClass: string | null): { rate: number | null; rateDescription: string } {
+  if (!taxClass) {
+    return { rate: null, rateDescription: 'Unknown tax class' };
+  }
+  
+  // Normalize tax class - can be "1", "2A", "2B", etc.
+  const normalizedClass = taxClass.toUpperCase().trim();
+  
+  // Try exact match first
+  if (NYC_TAX_RATES[normalizedClass]) {
+    return { 
+      rate: NYC_TAX_RATES[normalizedClass], 
+      rateDescription: `Tax Class ${normalizedClass} (${(NYC_TAX_RATES[normalizedClass] * 100).toFixed(3)}%)` 
+    };
+  }
+  
+  // Try first character (e.g., "2A" -> "2")
+  const baseClass = normalizedClass.charAt(0);
+  if (NYC_TAX_RATES[baseClass]) {
+    return { 
+      rate: NYC_TAX_RATES[baseClass], 
+      rateDescription: `Tax Class ${normalizedClass} (${(NYC_TAX_RATES[baseClass] * 100).toFixed(3)}%)` 
+    };
+  }
+  
+  return { rate: null, rateDescription: `Unknown tax class: ${taxClass}` };
+}
+
+type ArrearsStatus = 'none_detected' | 'possible' | 'unknown';
+
+interface TaxResult {
+  // Primary outputs
+  quarterly_bill: number | null;
+  annual_tax: number | null;
+  billing_period: string;
+  due_date: string;
+  due_date_formatted: string;
+  
+  // Assessment data used
+  tax_class: string | null;
+  tax_rate: number | null;
+  tax_rate_description: string;
+  assessed_value: number | null;
+  exempt_value: number | null;
+  taxable_value: number | null;
+  
+  // Arrears (conservative)
+  arrears: number;
+  arrears_status: ArrearsStatus;
+  arrears_note: string;
+  
+  // Metadata
+  bbl_used: string;
+  address: string | null;
+  owner_name: string | null;
+  building_class: string | null;
+  data_source: string;
+  no_data_found: boolean;
+  cache_status: 'HIT' | 'MISS';
+  cached_at: string | null;
+  
+  // Debug info (only when debug=true)
+  debug?: {
+    pluto_request_url: string;
+    raw_row: Record<string, unknown> | null;
+    raw_row_keys: string[];
+    calculation_steps: string[];
+  };
+}
+
+// Fetch assessment data from PLUTO
+async function fetchAssessmentData(
+  bbl: string,
   appToken: string
-): Promise<{ 
-  rows: RawChargeRow[]; 
-  matchedField: string | null;
-  matchedKey: string | null;
-  attempts: Attempt[];
-  bblUsed: string;
-  urlUsed: string;
-}> {
-  const attempts: Attempt[] = [];
-  const candidateKeys = generateCandidateKeys(bbl);
-  const fieldsToTry = ['parid', 'bble', 'bbl'];
+): Promise<{ row: Record<string, unknown> | null; url: string; error?: string }> {
+  // Try different BBL formats
+  const candidates = [
+    bbl,
+    bbl.padStart(10, '0'),
+    // Sometimes PLUTO uses BBL with leading zeros stripped
+    bbl.replace(/^0+/, ''),
+  ];
   
-  console.log(`[property-taxes] Multi-key lookup for BBL ${bbl}, scope: ${scope}`);
-  
-  for (const key of candidateKeys) {
-    for (const field of fieldsToTry) {
-      const result = await queryByFieldAndKey(field, key, appToken);
+  for (const candidateBbl of [...new Set(candidates)]) {
+    const url = `${PLUTO_BASE_URL}?bbl=${candidateBbl}&$limit=1`;
+    
+    console.log(`[property-taxes] Fetching PLUTO: ${url}`);
+    
+    const headers: Record<string, string> = { 'Accept': 'application/json' };
+    if (appToken) headers['X-App-Token'] = appToken;
+    
+    try {
+      const response = await fetch(url, { headers });
       
-      attempts.push({
-        field, key, url: result.url,
-        rows_found: result.rows.length,
-        error: result.error,
-      });
-      
-      if (result.rows.length > 0) {
-        console.log(`[property-taxes] ✓ Found ${result.rows.length} rows using ${field}='${key}'`);
-        return { rows: result.rows, matchedField: field, matchedKey: key, attempts, bblUsed: bbl, urlUsed: result.url };
+      if (!response.ok) {
+        console.error(`[property-taxes] PLUTO API error: ${response.status}`);
+        continue;
       }
+      
+      const data = await response.json();
+      
+      if (Array.isArray(data) && data.length > 0) {
+        console.log(`[property-taxes] Found PLUTO row for BBL ${candidateBbl}`);
+        return { row: data[0], url };
+      }
+    } catch (error) {
+      console.error(`[property-taxes] PLUTO fetch error:`, error);
+      continue;
     }
   }
   
-  console.log(`[property-taxes] No rows found after ${attempts.length} attempts`);
-  const lastUrl = attempts.length > 0 ? attempts[attempts.length - 1].url : '';
-  return { rows: [], matchedField: null, matchedKey: null, attempts, bblUsed: bbl, urlUsed: lastUrl };
+  return { row: null, url: `${PLUTO_BASE_URL}?bbl=${bbl}`, error: 'No PLUTO data found' };
 }
 
-// Get first non-empty string value from a row
-function getFirstString(row: RawChargeRow, ...fields: string[]): { value: string | null; matchedField: string | null } {
-  for (const field of fields) {
-    const val = row[field];
-    if (val !== undefined && val !== null && val !== '') {
-      const str = String(val).trim();
-      if (str) return { value: str, matchedField: field };
-    }
-  }
-  return { value: null, matchedField: null };
-}
-
-// Get first numeric value from a row
-function getFirstNumber(row: RawChargeRow, ...fields: string[]): { value: number | null; matchedField: string | null } {
-  for (const field of fields) {
-    const val = row[field];
-    if (val !== undefined && val !== null && val !== '') {
-      const num = parseFloat(String(val));
-      if (!isNaN(num)) return { value: num, matchedField: field };
-    }
-  }
-  return { value: null, matchedField: null };
-}
-
-// Field candidates for normalization - updated based on actual NYC Open Data schema
-const DATE_FIELDS = ['due_date', 'dt_pd_begin', 'dt_pd_end', 'date', 'bill_date', 'effective_date', 'period', 'fiscal_year', 'stmtdate', 'activitythrough', 'bill_period', 'tax_year', 'taxyear', 'up_date', 'extractdt'];
-const DESCRIPTION_FIELDS = ['code', 'cycle', 'luc', 'valclass', 'rolltype', 'type', 'charge_type', 'charge_description', 'description', 'charge', 'tax_class', 'chargetype', 'dession', 'install'];
-const AMOUNT_FIELDS = ['sum_liab', 'amount', 'charge_amount', 'original_amount', 'billed_amount', 'value'];
-const BALANCE_FIELDS = ['sum_bal', 'open_balance', 'outstanding_amount', 'outstanding_balance', 'balance', 'amount_due'];
-const STATUS_FIELDS = ['status', 'charge_status', 'open_closed', 'payment_status', 'prior_owner_flag', 'city_owned_flag'];
-
-// NormalizationDiagnostic interface is defined at line 55
-
-// Map code to friendly label
-function getDescriptionLabel(code: string | null): string | null {
-  if (!code) return null;
-  const upperCode = code.toUpperCase().trim();
-  return CODE_LABELS[upperCode] || code;
-}
-
-// Normalize a raw row into a LineItem with diagnostics
-function normalizeRowWithDiagnostics(raw: RawChargeRow): { item: LineItem; diagnostics: NormalizationDiagnostic[] } {
-  const dateResult = getFirstString(raw, ...DATE_FIELDS);
-  const descResult = getFirstString(raw, ...DESCRIPTION_FIELDS);
-  const amountResult = getFirstNumber(raw, ...AMOUNT_FIELDS);
-  const balanceResult = getFirstNumber(raw, ...BALANCE_FIELDS);
-  const statusResult = getFirstString(raw, ...STATUS_FIELDS);
+// Calculate tax from assessment data
+function calculateTax(
+  row: Record<string, unknown> | null,
+  includeDebug: boolean
+): { 
+  quarterlyBill: number | null;
+  annualTax: number | null;
+  taxClass: string | null;
+  taxRate: number | null;
+  taxRateDescription: string;
+  assessedValue: number | null;
+  exemptValue: number | null;
+  taxableValue: number | null;
+  address: string | null;
+  ownerName: string | null;
+  buildingClass: string | null;
+  calculationSteps: string[];
+} {
+  const steps: string[] = [];
   
-  // Format date as YYYY-MM-DD
-  const formattedDate = formatDateForDisplay(dateResult.value);
-  // Map description code to friendly label
-  const friendlyDesc = getDescriptionLabel(descResult.value);
+  if (!row) {
+    steps.push('No PLUTO row available');
+    return {
+      quarterlyBill: null,
+      annualTax: null,
+      taxClass: null,
+      taxRate: null,
+      taxRateDescription: 'No data',
+      assessedValue: null,
+      exemptValue: null,
+      taxableValue: null,
+      address: null,
+      ownerName: null,
+      buildingClass: null,
+      calculationSteps: steps,
+    };
+  }
+  
+  // Extract values
+  const taxClassRaw = getFieldValue(row, PLUTO_FIELDS.taxClass);
+  const taxClass = taxClassRaw ? String(taxClassRaw) : null;
+  steps.push(`Tax Class: ${taxClass || 'not found'}`);
+  
+  const assessTotalRaw = getFieldValue(row, PLUTO_FIELDS.assessTotal);
+  const assessedValue = parseNumericValue(assessTotalRaw);
+  steps.push(`Assessed Total Value: ${assessedValue !== null ? `$${assessedValue.toLocaleString()}` : 'not found'}`);
+  
+  const exemptTotalRaw = getFieldValue(row, PLUTO_FIELDS.exemptTotal);
+  const exemptValue = parseNumericValue(exemptTotalRaw) || 0;
+  steps.push(`Exempt Total Value: $${exemptValue.toLocaleString()}`);
+  
+  // Calculate taxable value
+  const taxableValue = assessedValue !== null ? Math.max(0, assessedValue - exemptValue) : null;
+  steps.push(`Taxable Billable AV: ${taxableValue !== null ? `$${taxableValue.toLocaleString()}` : 'cannot calculate'}`);
+  
+  // Get tax rate
+  const { rate, rateDescription } = getTaxRate(taxClass);
+  steps.push(`Tax Rate: ${rate !== null ? `${(rate * 100).toFixed(3)}%` : 'unknown'}`);
+  
+  // Calculate annual and quarterly tax
+  let annualTax: number | null = null;
+  let quarterlyBill: number | null = null;
+  
+  if (taxableValue !== null && rate !== null) {
+    annualTax = Math.round(taxableValue * rate * 100) / 100;
+    quarterlyBill = Math.round(annualTax / 4 * 100) / 100;
+    steps.push(`Annual Tax: $${taxableValue.toLocaleString()} × ${(rate * 100).toFixed(3)}% = $${annualTax.toLocaleString()}`);
+    steps.push(`Quarterly Bill: $${annualTax.toLocaleString()} ÷ 4 = $${quarterlyBill.toLocaleString()}`);
+  } else {
+    steps.push('Cannot calculate tax: missing taxable value or tax rate');
+  }
+  
+  // Extract additional info
+  const addressRaw = getFieldValue(row, PLUTO_FIELDS.address);
+  const address = addressRaw ? String(addressRaw) : null;
+  
+  const ownerNameRaw = getFieldValue(row, PLUTO_FIELDS.ownerName);
+  const ownerName = ownerNameRaw ? String(ownerNameRaw) : null;
+  
+  const buildingClassRaw = getFieldValue(row, PLUTO_FIELDS.buildingClass);
+  const buildingClass = buildingClassRaw ? String(buildingClassRaw) : null;
   
   return {
-    item: {
-      date: formattedDate,
-      description: friendlyDesc,
-      amount: amountResult.value,
-      balance: balanceResult.value,
-      status: statusResult.value,
-    },
-    diagnostics: [
-      { field: 'date', candidates_checked: DATE_FIELDS, matched_field: dateResult.matchedField, value: dateResult.value },
-      { field: 'description', candidates_checked: DESCRIPTION_FIELDS, matched_field: descResult.matchedField, value: descResult.value },
-      { field: 'amount', candidates_checked: AMOUNT_FIELDS, matched_field: amountResult.matchedField, value: amountResult.value },
-      { field: 'balance', candidates_checked: BALANCE_FIELDS, matched_field: balanceResult.matchedField, value: balanceResult.value },
-      { field: 'status', candidates_checked: STATUS_FIELDS, matched_field: statusResult.matchedField, value: statusResult.value },
-    ],
+    quarterlyBill,
+    annualTax,
+    taxClass,
+    taxRate: rate,
+    taxRateDescription: rateDescription,
+    assessedValue,
+    exemptValue,
+    taxableValue,
+    address,
+    ownerName,
+    buildingClass,
+    calculationSteps: steps,
   };
-}
-
-// Simple normalize without diagnostics
-function normalizeRow(raw: RawChargeRow): LineItem {
-  return normalizeRowWithDiagnostics(raw).item;
-}
-
-// Parse date string to comparable format (returns null if unparseable)
-function parseDate(dateStr: string | null): Date | null {
-  if (!dateStr) return null;
-  try {
-    const d = new Date(dateStr);
-    if (isNaN(d.getTime())) return null;
-    return d;
-  } catch {
-    return null;
-  }
-}
-
-// Format date as YYYY-MM-DD for display
-function formatDateForDisplay(dateStr: string | null): string | null {
-  if (!dateStr) return null;
-  const d = parseDate(dateStr);
-  if (!d) return dateStr; // Return original if can't parse
-  return d.toISOString().split('T')[0];
-}
-
-// Compute amount owed for the LATEST due_date period only
-function computeLatestPeriodOwed(items: LineItem[]): { 
-  amountDueLatestPeriod: number | null;
-  amountChargedLatestPeriod: number | null;
-  latestDueDate: string | null;
-  rowsWithNumericBalance: number;
-  rowsInLatestPeriod: number;
-  reason: string | null;
-} {
-  // Find all items with parseable dates
-  const itemsWithDates = items
-    .map(item => ({ item, parsedDate: parseDate(item.date) }))
-    .filter((x): x is { item: LineItem; parsedDate: Date } => x.parsedDate !== null);
-  
-  if (itemsWithDates.length === 0) {
-    return { 
-      amountDueLatestPeriod: null, 
-      amountChargedLatestPeriod: null,
-      latestDueDate: null,
-      rowsWithNumericBalance: 0,
-      rowsInLatestPeriod: 0,
-      reason: 'No rows had a parseable due_date.'
-    };
-  }
-  
-  // Find the latest due_date
-  let maxDate = itemsWithDates[0].parsedDate;
-  for (const { parsedDate } of itemsWithDates) {
-    if (parsedDate > maxDate) {
-      maxDate = parsedDate;
-    }
-  }
-  
-  const latestDateStr = maxDate.toISOString().split('T')[0];
-  
-  // Filter to rows matching the latest due_date (compare by date portion only)
-  const latestPeriodItems = itemsWithDates.filter(({ parsedDate }) => {
-    return parsedDate.toISOString().split('T')[0] === latestDateStr;
-  });
-  
-  // Sum balance (sum_bal) for latest period where balance > 0
-  let totalDue = 0;
-  let totalCharged = 0;
-  let rowsWithNumericBalance = 0;
-  
-  for (const { item } of latestPeriodItems) {
-    if (item.balance !== null) {
-      rowsWithNumericBalance++;
-      if (item.balance > 0) {
-        totalDue += item.balance;
-      }
-    }
-    if (item.amount !== null) {
-      totalCharged += item.amount;
-    }
-  }
-  
-  // Count all rows with numeric balance across ALL items (for metadata)
-  let totalRowsWithBalance = 0;
-  for (const item of items) {
-    if (item.balance !== null) {
-      totalRowsWithBalance++;
-    }
-  }
-  
-  if (rowsWithNumericBalance === 0) {
-    return { 
-      amountDueLatestPeriod: null, 
-      amountChargedLatestPeriod: null,
-      latestDueDate: latestDateStr,
-      rowsWithNumericBalance: totalRowsWithBalance,
-      rowsInLatestPeriod: latestPeriodItems.length,
-      reason: 'No rows in latest period had a numeric balance value.'
-    };
-  }
-  
-  // Round to cents
-  totalDue = Math.round(totalDue * 100) / 100;
-  totalCharged = Math.round(totalCharged * 100) / 100;
-  
-  console.log(`[property-taxes] Latest period ${latestDateStr}: due=${totalDue}, charged=${totalCharged} from ${latestPeriodItems.length} items`);
-  
-  return { 
-    amountDueLatestPeriod: totalDue, 
-    amountChargedLatestPeriod: totalCharged,
-    latestDueDate: latestDateStr,
-    rowsWithNumericBalance: totalRowsWithBalance,
-    rowsInLatestPeriod: latestPeriodItems.length,
-    reason: null 
-  };
-}
-
-// Determine owed status based on latest period amount
-function determineOwedStatus(
-  rowsCount: number,
-  rowsInLatestPeriod: number,
-  amountDueLatestPeriod: number | null
-): OwedStatus {
-  if (rowsCount === 0 || rowsInLatestPeriod === 0 || amountDueLatestPeriod === null) {
-    return 'unknown';
-  }
-  
-  if (amountDueLatestPeriod <= 0) return 'paid';
-  return 'due';
-}
-
-// Get the most recent date from line items
-function getAsOfDate(items: LineItem[]): string | null {
-  let maxDate: string | null = null;
-  
-  for (const item of items) {
-    if (item.date && (!maxDate || item.date > maxDate)) {
-      maxDate = item.date;
-    }
-  }
-  
-  return maxDate;
-}
-
-// Process raw rows into normalized result
-function processCharges(
-  rawRows: RawChargeRow[], 
-  scope: 'unit' | 'building' | 'direct', 
-  matchedField: string | null,
-  matchedKey: string | null,
-  bblUsed: string,
-  attempts: Attempt[],
-  includeDebug: boolean,
-  socrataUrlUsed: string
-): Omit<TaxResult, 'cache_status' | 'cached_at'> {
-  const dataSourceUsed = `NYC Open Data DOF Property Charges Balance (${DATASET_ID})`;
-  
-  if (rawRows.length === 0) {
-    const baseResult: Omit<TaxResult, 'cache_status' | 'cached_at'> = {
-      amount_due_latest_period: null,
-      amount_charged_latest_period: null,
-      latest_due_date: null,
-      current_amount_owed: null,
-      owed_status: 'unknown',
-      owed_reason: 'No charge rows found for this parcel.',
-      rows_count: 0,
-      rows_with_numeric_balance: 0,
-      rows_in_latest_period: 0,
-      as_of: null,
-      line_items: [],
-      scope_used: scope,
-      bbl_used: bblUsed,
-      matched_field: null,
-      matched_key: null,
-      no_data_found: true,
-      data_source_used: dataSourceUsed,
-    };
-    if (includeDebug) {
-      baseResult.debug = {
-        socrata_request_url_used: socrataUrlUsed,
-        raw_rows_count: 0,
-        raw_first_row: null,
-        raw_first_row_keys: [],
-        raw_sample_keys_union: [],
-        normalization_diagnostics: [],
-      };
-      baseResult.raw_rows = [];
-      baseResult.attempts = attempts;
-    }
-    return baseResult;
-  }
-  
-  // Collect keys from first 5 rows for debugging
-  const sampleKeysSet = new Set<string>();
-  for (let i = 0; i < Math.min(5, rawRows.length); i++) {
-    Object.keys(rawRows[i]).forEach(k => sampleKeysSet.add(k));
-  }
-  const sampleKeysUnion = Array.from(sampleKeysSet).sort();
-  
-  console.log(`[property-taxes] Available fields in raw rows: ${sampleKeysUnion.join(', ')}`);
-  
-  // Normalize first row with diagnostics for debug
-  const firstRowDiag = normalizeRowWithDiagnostics(rawRows[0]);
-  
-  // Normalize all rows
-  const lineItems = rawRows.map(normalizeRow);
-  
-  // Sort by date descending (newest first)
-  lineItems.sort((a, b) => {
-    const dateA = a.date || '';
-    const dateB = b.date || '';
-    return dateB.localeCompare(dateA);
-  });
-  
-  // Compute amount owed for latest period only
-  const { 
-    amountDueLatestPeriod, 
-    amountChargedLatestPeriod, 
-    latestDueDate, 
-    rowsWithNumericBalance, 
-    rowsInLatestPeriod,
-    reason 
-  } = computeLatestPeriodOwed(lineItems);
-  
-  // Determine owed status based on latest period
-  const owedStatus = determineOwedStatus(rawRows.length, rowsInLatestPeriod, amountDueLatestPeriod);
-  
-  // Get as_of date (same as latest due date)
-  const asOf = latestDueDate;
-  
-  console.log(`[property-taxes] Processed ${rawRows.length} rows -> ${lineItems.length} items, latest_period: ${latestDueDate}, rows_in_period: ${rowsInLatestPeriod}, due: ${amountDueLatestPeriod}, status: ${owedStatus}`);
-  
-  const result: Omit<TaxResult, 'cache_status' | 'cached_at'> = {
-    amount_due_latest_period: amountDueLatestPeriod,
-    amount_charged_latest_period: amountChargedLatestPeriod,
-    latest_due_date: latestDueDate,
-    current_amount_owed: amountDueLatestPeriod, // alias for backward compat
-    owed_status: owedStatus,
-    owed_reason: reason,
-    rows_count: rawRows.length,
-    rows_with_numeric_balance: rowsWithNumericBalance,
-    rows_in_latest_period: rowsInLatestPeriod,
-    as_of: asOf,
-    line_items: lineItems.slice(0, 25),
-    scope_used: scope,
-    bbl_used: bblUsed,
-    matched_field: matchedField,
-    matched_key: matchedKey,
-    no_data_found: false,
-    data_source_used: dataSourceUsed,
-  };
-  
-  if (includeDebug) {
-    result.debug = {
-      socrata_request_url_used: socrataUrlUsed,
-      raw_rows_count: rawRows.length,
-      raw_first_row: rawRows[0],
-      raw_first_row_keys: Object.keys(rawRows[0]).sort(),
-      raw_sample_keys_union: sampleKeysUnion,
-      normalization_diagnostics: firstRowDiag.diagnostics,
-    };
-    result.raw_rows = rawRows.slice(0, 25);
-    result.attempts = attempts;
-  }
-  
-  return result;
 }
 
 serve(async (req) => {
@@ -564,10 +347,12 @@ serve(async (req) => {
     const { bbl, building_bbl, view_bbl, debug: debugFromBody } = await req.json();
     const includeDebug = debugFromQuery || debugFromBody === true || debugFromBody === 1 || debugFromBody === '1';
     
+    // Use view_bbl if provided, otherwise bbl
     const viewBbl = view_bbl || bbl;
-    const buildingBbl = building_bbl;
+    // For condo units, building_bbl is the parent; assessment is often at building level
+    const primaryBbl = building_bbl || viewBbl;
     
-    console.log(`[property-taxes] Request - view_bbl: ${viewBbl}, building_bbl: ${buildingBbl || 'none'}, debug: ${includeDebug}`);
+    console.log(`[property-taxes] Request - view_bbl: ${viewBbl}, building_bbl: ${building_bbl || 'none'}, primary: ${primaryBbl}, debug: ${includeDebug}`);
     
     if (!viewBbl || viewBbl.length < 8) {
       return new Response(
@@ -577,88 +362,78 @@ serve(async (req) => {
     }
     
     const appToken = Deno.env.get('NYC_OPEN_DATA_APP_TOKEN') || '';
+    const normalizedBbl = normalizeBbl(primaryBbl);
     
-    const normalizedViewBbl = normalizeBbl(viewBbl);
-    const normalizedBuildingBbl = buildingBbl ? normalizeBbl(buildingBbl) : null;
-    
-    // Check cache
-    const baseCacheKey = `v2:${normalizedViewBbl}:${normalizedBuildingBbl || ''}`;
-    const cached = cache.get(baseCacheKey);
-    
-    if (cached) {
-      const age = Date.now() - cached.timestamp;
-      const ttl = cached.hasRows ? SUCCESS_CACHE_TTL_MS : NO_DATA_CACHE_TTL_MS;
-      
-      if (age < ttl) {
-        console.log(`[property-taxes] Cache HIT for ${baseCacheKey}`);
-        const cachedResult = {
-          ...(cached.data as object),
-          cache_status: 'HIT' as const,
-          cached_at: new Date(cached.timestamp).toISOString(),
-        };
+    // Check cache (skip if debug mode)
+    const cacheKey = `v3:${normalizedBbl}`;
+    if (!includeDebug) {
+      const cached = cache.get(cacheKey);
+      if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+        console.log(`[property-taxes] Cache HIT for ${cacheKey}`);
         return new Response(
-          JSON.stringify(cachedResult),
+          JSON.stringify({
+            ...(cached.data as object),
+            cache_status: 'HIT',
+            cached_at: new Date(cached.timestamp).toISOString(),
+          }),
           { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
-      } else {
-        cache.delete(baseCacheKey);
       }
     }
     
-    // Try unit BBL first
-    let lookupResult = await multiKeyLookup(normalizedViewBbl, buildingBbl ? 'unit' : 'direct', appToken);
-    let allAttempts = lookupResult.attempts;
-    let scope: 'unit' | 'building' | 'direct' = buildingBbl ? 'unit' : 'direct';
-    let urlUsed = lookupResult.urlUsed;
+    // Fetch assessment data from PLUTO
+    const { row, url: plutoUrl, error: fetchError } = await fetchAssessmentData(normalizedBbl, appToken);
     
-    // Fallback to building BBL
-    if (lookupResult.rows.length === 0 && normalizedBuildingBbl && normalizedBuildingBbl !== normalizedViewBbl) {
-      console.log(`[property-taxes] No rows for unit, trying building BBL: ${normalizedBuildingBbl}`);
-      
-      const buildingResult = await multiKeyLookup(normalizedBuildingBbl, 'building', appToken);
-      allAttempts = [...allAttempts, ...buildingResult.attempts];
-      
-      if (buildingResult.rows.length > 0) {
-        lookupResult = buildingResult;
-        scope = 'building';
-        urlUsed = buildingResult.urlUsed;
-      }
-    }
+    // Calculate tax
+    const calculation = calculateTax(row, includeDebug);
     
-    // Process results
-    const baseResult = processCharges(
-      lookupResult.rows,
-      scope,
-      lookupResult.matchedField,
-      lookupResult.matchedKey,
-      scope === 'building' ? (normalizedBuildingBbl || normalizedViewBbl) : normalizedViewBbl,
-      allAttempts,
-      includeDebug,
-      urlUsed
-    );
+    // Get current quarter info
+    const { billingPeriod, dueDate, fiscalYear } = getCurrentQuarter();
     
-    const now = Date.now();
-    
-    // Cache if no API errors or we have rows
-    const hasApiError = allAttempts.some(a => a.error && a.rows_found === 0);
-    const shouldCache = !hasApiError || baseResult.rows_count > 0;
-    
-    if (shouldCache) {
-      cache.set(baseCacheKey, { 
-        data: baseResult, 
-        timestamp: now,
-        hasRows: baseResult.rows_count > 0,
-        cacheKey: baseCacheKey,
-      });
-    }
-    
+    // Build result
     const result: TaxResult = {
-      ...baseResult,
+      quarterly_bill: calculation.quarterlyBill,
+      annual_tax: calculation.annualTax,
+      billing_period: billingPeriod,
+      due_date: dueDate,
+      due_date_formatted: formatDueDate(dueDate),
+      
+      tax_class: calculation.taxClass,
+      tax_rate: calculation.taxRate,
+      tax_rate_description: calculation.taxRateDescription,
+      assessed_value: calculation.assessedValue,
+      exempt_value: calculation.exemptValue,
+      taxable_value: calculation.taxableValue,
+      
+      // Conservative arrears - never claim arrears unless we can confirm
+      arrears: 0,
+      arrears_status: 'none_detected',
+      arrears_note: 'Based on available public records',
+      
+      bbl_used: normalizedBbl,
+      address: calculation.address,
+      owner_name: calculation.ownerName,
+      building_class: calculation.buildingClass,
+      data_source: `NYC Open Data PLUTO (${PLUTO_DATASET_ID})`,
+      no_data_found: row === null,
       cache_status: 'MISS',
       cached_at: null,
     };
     
-    console.log(`[property-taxes] Result - scope: ${result.scope_used}, amount: ${result.current_amount_owed}, status: ${result.owed_status}, items: ${result.line_items.length}`);
+    if (includeDebug) {
+      result.debug = {
+        pluto_request_url: plutoUrl,
+        raw_row: row,
+        raw_row_keys: row ? Object.keys(row).sort() : [],
+        calculation_steps: calculation.calculationSteps,
+      };
+    }
+    
+    // Cache result
+    const now = Date.now();
+    cache.set(cacheKey, { data: result, timestamp: now });
+    
+    console.log(`[property-taxes] Result - quarterly: $${result.quarterly_bill}, annual: $${result.annual_tax}, class: ${result.tax_class}`);
     
     return new Response(
       JSON.stringify(result),

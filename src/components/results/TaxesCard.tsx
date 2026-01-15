@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { ExternalLink, DollarSign, FileText, Copy, Check, Info, Building2, Home, ChevronDown, ChevronUp, RefreshCw, AlertCircle, Search, HelpCircle } from 'lucide-react';
+import { ExternalLink, DollarSign, Copy, Check, Info, Building2, Home, ChevronDown, ChevronUp, RefreshCw, AlertCircle, HelpCircle, Bug, Calendar, Receipt } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -7,9 +7,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { usePropertyTaxes, type LineItem, type OwedStatus, type DebugInfo } from '@/hooks/usePropertyTaxes';
-import { Bug } from 'lucide-react';
+import { usePropertyTaxes, type DebugInfo } from '@/hooks/usePropertyTaxes';
 
 interface TaxesCardProps {
   viewBbl: string;
@@ -41,17 +39,6 @@ function formatCurrency(amount: number): string {
     currency: 'USD',
     minimumFractionDigits: 2,
   }).format(amount);
-}
-
-function formatDate(dateStr: string | null | undefined): string {
-  if (!dateStr) return '—';
-  try {
-    const date = new Date(dateStr);
-    if (isNaN(date.getTime())) return dateStr;
-    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-  } catch {
-    return dateStr;
-  }
 }
 
 function getDOFCityPayUrl(): string {
@@ -100,22 +87,14 @@ export function TaxesCard({ viewBbl, buildingBbl, address, isUnitPage = false }:
 
   // Derive values from data
   const bblUsed = data?.bbl_used || viewBbl;
-  const matchedField = data?.matched_field;
-  const matchedKey = data?.matched_key;
-  const isUsingBuildingLevel = data?.scope_used === 'building';
-  
-  // New: use latest period amount instead of summed total
-  const amountDueLatestPeriod = data?.amount_due_latest_period;
-  const latestDueDate = data?.latest_due_date;
-  const rowsInLatestPeriod = data?.rows_in_latest_period ?? 0;
-  const lineItems = data?.line_items || [];
-  
-  // Use strict owed_status for badge logic
-  const owedStatus: OwedStatus | undefined = data?.owed_status;
-  const owedReason = data?.owed_reason;
-  
-  // Can only show amount if status is 'paid' or 'due'
-  const canShowAmount = owedStatus === 'paid' || owedStatus === 'due';
+  const quarterlyBill = data?.quarterly_bill;
+  const annualTax = data?.annual_tax;
+  const billingPeriod = data?.billing_period;
+  const dueDateFormatted = data?.due_date_formatted;
+  const taxClass = data?.tax_class;
+  const taxRateDescription = data?.tax_rate_description;
+  const arrearsStatus = data?.arrears_status;
+  const arrearsNote = data?.arrears_note;
 
   return (
     <Card>
@@ -138,7 +117,7 @@ export function TaxesCard({ viewBbl, buildingBbl, address, isUnitPage = false }:
                 </TooltipTrigger>
                 <TooltipContent className="max-w-xs">
                   <p className="text-sm">
-                    Data from NYC DOF Property Charges Balance dataset. 
+                    Quarterly tax bill calculated from NYC assessment data. 
                     You may not receive a bill if taxes are paid through a bank or mortgage servicing company.
                   </p>
                 </TooltipContent>
@@ -147,7 +126,7 @@ export function TaxesCard({ viewBbl, buildingBbl, address, isUnitPage = false }:
           </div>
         </div>
         <CardDescription>
-          NYC Department of Finance property tax account
+          NYC Department of Finance property tax
         </CardDescription>
       </CardHeader>
       
@@ -176,104 +155,76 @@ export function TaxesCard({ viewBbl, buildingBbl, address, isUnitPage = false }:
         {/* Data Display */}
         {data && (
           <>
-            {/* Amount Owed Summary - now shows latest period only */}
+            {/* Primary: Latest Quarterly Property Tax Bill */}
             <div className="rounded-lg border border-border bg-muted/30 p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-xs text-muted-foreground uppercase tracking-wide">Due (Latest Period)</p>
-                  {canShowAmount && amountDueLatestPeriod !== null ? (
-                    <p className={`text-2xl font-bold ${amountDueLatestPeriod > 0 ? 'text-destructive' : 'text-primary'}`}>
-                      {formatCurrency(amountDueLatestPeriod)}
+              <div className="flex items-start justify-between">
+                <div className="space-y-1">
+                  <p className="text-xs text-muted-foreground uppercase tracking-wide">
+                    Latest Quarterly Property Tax Bill
+                  </p>
+                  {quarterlyBill !== null ? (
+                    <p className="text-2xl font-bold text-foreground">
+                      {formatCurrency(quarterlyBill)}
                     </p>
                   ) : (
-                    <div className="flex items-center gap-2">
-                      <p className="text-xl font-medium text-muted-foreground">
-                        Not available
-                      </p>
-                      {owedReason && (
-                        <TooltipProvider>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <Button variant="ghost" size="icon" className="h-5 w-5">
-                                <HelpCircle className="h-3.5 w-3.5 text-muted-foreground" />
-                              </Button>
-                            </TooltipTrigger>
-                            <TooltipContent className="max-w-xs">
-                              <p className="text-xs">{owedReason}</p>
-                            </TooltipContent>
-                          </Tooltip>
-                        </TooltipProvider>
-                      )}
-                    </div>
+                    <p className="text-xl font-medium text-muted-foreground">
+                      Not available
+                    </p>
                   )}
                 </div>
-                {/* Only show Paid badge when owed_status === 'paid' */}
-                {owedStatus === 'paid' && (
-                  <Badge variant="secondary" className="bg-primary/10 text-primary">
-                    Paid
-                  </Badge>
-                )}
-                {owedStatus === 'due' && (
-                  <Badge variant="destructive">
-                    Balance Due
+                {billingPeriod && (
+                  <Badge variant="secondary" className="text-xs">
+                    {billingPeriod}
                   </Badge>
                 )}
               </div>
               
-              {/* Metadata - show latest due date */}
-              {canShowAmount && latestDueDate && (
-                <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-                  <span>As of: {formatDate(latestDueDate)}</span>
-                  {rowsInLatestPeriod > 0 && (
-                    <span>Rows in period: {rowsInLatestPeriod}/{data.rows_count}</span>
-                  )}
+              {/* Due Date */}
+              {dueDateFormatted && quarterlyBill !== null && (
+                <div className="mt-3 flex items-center gap-2 text-sm text-muted-foreground">
+                  <Calendar className="h-4 w-4" />
+                  <span>Due {dueDateFormatted}</span>
                 </div>
               )}
-              
-              {/* Disclaimer */}
-              <p className="mt-2 text-[10px] text-muted-foreground/70 leading-tight">
-                This reflects charges associated with the most recent due date in NYC Open Data and may not equal the official DOF current balance.
-              </p>
             </div>
             
-            {/* Scope and Match Indicator */}
-            <div className="flex flex-col gap-2">
-              <div className="flex items-center gap-2 text-sm flex-wrap">
-                {isUsingBuildingLevel ? (
-                  <>
-                    <Building2 className="h-4 w-4 text-muted-foreground" />
-                    <span className="text-muted-foreground">Account scope:</span>
-                    <Badge variant="secondary" className="font-mono text-xs">
-                      Building
-                    </Badge>
-                  </>
-                ) : (
-                  <>
-                    {isUnitPage ? (
-                      <Home className="h-4 w-4 text-muted-foreground" />
-                    ) : (
-                      <Building2 className="h-4 w-4 text-muted-foreground" />
-                    )}
-                    <span className="text-muted-foreground">Account scope:</span>
-                    <Badge variant="outline" className="font-mono text-xs">
-                      {isUnitPage ? 'Unit' : 'Property'}
-                    </Badge>
-                  </>
+            {/* Secondary Info: Annual Tax and Billing Cycle */}
+            {annualTax !== null && (
+              <div className="flex flex-col gap-2 text-sm text-muted-foreground">
+                <div className="flex items-center gap-2">
+                  <Receipt className="h-4 w-4" />
+                  <span>Annual property tax: {formatCurrency(annualTax)}</span>
+                </div>
+                {taxClass && (
+                  <div className="flex items-center gap-2">
+                    <Building2 className="h-4 w-4" />
+                    <span>Billing cycle: Quarterly (NYC Tax Class {taxClass})</span>
+                  </div>
                 )}
               </div>
-              
-              {/* Match indicator - only when we have data */}
-              {canShowAmount && matchedField && matchedKey && (
-                <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                  <Search className="h-3 w-3" />
-                  <span>Matched using:</span>
-                  <code className="bg-muted px-1.5 py-0.5 rounded text-xs">
-                    {matchedField}='{matchedKey}'
-                  </code>
-                  <Badge variant="outline" className="text-[10px] px-1.5 py-0">
-                    {isUsingBuildingLevel ? 'building' : isUnitPage ? 'unit' : 'property'}
+            )}
+            
+            {/* Arrears Status */}
+            <div className="flex items-center gap-2 text-sm">
+              {arrearsStatus === 'none_detected' && (
+                <>
+                  <Badge variant="outline" className="bg-primary/10 text-primary border-primary/20">
+                    Arrears: None detected
                   </Badge>
-                </div>
+                </>
+              )}
+              {arrearsStatus === 'possible' && (
+                <Badge variant="destructive">
+                  Arrears: Possible
+                </Badge>
+              )}
+              {arrearsStatus === 'unknown' && (
+                <Badge variant="secondary">
+                  Arrears: Unknown
+                </Badge>
+              )}
+              {arrearsNote && (
+                <span className="text-xs text-muted-foreground">{arrearsNote}</span>
               )}
             </div>
             
@@ -297,22 +248,13 @@ export function TaxesCard({ viewBbl, buildingBbl, address, isUnitPage = false }:
               </div>
             </div>
             
-            {/* Building level fallback note */}
-            {isUsingBuildingLevel && isUnitPage && (
-              <Alert className="py-2">
-                <AlertDescription className="text-xs text-muted-foreground">
-                  No unit-level tax account found. Showing building-level tax data.
-                </AlertDescription>
-              </Alert>
-            )}
-            
-            {/* Details Collapsible - render from normalized line_items */}
-            {lineItems.length > 0 && (
+            {/* Assessment Details Collapsible */}
+            {data.assessed_value !== null && (
               <Collapsible open={detailsOpen} onOpenChange={setDetailsOpen}>
                 <CollapsibleTrigger asChild>
                   <Button variant="ghost" size="sm" className="w-full justify-between h-8 px-2">
                     <span className="text-xs text-muted-foreground">
-                      View {lineItems.length} charge records
+                      View assessment details
                     </span>
                     {detailsOpen ? (
                       <ChevronUp className="h-4 w-4" />
@@ -322,40 +264,26 @@ export function TaxesCard({ viewBbl, buildingBbl, address, isUnitPage = false }:
                   </Button>
                 </CollapsibleTrigger>
                 <CollapsibleContent>
-                  <div className="mt-2 rounded border border-border overflow-hidden">
-                    <div className="max-h-64 overflow-auto">
-                      <Table>
-                        <TableHeader>
-                          <TableRow>
-                            <TableHead className="text-xs">Date</TableHead>
-                            <TableHead className="text-xs">Description</TableHead>
-                            <TableHead className="text-xs text-right">Amount</TableHead>
-                            <TableHead className="text-xs text-right">Balance</TableHead>
-                            <TableHead className="text-xs">Status</TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {lineItems.map((item: LineItem, idx: number) => (
-                            <TableRow key={idx}>
-                              <TableCell className="text-xs py-1.5">
-                                {item.date || '—'}
-                              </TableCell>
-                              <TableCell className="text-xs py-1.5 max-w-[120px] truncate">
-                                {item.description || '—'}
-                              </TableCell>
-                              <TableCell className={`text-xs py-1.5 text-right font-mono ${item.amount !== null && item.amount < 0 ? 'text-primary' : ''}`}>
-                                {item.amount !== null ? formatCurrency(item.amount) : '—'}
-                              </TableCell>
-                              <TableCell className={`text-xs py-1.5 text-right font-mono ${item.balance !== null && item.balance > 0 ? 'text-destructive' : 'text-primary'}`}>
-                                {item.balance !== null ? formatCurrency(item.balance) : '—'}
-                              </TableCell>
-                              <TableCell className="text-xs py-1.5">
-                                {item.status || '—'}
-                              </TableCell>
-                            </TableRow>
-                          ))}
-                        </TableBody>
-                      </Table>
+                  <div className="mt-2 rounded border border-border p-3 space-y-2 text-xs">
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Assessed Total Value:</span>
+                      <span className="font-mono">{data.assessed_value !== null ? formatCurrency(data.assessed_value) : '—'}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Exempt Value:</span>
+                      <span className="font-mono">{data.exempt_value !== null ? formatCurrency(data.exempt_value) : '—'}</span>
+                    </div>
+                    <div className="flex justify-between border-t pt-2">
+                      <span className="text-muted-foreground font-medium">Taxable Billable AV:</span>
+                      <span className="font-mono font-medium">{data.taxable_value !== null ? formatCurrency(data.taxable_value) : '—'}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Tax Rate:</span>
+                      <span className="font-mono">{data.tax_rate !== null ? `${(data.tax_rate * 100).toFixed(3)}%` : '—'}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Tax Class:</span>
+                      <span>{taxRateDescription || '—'}</span>
                     </div>
                   </div>
                 </CollapsibleContent>
@@ -366,24 +294,22 @@ export function TaxesCard({ viewBbl, buildingBbl, address, isUnitPage = false }:
             {data.no_data_found && (
               <Alert className="py-2">
                 <AlertDescription className="text-xs text-muted-foreground">
-                  No NYC Open Data charge rows found after trying multiple identifier formats.
+                  No NYC PLUTO assessment data found for this property. Tax calculation unavailable.
                 </AlertDescription>
               </Alert>
             )}
             
-            {/* Cache status debug info */}
+            {/* Cache status */}
             {data.cache_status && (
               <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
                 <Badge variant="outline" className={`text-[10px] px-1.5 py-0 ${data.cache_status === 'HIT' ? 'bg-primary/10' : ''}`}>
                   Cache: {data.cache_status}
                 </Badge>
-                {data.cached_at && (
-                  <span>Cached at: {formatDate(data.cached_at)}</span>
-                )}
+                <span className="text-muted-foreground/70">Source: {data.data_source}</span>
               </div>
             )}
             
-            {/* Debug Panel - only visible when ?debugTaxes=1 and debug data exists */}
+            {/* Debug Panel - only visible when ?debugTaxes=1 */}
             {isDebugMode && data.debug && (
               <Collapsible open={debugOpen} onOpenChange={setDebugOpen}>
                 <CollapsibleTrigger asChild>
@@ -401,47 +327,40 @@ export function TaxesCard({ viewBbl, buildingBbl, address, isUnitPage = false }:
                 </CollapsibleTrigger>
                 <CollapsibleContent>
                   <div className="mt-2 space-y-3 p-3 rounded border border-amber-500/30 bg-amber-500/5 text-xs">
-                    {/* Socrata URL */}
+                    {/* PLUTO URL */}
                     <div>
-                      <p className="font-medium text-amber-700 dark:text-amber-400 mb-1">Socrata Request URL:</p>
+                      <p className="font-medium text-amber-700 dark:text-amber-400 mb-1">PLUTO Request URL:</p>
                       <code className="block bg-muted p-2 rounded text-[10px] break-all">
-                        {data.debug.socrata_request_url_used || 'N/A'}
+                        {data.debug.pluto_request_url || 'N/A'}
                       </code>
                     </div>
                     
-                    {/* Raw rows count */}
+                    {/* Calculation Steps */}
                     <div>
-                      <p className="font-medium text-amber-700 dark:text-amber-400">Raw Rows Count: <span className="font-mono">{data.debug.raw_rows_count}</span></p>
-                    </div>
-                    
-                    {/* Keys Union */}
-                    <div>
-                      <p className="font-medium text-amber-700 dark:text-amber-400 mb-1">Sample Keys Union (first 5 rows):</p>
-                      <code className="block bg-muted p-2 rounded text-[10px] break-all">
-                        {data.debug.raw_sample_keys_union.join(', ') || 'N/A'}
-                      </code>
-                    </div>
-                    
-                    {/* Normalization Diagnostics */}
-                    <div>
-                      <p className="font-medium text-amber-700 dark:text-amber-400 mb-1">Normalization Diagnostics:</p>
-                      <div className="space-y-1">
-                        {data.debug.normalization_diagnostics.map((diag, idx) => (
-                          <div key={idx} className="bg-muted p-2 rounded">
-                            <p className="font-medium">{diag.field}:</p>
-                            <p className="text-[10px]">Matched: <span className="font-mono text-primary">{diag.matched_field || '(none)'}</span></p>
-                            <p className="text-[10px]">Value: <span className="font-mono">{diag.value !== null ? String(diag.value) : '(null)'}</span></p>
-                          </div>
+                      <p className="font-medium text-amber-700 dark:text-amber-400 mb-1">Calculation Steps:</p>
+                      <div className="bg-muted p-2 rounded space-y-1">
+                        {data.debug.calculation_steps.map((step, idx) => (
+                          <div key={idx} className="text-[10px] font-mono">{step}</div>
                         ))}
                       </div>
                     </div>
                     
-                    {/* Raw First Row */}
-                    {data.debug.raw_first_row && (
+                    {/* Raw Row Keys */}
+                    <div>
+                      <p className="font-medium text-amber-700 dark:text-amber-400 mb-1">
+                        PLUTO Row Keys ({data.debug.raw_row_keys.length}):
+                      </p>
+                      <code className="block bg-muted p-2 rounded text-[10px] break-all">
+                        {data.debug.raw_row_keys.join(', ') || 'None'}
+                      </code>
+                    </div>
+                    
+                    {/* Raw Row JSON */}
+                    {data.debug.raw_row && (
                       <div>
-                        <p className="font-medium text-amber-700 dark:text-amber-400 mb-1">Raw First Row (JSON):</p>
+                        <p className="font-medium text-amber-700 dark:text-amber-400 mb-1">Raw PLUTO Row:</p>
                         <pre className="bg-muted p-2 rounded text-[10px] overflow-auto max-h-48">
-                          {JSON.stringify(data.debug.raw_first_row, null, 2)}
+                          {JSON.stringify(data.debug.raw_row, null, 2)}
                         </pre>
                       </div>
                     )}
@@ -449,62 +368,23 @@ export function TaxesCard({ viewBbl, buildingBbl, address, isUnitPage = false }:
                 </CollapsibleContent>
               </Collapsible>
             )}
-          </>
-        )}
-        
-        {/* Fallback: No data at all (before fetch completes) */}
-        {!loading && !data && !error && (
-          <Alert className="py-2">
-            <AlertDescription className="text-xs text-muted-foreground">
-              Tax data not available. Use the links below to check the official DOF portal.
-            </AlertDescription>
-          </Alert>
-        )}
-        
-        {/* DOF External Links - Always shown as fallback */}
-        <div className="grid gap-2 pt-2 border-t border-border">
-          <p className="text-xs text-muted-foreground">Official NYC DOF portals:</p>
-          <div className="grid gap-2 sm:grid-cols-2">
-            <a
-              href={getDOFCityPayUrl()}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="block"
-            >
-              <div className="flex items-center justify-between p-2 rounded-md border border-border bg-muted/20 hover:bg-muted/40 transition-colors">
-                <div className="flex items-center gap-2">
-                  <DollarSign className="h-4 w-4 text-primary" />
-                  <span className="text-xs font-medium">Pay Taxes</span>
-                </div>
-                <ExternalLink className="h-3 w-3 text-muted-foreground" />
-              </div>
-            </a>
             
-            <a
-              href={getDOFBillsUrl()}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="block"
-            >
-              <div className="flex items-center justify-between p-2 rounded-md border border-border bg-muted/20 hover:bg-muted/40 transition-colors">
-                <div className="flex items-center gap-2">
-                  <FileText className="h-4 w-4 text-secondary-foreground" />
-                  <span className="text-xs font-medium">View Bills</span>
-                </div>
-                <ExternalLink className="h-3 w-3 text-muted-foreground" />
-              </div>
-            </a>
-          </div>
-        </div>
-        
-        {/* BBL Instruction for manual lookup */}
-        {parsedBbl && (
-          <div className="text-xs text-muted-foreground bg-muted/20 p-2 rounded">
-            <p className="font-medium mb-1">To search on DOF sites:</p>
-            <p className="font-mono text-xs">
-              Borough: {boroughName} • Block: {parseInt(parsedBbl.block, 10)} • Lot: {parseInt(parsedBbl.lot, 10)}
-            </p>
-          </div>
+            {/* External Links */}
+            <div className="flex flex-wrap gap-2 pt-2">
+              <Button variant="outline" size="sm" className="h-7 text-xs" asChild>
+                <a href={getDOFCityPayUrl()} target="_blank" rel="noopener noreferrer">
+                  <ExternalLink className="h-3 w-3 mr-1.5" />
+                  Pay on CityPay
+                </a>
+              </Button>
+              <Button variant="ghost" size="sm" className="h-7 text-xs" asChild>
+                <a href={getDOFBillsUrl()} target="_blank" rel="noopener noreferrer">
+                  <ExternalLink className="h-3 w-3 mr-1.5" />
+                  View Official Bills
+                </a>
+              </Button>
+            </div>
+          </>
         )}
       </CardContent>
     </Card>
