@@ -1,59 +1,33 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 
-export interface ChargeRow {
-  parid?: string;
-  bble?: string;
-  bbl?: string;
-  stmtdate?: string;
-  activitythrough?: string;
-  value?: string;
-  balance?: string;
-  open_balance?: string;
-  outstanding?: string;
-  dession?: string;
-  chargetype?: string;
-  install?: string;
-  tax_year?: string;
-  borough?: string;
-  block?: string;
-  lot?: string;
-  period?: string;
-  bill_period?: string;
-  effective_date?: string;
-}
-
-export interface Attempt {
-  field: string;
-  key: string;
-  url: string;
-  rows_found: number;
-  error?: string;
+// Normalized line item from edge function
+export interface LineItem {
+  date: string | null;
+  description: string | null;
+  amount: number | null;
+  balance: number | null;
+  status: string | null;
 }
 
 export type OwedStatus = 'paid' | 'due' | 'unknown';
 
 export interface PropertyTaxResult {
   current_amount_owed: number | null;  // null = "not available"
+  owed_status: OwedStatus;
+  owed_reason: string | null;
   rows_count: number;
   rows_with_numeric_balance: number;
   as_of: string | null;
-  recent_rows: ChargeRow[];
+  line_items: LineItem[];
   scope_used: 'unit' | 'building' | 'direct';
-  parid_used: string;
   bbl_used: string;
   matched_field: string | null;
   matched_key: string | null;
   no_data_found: boolean;
-  attempts: Attempt[];
-  api_error?: string;
+  data_source_used: string;
   cache_status: 'HIT' | 'MISS';
   cached_at: string | null;
-  // Strict balance tracking
-  balance_field_used: string | null;
-  owed_status: OwedStatus;
-  owed_reason: string | null;
-  data_source_used: string;
 }
 
 interface UsePropertyTaxesResult {

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { ExternalLink, DollarSign, FileText, Copy, Check, Info, Building2, Home, ChevronDown, ChevronUp, RefreshCw, AlertCircle, Search } from 'lucide-react';
+import { ExternalLink, DollarSign, FileText, Copy, Check, Info, Building2, Home, ChevronDown, ChevronUp, RefreshCw, AlertCircle, Search, HelpCircle } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -8,17 +8,15 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { usePropertyTaxes, type ChargeRow, type Attempt, type OwedStatus } from '@/hooks/usePropertyTaxes';
-import { HelpCircle } from 'lucide-react';
+import { usePropertyTaxes, type LineItem, type OwedStatus } from '@/hooks/usePropertyTaxes';
 
 interface TaxesCardProps {
-  viewBbl: string;           // The unit BBL the user is viewing
-  buildingBbl?: string;      // The parent building BBL (for condo units)
+  viewBbl: string;
+  buildingBbl?: string;
   address?: string;
   isUnitPage?: boolean;
 }
 
-// Parse BBL into borough, block, lot
 function parseBBL(bbl: string): { borough: string; block: string; lot: string } | null {
   if (!bbl || bbl.length !== 10) return null;
   return {
@@ -28,7 +26,6 @@ function parseBBL(bbl: string): { borough: string; block: string; lot: string } 
   };
 }
 
-// Borough code to name mapping
 const BOROUGH_NAMES: Record<string, string> = {
   '1': 'Manhattan',
   '2': 'Bronx',
@@ -37,7 +34,6 @@ const BOROUGH_NAMES: Record<string, string> = {
   '5': 'Staten Island',
 };
 
-// Format currency
 function formatCurrency(amount: number): string {
   return new Intl.NumberFormat('en-US', {
     style: 'currency',
@@ -46,23 +42,21 @@ function formatCurrency(amount: number): string {
   }).format(amount);
 }
 
-// Format date
 function formatDate(dateStr: string | null | undefined): string {
   if (!dateStr) return '—';
   try {
     const date = new Date(dateStr);
+    if (isNaN(date.getTime())) return dateStr;
     return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
   } catch {
     return dateStr;
   }
 }
 
-// Generate DOF CityPay URL (for current balance/charges)
 function getDOFCityPayUrl(): string {
   return 'https://a836-citypay.nyc.gov/citypay/PropertyTax';
 }
 
-// Generate DOF Property Tax Bills URL
 function getDOFBillsUrl(): string {
   return 'https://www.nyc.gov/site/finance/property/property-tax-bills-and-payments.page';
 }
@@ -70,11 +64,9 @@ function getDOFBillsUrl(): string {
 export function TaxesCard({ viewBbl, buildingBbl, address, isUnitPage = false }: TaxesCardProps) {
   const [copiedValue, setCopiedValue] = useState<string | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
-  const [attemptsOpen, setAttemptsOpen] = useState(false);
   
   const { loading, error, data, fetch, retry } = usePropertyTaxes();
   
-  // Fetch tax data on mount or BBL change
   useEffect(() => {
     if (viewBbl && viewBbl.length === 10) {
       fetch(viewBbl, buildingBbl);
@@ -106,12 +98,11 @@ export function TaxesCard({ viewBbl, buildingBbl, address, isUnitPage = false }:
   const matchedKey = data?.matched_key;
   const isUsingBuildingLevel = data?.scope_used === 'building';
   const currentAmountOwed = data?.current_amount_owed;
-  const attempts = data?.attempts || [];
+  const lineItems = data?.line_items || [];
   
   // Use strict owed_status for badge logic
   const owedStatus: OwedStatus | undefined = data?.owed_status;
   const owedReason = data?.owed_reason;
-  const balanceFieldUsed = data?.balance_field_used;
   const rowsWithNumericBalance = data?.rows_with_numeric_balance ?? 0;
   
   // Can only show amount if status is 'paid' or 'due'
@@ -224,11 +215,8 @@ export function TaxesCard({ viewBbl, buildingBbl, address, isUnitPage = false }:
               {canShowAmount && data.as_of && (
                 <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
                   <span>As of: {formatDate(data.as_of)}</span>
-                  {balanceFieldUsed && (
-                    <span>Field: {balanceFieldUsed}</span>
-                  )}
                   {rowsWithNumericBalance > 0 && (
-                    <span>Rows: {rowsWithNumericBalance}/{data.rows_count}</span>
+                    <span>Balance rows: {rowsWithNumericBalance}/{data.rows_count}</span>
                   )}
                 </div>
               )}
@@ -304,13 +292,13 @@ export function TaxesCard({ viewBbl, buildingBbl, address, isUnitPage = false }:
               </Alert>
             )}
             
-            {/* Details Collapsible - only when we have rows */}
-            {data.rows_count > 0 && data.recent_rows.length > 0 && (
+            {/* Details Collapsible - render from normalized line_items */}
+            {lineItems.length > 0 && (
               <Collapsible open={detailsOpen} onOpenChange={setDetailsOpen}>
                 <CollapsibleTrigger asChild>
                   <Button variant="ghost" size="sm" className="w-full justify-between h-8 px-2">
                     <span className="text-xs text-muted-foreground">
-                      View {data.recent_rows.length} charge records
+                      View {lineItems.length} charge records
                     </span>
                     {detailsOpen ? (
                       <ChevronUp className="h-4 w-4" />
@@ -326,21 +314,29 @@ export function TaxesCard({ viewBbl, buildingBbl, address, isUnitPage = false }:
                         <TableHeader>
                           <TableRow>
                             <TableHead className="text-xs">Date</TableHead>
-                            <TableHead className="text-xs">Type</TableHead>
+                            <TableHead className="text-xs">Description</TableHead>
                             <TableHead className="text-xs text-right">Amount</TableHead>
+                            <TableHead className="text-xs text-right">Balance</TableHead>
+                            <TableHead className="text-xs">Status</TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
-                          {data.recent_rows.map((item: ChargeRow, idx: number) => (
+                          {lineItems.map((item: LineItem, idx: number) => (
                             <TableRow key={idx}>
                               <TableCell className="text-xs py-1.5">
-                                {formatDate(item.stmtdate)}
+                                {item.date || '—'}
+                              </TableCell>
+                              <TableCell className="text-xs py-1.5 max-w-[120px] truncate">
+                                {item.description || '—'}
+                              </TableCell>
+                              <TableCell className={`text-xs py-1.5 text-right font-mono ${item.amount !== null && item.amount < 0 ? 'text-primary' : ''}`}>
+                                {item.amount !== null ? formatCurrency(item.amount) : '—'}
+                              </TableCell>
+                              <TableCell className={`text-xs py-1.5 text-right font-mono ${item.balance !== null && item.balance > 0 ? 'text-destructive' : 'text-primary'}`}>
+                                {item.balance !== null ? formatCurrency(item.balance) : '—'}
                               </TableCell>
                               <TableCell className="text-xs py-1.5">
-                                {item.chargetype || item.dession || '—'}
-                              </TableCell>
-                              <TableCell className={`text-xs py-1.5 text-right font-mono ${parseFloat(item.value || '0') < 0 ? 'text-primary' : ''}`}>
-                                {formatCurrency(parseFloat(item.value || '0'))}
+                                {item.status || '—'}
                               </TableCell>
                             </TableRow>
                           ))}
@@ -371,54 +367,6 @@ export function TaxesCard({ viewBbl, buildingBbl, address, isUnitPage = false }:
                   <span>Cached at: {formatDate(data.cached_at)}</span>
                 )}
               </div>
-            )}
-            
-            {/* Debug: Attempts list (collapsible) */}
-            {attempts.length > 0 && (
-              <Collapsible open={attemptsOpen} onOpenChange={setAttemptsOpen}>
-                <CollapsibleTrigger asChild>
-                  <Button variant="ghost" size="sm" className="w-full justify-between h-7 px-2 text-muted-foreground">
-                    <span className="text-[10px]">
-                      {attempts.length} lookup attempts ({attempts.filter(a => a.rows_found > 0).length} matched)
-                    </span>
-                    {attemptsOpen ? (
-                      <ChevronUp className="h-3 w-3" />
-                    ) : (
-                      <ChevronDown className="h-3 w-3" />
-                    )}
-                  </Button>
-                </CollapsibleTrigger>
-                <CollapsibleContent>
-                  <div className="mt-1 rounded border border-border overflow-hidden">
-                    <div className="max-h-40 overflow-auto">
-                      <Table>
-                        <TableHeader>
-                          <TableRow>
-                            <TableHead className="text-[10px] py-1">Field</TableHead>
-                            <TableHead className="text-[10px] py-1">Key</TableHead>
-                            <TableHead className="text-[10px] py-1 text-right">Rows</TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {attempts.map((attempt: Attempt, idx: number) => (
-                            <TableRow key={idx} className={attempt.rows_found > 0 ? 'bg-primary/5' : ''}>
-                              <TableCell className="text-[10px] py-1 font-mono">
-                                {attempt.field}
-                              </TableCell>
-                              <TableCell className="text-[10px] py-1 font-mono max-w-[120px] truncate">
-                                {attempt.key}
-                              </TableCell>
-                              <TableCell className={`text-[10px] py-1 text-right ${attempt.rows_found > 0 ? 'text-primary font-medium' : ''}`}>
-                                {attempt.rows_found}
-                              </TableCell>
-                            </TableRow>
-                          ))}
-                        </TableBody>
-                      </Table>
-                    </div>
-                  </div>
-                </CollapsibleContent>
-              </Collapsible>
             )}
           </>
         )}
