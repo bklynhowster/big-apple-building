@@ -14,9 +14,9 @@ interface UseCondoUnitTaxesResult {
   // Map of unitBbl -> tax data
   unitTaxes: Map<string, CondoUnitTaxSummary>;
   // Fetch taxes for a batch of unit BBLs
-  fetchBatch: (units: Array<{ unitBbl: string; unitLabel: string | null }>) => Promise<void>;
+  fetchBatch: (units: Array<{ unitBbl: string; unitLabel: string | null }>) => void;
   // Fetch a single unit's taxes
-  fetchOne: (unitBbl: string, unitLabel: string | null) => Promise<void>;
+  fetchOne: (unitBbl: string, unitLabel: string | null) => void;
   // Reset all data
   reset: () => void;
   // Loading state for initial batch
@@ -36,23 +36,35 @@ const unitTaxCache = new Map<string, { data: PropertyTaxResult; timestamp: numbe
 const CACHE_TTL_MS = 30 * 60 * 1000;
 
 // Configurable batch size for lazy loading
-const INITIAL_BATCH_SIZE = 10;
-const MAX_CONCURRENT_REQUESTS = 5;
+export const INITIAL_BATCH_SIZE = 10;
+const MAX_CONCURRENT_REQUESTS = 3; // Reduced for better performance
+const YIELD_INTERVAL_MS = 50; // Yield to main thread between batches
+
+// Debug mode
+const DEBUG_MODE = typeof window !== 'undefined' && 
+  new URLSearchParams(window.location.search).has('debug');
 
 export function useCondoUnitTaxes(): UseCondoUnitTaxesResult {
-  const [unitTaxes, setUnitTaxes] = useState<Map<string, CondoUnitTaxSummary>>(new Map());
+  // Use a stable Map via useState to avoid ref accumulation issues
+  const [unitTaxes, setUnitTaxes] = useState<Map<string, CondoUnitTaxSummary>>(() => new Map());
   const [batchLoading, setBatchLoading] = useState(false);
+  
+  // Track in-flight requests to cancel on unmount/reset
   const abortControllerRef = useRef<AbortController | null>(null);
+  // Track BBLs currently being fetched to prevent double-fetching
+  const inFlightBblsRef = useRef<Set<string>>(new Set());
+  // Track the building context to detect navigation changes
+  const buildingContextRef = useRef<string | null>(null);
 
-  // Fetch tax data for a single unit
+  // Fetch tax data for a single unit - returns promise
   const fetchSingleUnit = useCallback(async (
     unitBbl: string,
-    unitLabel: string | null,
     signal?: AbortSignal
   ): Promise<PropertyTaxResult | null> => {
     // Check cache first
     const cached = unitTaxCache.get(unitBbl);
     if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+      if (DEBUG_MODE) console.log(`[useCondoUnitTaxes] Cache HIT for ${unitBbl}`);
       return cached.data;
     }
 
@@ -86,7 +98,16 @@ export function useCondoUnitTaxes(): UseCondoUnitTaxesResult {
   }, []);
 
   // Fetch taxes for a single unit and update state
-  const fetchOne = useCallback(async (unitBbl: string, unitLabel: string | null) => {
+  const fetchOne = useCallback((unitBbl: string, unitLabel: string | null) => {
+    // Skip if already fetched or in-flight
+    if (inFlightBblsRef.current.has(unitBbl)) {
+      if (DEBUG_MODE) console.log(`[useCondoUnitTaxes] Skipping ${unitBbl} - already in flight`);
+      return;
+    }
+    
+    // Mark as in-flight
+    inFlightBblsRef.current.add(unitBbl);
+    
     // Set loading state
     setUnitTaxes(prev => {
       const next = new Map(prev);
@@ -100,37 +121,45 @@ export function useCondoUnitTaxes(): UseCondoUnitTaxesResult {
       return next;
     });
 
-    try {
-      const taxData = await fetchSingleUnit(unitBbl, unitLabel);
-      
-      setUnitTaxes(prev => {
-        const next = new Map(prev);
-        next.set(unitBbl, {
-          unitBbl,
-          unitLabel,
-          loading: false,
-          error: null,
-          data: taxData,
+    // Start async fetch
+    (async () => {
+      try {
+        const taxData = await fetchSingleUnit(unitBbl, abortControllerRef.current?.signal);
+        
+        if (taxData) {
+          setUnitTaxes(prev => {
+            const next = new Map(prev);
+            next.set(unitBbl, {
+              unitBbl,
+              unitLabel,
+              loading: false,
+              error: null,
+              data: taxData,
+            });
+            return next;
+          });
+        }
+      } catch (err) {
+        setUnitTaxes(prev => {
+          const next = new Map(prev);
+          next.set(unitBbl, {
+            unitBbl,
+            unitLabel,
+            loading: false,
+            error: err instanceof Error ? err.message : 'Failed to fetch tax data',
+            data: null,
+          });
+          return next;
         });
-        return next;
-      });
-    } catch (err) {
-      setUnitTaxes(prev => {
-        const next = new Map(prev);
-        next.set(unitBbl, {
-          unitBbl,
-          unitLabel,
-          loading: false,
-          error: err instanceof Error ? err.message : 'Failed to fetch tax data',
-          data: null,
-        });
-        return next;
-      });
-    }
+      } finally {
+        inFlightBblsRef.current.delete(unitBbl);
+      }
+    })();
   }, [fetchSingleUnit]);
 
   // Fetch taxes for a batch of units with concurrency control
-  const fetchBatch = useCallback(async (
+  // FIXED: Pure function that computes from current state, no ref accumulation
+  const fetchBatch = useCallback((
     units: Array<{ unitBbl: string; unitLabel: string | null }>
   ) => {
     if (units.length === 0) return;
@@ -144,12 +173,36 @@ export function useCondoUnitTaxes(): UseCondoUnitTaxesResult {
 
     setBatchLoading(true);
 
-    // Initialize all units as loading
+    if (DEBUG_MODE) {
+      console.log(`[useCondoUnitTaxes] Starting batch fetch for ${units.length} units`);
+    }
+
+    // Filter out already loaded or in-flight units
+    const unitsToFetch = units.filter(u => {
+      // Skip if already in-flight
+      if (inFlightBblsRef.current.has(u.unitBbl)) {
+        return false;
+      }
+      return true;
+    });
+
+    if (unitsToFetch.length === 0) {
+      setBatchLoading(false);
+      return;
+    }
+
+    // Mark all as in-flight
+    for (const unit of unitsToFetch) {
+      inFlightBblsRef.current.add(unit.unitBbl);
+    }
+
+    // Initialize loading state for units not yet in the map
     setUnitTaxes(prev => {
       const next = new Map(prev);
-      for (const unit of units) {
-        // Only set loading if not already loaded
-        if (!next.has(unit.unitBbl) || next.get(unit.unitBbl)?.data === null) {
+      for (const unit of unitsToFetch) {
+        // Only set loading if not already loaded with data
+        const existing = next.get(unit.unitBbl);
+        if (!existing || (!existing.data && !existing.loading)) {
           next.set(unit.unitBbl, {
             unitBbl: unit.unitBbl,
             unitLabel: unit.unitLabel,
@@ -164,21 +217,19 @@ export function useCondoUnitTaxes(): UseCondoUnitTaxesResult {
 
     // Process in batches with concurrency limit
     const processQueue = async () => {
-      const queue = [...units];
-      const inFlight: Promise<void>[] = [];
-
-      while (queue.length > 0 || inFlight.length > 0) {
-        if (signal.aborted) return;
-
-        // Fill up to max concurrent requests
-        while (inFlight.length < MAX_CONCURRENT_REQUESTS && queue.length > 0) {
-          const unit = queue.shift()!;
-          
-          const promise = (async () => {
-            try {
-              // Check if already cached
-              const cached = unitTaxCache.get(unit.unitBbl);
-              if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+      const queue = [...unitsToFetch];
+      
+      while (queue.length > 0 && !signal.aborted) {
+        // Take a batch
+        const batch = queue.splice(0, MAX_CONCURRENT_REQUESTS);
+        
+        // Process batch concurrently
+        const promises = batch.map(async (unit) => {
+          try {
+            // Check cache first
+            const cached = unitTaxCache.get(unit.unitBbl);
+            if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+              if (!signal.aborted) {
                 setUnitTaxes(prev => {
                   const next = new Map(prev);
                   next.set(unit.unitBbl, {
@@ -190,70 +241,70 @@ export function useCondoUnitTaxes(): UseCondoUnitTaxesResult {
                   });
                   return next;
                 });
-                return;
               }
-
-              const taxData = await fetchSingleUnit(unit.unitBbl, unit.unitLabel, signal);
-              
-              if (!signal.aborted && taxData) {
-                setUnitTaxes(prev => {
-                  const next = new Map(prev);
-                  next.set(unit.unitBbl, {
-                    unitBbl: unit.unitBbl,
-                    unitLabel: unit.unitLabel,
-                    loading: false,
-                    error: null,
-                    data: taxData,
-                  });
-                  return next;
-                });
-              }
-            } catch (err) {
-              if (!signal.aborted) {
-                setUnitTaxes(prev => {
-                  const next = new Map(prev);
-                  next.set(unit.unitBbl, {
-                    unitBbl: unit.unitBbl,
-                    unitLabel: unit.unitLabel,
-                    loading: false,
-                    error: err instanceof Error ? err.message : 'Failed to fetch tax data',
-                    data: null,
-                  });
-                  return next;
-                });
-              }
+              return;
             }
-          })();
 
-          inFlight.push(promise);
-        }
+            const taxData = await fetchSingleUnit(unit.unitBbl, signal);
+            
+            if (!signal.aborted && taxData) {
+              setUnitTaxes(prev => {
+                const next = new Map(prev);
+                next.set(unit.unitBbl, {
+                  unitBbl: unit.unitBbl,
+                  unitLabel: unit.unitLabel,
+                  loading: false,
+                  error: null,
+                  data: taxData,
+                });
+                return next;
+              });
+            }
+          } catch (err) {
+            if (!signal.aborted) {
+              setUnitTaxes(prev => {
+                const next = new Map(prev);
+                next.set(unit.unitBbl, {
+                  unitBbl: unit.unitBbl,
+                  unitLabel: unit.unitLabel,
+                  loading: false,
+                  error: err instanceof Error ? err.message : 'Failed to fetch tax data',
+                  data: null,
+                });
+                return next;
+              });
+            }
+          } finally {
+            inFlightBblsRef.current.delete(unit.unitBbl);
+          }
+        });
 
-        // Wait for at least one to complete
-        if (inFlight.length > 0) {
-          await Promise.race(inFlight);
-          // Remove completed promises
-          const results = await Promise.allSettled(inFlight);
-          inFlight.length = 0;
-          
-          // Only add back ones that aren't done
-          // (This is simplified - in practice all in inFlight are done after Promise.allSettled)
+        // Wait for batch to complete
+        await Promise.allSettled(promises);
+        
+        // Yield to main thread between batches to prevent UI freeze
+        if (queue.length > 0 && !signal.aborted) {
+          await new Promise(resolve => setTimeout(resolve, YIELD_INTERVAL_MS));
         }
       }
     };
 
-    try {
-      await processQueue();
-    } finally {
+    // Run async process
+    processQueue().finally(() => {
       if (!signal.aborted) {
         setBatchLoading(false);
       }
-    }
+    });
   }, [fetchSingleUnit]);
 
   const reset = useCallback(() => {
+    if (DEBUG_MODE) console.log('[useCondoUnitTaxes] Resetting state');
+    
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
     }
+    abortControllerRef.current = new AbortController();
+    inFlightBblsRef.current.clear();
     setUnitTaxes(new Map());
     setBatchLoading(false);
   }, []);
@@ -264,10 +315,11 @@ export function useCondoUnitTaxes(): UseCondoUnitTaxesResult {
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
       }
+      inFlightBblsRef.current.clear();
     };
   }, []);
 
-  // Compute summary stats
+  // Compute summary stats - derived from current state only, no refs
   const loadedCount = Array.from(unitTaxes.values()).filter(u => u.data !== null && !u.loading).length;
   const errorCount = Array.from(unitTaxes.values()).filter(u => u.error !== null).length;
   const arrearsCount = Array.from(unitTaxes.values()).filter(u => 
@@ -291,5 +343,3 @@ export function useCondoUnitTaxes(): UseCondoUnitTaxesResult {
     unpaidCount,
   };
 }
-
-export { INITIAL_BATCH_SIZE };
