@@ -5,9 +5,14 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-// NYC Open Data PLUTO dataset for assessment data
+// NYC Open Data datasets
 const PLUTO_DATASET_ID = '64uk-42ks';
 const PLUTO_BASE_URL = `https://data.cityofnewyork.us/resource/${PLUTO_DATASET_ID}.json`;
+
+// DOF Assessment Roll dataset - primary source with billable assessed values
+// https://data.cityofnewyork.us/dataset/Property-Valuation-and-Assessment-Data/yjxr-fw8i
+const DOF_ASSESSMENT_DATASET_ID = 'yjxr-fw8i';
+const DOF_ASSESSMENT_BASE_URL = `https://data.cityofnewyork.us/resource/${DOF_ASSESSMENT_DATASET_ID}.json`;
 
 // NYC Tax Rates by Tax Class (FY 2024-25)
 // Source: https://www.nyc.gov/site/finance/property/property-tax-rates.page
@@ -21,53 +26,45 @@ const NYC_TAX_RATES: Record<string, number> = {
   '4': 0.10362,   // Class 4: Commercial property
 };
 
+// Basis types for tracking data source
+type TaxBasis = 'dof_assessment' | 'pluto_estimate' | 'unavailable';
+type TaxConfidence = 'high' | 'estimated' | 'none';
+type ArrearsStatus = 'none_detected' | 'unavailable';
+
 // Quarter due dates - NYC property tax is billed quarterly
-// Q1 = July 1 (FY start), Q2 = October 1, Q3 = January 1, Q4 = April 1
-function getCurrentQuarter(): { quarter: number; fiscalYear: number; dueDate: string; billingPeriod: string } {
+// Q1: Jan 1, Q2: Apr 1, Q3: Jul 1, Q4: Oct 1
+function getNextQuarterDueDate(): { quarter: number; dueDate: string; dueDateFormatted: string } {
   const now = new Date();
   const month = now.getMonth(); // 0-based
   const year = now.getFullYear();
   
-  // NYC fiscal year starts July 1
-  // Q1: Jul 1 - Sep 30 (due Jul 1)
-  // Q2: Oct 1 - Dec 31 (due Oct 1)
-  // Q3: Jan 1 - Mar 31 (due Jan 1)
-  // Q4: Apr 1 - Jun 30 (due Apr 1)
+  // Find the next upcoming due date
+  const quarters = [
+    { month: 0, day: 1, quarter: 1 },   // Jan 1
+    { month: 3, day: 1, quarter: 2 },   // Apr 1
+    { month: 6, day: 1, quarter: 3 },   // Jul 1
+    { month: 9, day: 1, quarter: 4 },   // Oct 1
+  ];
   
-  let quarter: number;
-  let fiscalYear: number;
-  let dueDate: string;
-  
-  if (month >= 6 && month <= 8) { // Jul-Sep
-    quarter = 1;
-    fiscalYear = year + 1; // FY starts July
-    dueDate = `${year}-07-01`;
-  } else if (month >= 9 && month <= 11) { // Oct-Dec
-    quarter = 2;
-    fiscalYear = year + 1;
-    dueDate = `${year}-10-01`;
-  } else if (month >= 0 && month <= 2) { // Jan-Mar
-    quarter = 3;
-    fiscalYear = year;
-    dueDate = `${year}-01-01`;
-  } else { // Apr-Jun
-    quarter = 4;
-    fiscalYear = year;
-    dueDate = `${year}-04-01`;
+  for (const q of quarters) {
+    const dueDate = new Date(year, q.month, q.day);
+    if (dueDate > now) {
+      const formatted = dueDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+      return {
+        quarter: q.quarter,
+        dueDate: `${year}-${String(q.month + 1).padStart(2, '0')}-01`,
+        dueDateFormatted: formatted,
+      };
+    }
   }
   
+  // If past Oct 1, next due date is Jan 1 of next year
+  const nextYear = year + 1;
   return {
-    quarter,
-    fiscalYear,
-    dueDate,
-    billingPeriod: `Q${quarter} FY${fiscalYear}`,
+    quarter: 1,
+    dueDate: `${nextYear}-01-01`,
+    dueDateFormatted: `January 1, ${nextYear}`,
   };
-}
-
-// Format due date as user-friendly string
-function formatDueDate(dueDate: string): string {
-  const date = new Date(dueDate);
-  return date.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
 }
 
 // In-memory cache
@@ -90,19 +87,6 @@ function normalizeBbl(bbl: string): string {
   }
   return cleaned.padStart(10, '0');
 }
-
-// PLUTO field candidates (schema may vary)
-const PLUTO_FIELDS = {
-  bbl: ['bbl'],
-  taxClass: ['taxclass', 'tax_class', 'tc'],
-  assessTotal: ['assesstot', 'assess_tot', 'assessedtotal', 'assessed_total'],
-  assessLand: ['assessland', 'assess_land', 'assessedland'],
-  exemptTotal: ['exempttot', 'exempt_tot', 'exemptedtotal'],
-  address: ['address', 'addr'],
-  ownerName: ['ownername', 'owner_name'],
-  buildingClass: ['bldgclass', 'building_class', 'buildingclass'],
-  landUse: ['landuse', 'land_use'],
-};
 
 // Get first matching field value from a row
 function getFieldValue(row: Record<string, unknown>, candidates: string[]): string | number | null {
@@ -128,7 +112,6 @@ function getTaxRate(taxClass: string | null): { rate: number | null; rateDescrip
     return { rate: null, rateDescription: 'Unknown tax class' };
   }
   
-  // Normalize tax class - can be "1", "2A", "2B", etc.
   const normalizedClass = taxClass.toUpperCase().trim();
   
   // Try exact match first
@@ -151,15 +134,18 @@ function getTaxRate(taxClass: string | null): { rate: number | null; rateDescrip
   return { rate: null, rateDescription: `Unknown tax class: ${taxClass}` };
 }
 
-type ArrearsStatus = 'none_detected' | 'possible' | 'unknown';
-
 interface TaxResult {
   // Primary outputs
   quarterly_bill: number | null;
   annual_tax: number | null;
-  billing_period: string;
+  billing_cycle: string;
   due_date: string;
   due_date_formatted: string;
+  
+  // Data source tracking
+  basis: TaxBasis;
+  confidence: TaxConfidence;
+  basis_explanation: string;
   
   // Assessment data used
   tax_class: string | null;
@@ -167,10 +153,10 @@ interface TaxResult {
   tax_rate_description: string;
   assessed_value: number | null;
   exempt_value: number | null;
-  taxable_value: number | null;
+  taxable_billable_av: number | null;
   
   // Arrears (conservative)
-  arrears: number;
+  arrears: number | null;
   arrears_status: ArrearsStatus;
   arrears_note: string;
   
@@ -186,30 +172,79 @@ interface TaxResult {
   
   // Debug info (only when debug=true)
   debug?: {
-    pluto_request_url: string;
-    raw_row: Record<string, unknown> | null;
-    raw_row_keys: string[];
+    step1_attempted: boolean;
+    step1_url: string | null;
+    step1_success: boolean;
+    step1_error: string | null;
+    step2_attempted: boolean;
+    step2_url: string | null;
+    step2_success: boolean;
+    step2_error: string | null;
+    raw_dof_row: Record<string, unknown> | null;
+    raw_pluto_row: Record<string, unknown> | null;
+    dof_row_keys: string[];
+    pluto_row_keys: string[];
     calculation_steps: string[];
   };
 }
 
-// Fetch assessment data from PLUTO
-async function fetchAssessmentData(
-  bbl: string,
-  appToken: string
-): Promise<{ row: Record<string, unknown> | null; url: string; error?: string }> {
+// DOF Assessment Roll field candidates
+const DOF_FIELDS = {
+  bbl: ['bbl', 'parid', 'boro_block_lot'],
+  taxClass: ['tc', 'tax_class', 'taxclass', 'cur_tc', 'tntc'],
+  billableAV: ['curavttxbt', 'cur_av_tot_txbl', 'billable_av', 'taxable_av', 'cav_tot_txbl'],
+  assessedTotal: ['curavttot', 'cur_av_tot', 'assessed_total', 'assessed_value'],
+  exemptTotal: ['curexttot', 'cur_ex_tot', 'exempt_total', 'exempttot'],
+  annualTax: ['curtxbtot', 'cur_txb_tot', 'annual_tax', 'tax_amount'],
+  address: ['staddr', 'address', 'addr', 'street_address'],
+  ownerName: ['owner', 'ownername', 'owner_name'],
+  buildingClass: ['bldg_cl', 'bldgclass', 'building_class'],
+};
+
+// PLUTO field candidates  
+const PLUTO_FIELDS = {
+  bbl: ['bbl'],
+  taxClass: ['taxclass', 'tax_class', 'tc'],
+  assessTotal: ['assesstot', 'assess_tot', 'assessedtotal', 'assessed_total'],
+  assessLand: ['assessland', 'assess_land', 'assessedland'],
+  exemptTotal: ['exempttot', 'exempt_tot', 'exemptedtotal'],
+  address: ['address', 'addr'],
+  ownerName: ['ownername', 'owner_name'],
+  buildingClass: ['bldgclass', 'building_class', 'buildingclass'],
+  landUse: ['landuse', 'land_use'],
+};
+
+// ============ STEP 1: DOF Assessment Roll ============
+
+interface Step1Result {
+  success: boolean;
+  quarterlyBill: number | null;
+  annualTax: number | null;
+  taxClass: string | null;
+  taxRate: number | null;
+  taxRateDescription: string;
+  billableAV: number | null;
+  assessedValue: number | null;
+  exemptValue: number | null;
+  address: string | null;
+  ownerName: string | null;
+  buildingClass: string | null;
+  url: string;
+  error: string | null;
+  row: Record<string, unknown> | null;
+  steps: string[];
+}
+
+async function tryStep1DofAssessment(bbl: string, appToken: string): Promise<Step1Result> {
+  const steps: string[] = [];
+  steps.push('Step 1: Attempting DOF Assessment Roll lookup...');
+  
   // Try different BBL formats
-  const candidates = [
-    bbl,
-    bbl.padStart(10, '0'),
-    // Sometimes PLUTO uses BBL with leading zeros stripped
-    bbl.replace(/^0+/, ''),
-  ];
+  const candidates = [bbl, bbl.replace(/^0+/, '')];
   
   for (const candidateBbl of [...new Set(candidates)]) {
-    const url = `${PLUTO_BASE_URL}?bbl=${candidateBbl}&$limit=1`;
-    
-    console.log(`[property-taxes] Fetching PLUTO: ${url}`);
+    const url = `${DOF_ASSESSMENT_BASE_URL}?bbl=${candidateBbl}&$limit=1`;
+    steps.push(`Trying DOF: bbl=${candidateBbl}`);
     
     const headers: Record<string, string> = { 'Accept': 'application/json' };
     if (appToken) headers['X-App-Token'] = appToken;
@@ -218,30 +253,150 @@ async function fetchAssessmentData(
       const response = await fetch(url, { headers });
       
       if (!response.ok) {
-        console.error(`[property-taxes] PLUTO API error: ${response.status}`);
+        steps.push(`DOF API error: ${response.status}`);
         continue;
       }
       
       const data = await response.json();
       
-      if (Array.isArray(data) && data.length > 0) {
-        console.log(`[property-taxes] Found PLUTO row for BBL ${candidateBbl}`);
-        return { row: data[0], url };
+      if (!Array.isArray(data) || data.length === 0) {
+        steps.push('DOF returned no rows');
+        continue;
       }
+      
+      const row = data[0] as Record<string, unknown>;
+      steps.push(`DOF returned row with keys: ${Object.keys(row).slice(0, 10).join(', ')}...`);
+      
+      // Check if DOF provides annual_tax directly
+      const annualTaxRaw = getFieldValue(row, DOF_FIELDS.annualTax);
+      const annualTaxDirect = parseNumericValue(annualTaxRaw);
+      
+      if (annualTaxDirect !== null && annualTaxDirect > 0) {
+        // DOF provides annual tax directly - use it!
+        const quarterlyBill = Math.round(annualTaxDirect / 4 * 100) / 100;
+        steps.push(`DOF provided annual_tax directly: $${annualTaxDirect.toLocaleString()}`);
+        steps.push(`Quarterly Bill: $${annualTaxDirect.toLocaleString()} ÷ 4 = $${quarterlyBill.toLocaleString()}`);
+        
+        const taxClassRaw = getFieldValue(row, DOF_FIELDS.taxClass);
+        const taxClass = taxClassRaw ? String(taxClassRaw) : null;
+        const { rate, rateDescription } = getTaxRate(taxClass);
+        
+        const billableAVRaw = getFieldValue(row, DOF_FIELDS.billableAV);
+        const billableAV = parseNumericValue(billableAVRaw);
+        
+        const assessedRaw = getFieldValue(row, DOF_FIELDS.assessedTotal);
+        const assessedValue = parseNumericValue(assessedRaw);
+        
+        const exemptRaw = getFieldValue(row, DOF_FIELDS.exemptTotal);
+        const exemptValue = parseNumericValue(exemptRaw) || 0;
+        
+        const addressRaw = getFieldValue(row, DOF_FIELDS.address);
+        const ownerRaw = getFieldValue(row, DOF_FIELDS.ownerName);
+        const bldgClassRaw = getFieldValue(row, DOF_FIELDS.buildingClass);
+        
+        return {
+          success: true,
+          quarterlyBill,
+          annualTax: annualTaxDirect,
+          taxClass,
+          taxRate: rate,
+          taxRateDescription: rateDescription,
+          billableAV,
+          assessedValue,
+          exemptValue,
+          address: addressRaw ? String(addressRaw) : null,
+          ownerName: ownerRaw ? String(ownerRaw) : null,
+          buildingClass: bldgClassRaw ? String(bldgClassRaw) : null,
+          url,
+          error: null,
+          row,
+          steps,
+        };
+      }
+      
+      // DOF doesn't have annual_tax, try billable AV + tax class
+      const billableAVRaw = getFieldValue(row, DOF_FIELDS.billableAV);
+      const billableAV = parseNumericValue(billableAVRaw);
+      
+      const taxClassRaw = getFieldValue(row, DOF_FIELDS.taxClass);
+      const taxClass = taxClassRaw ? String(taxClassRaw) : null;
+      
+      if (billableAV !== null && billableAV > 0 && taxClass) {
+        const { rate, rateDescription } = getTaxRate(taxClass);
+        
+        if (rate !== null) {
+          const annualTax = Math.round(billableAV * rate * 100) / 100;
+          const quarterlyBill = Math.round(annualTax / 4 * 100) / 100;
+          
+          steps.push(`DOF Billable AV: $${billableAV.toLocaleString()}`);
+          steps.push(`Tax Class: ${taxClass}, Rate: ${(rate * 100).toFixed(3)}%`);
+          steps.push(`Annual Tax: $${billableAV.toLocaleString()} × ${(rate * 100).toFixed(3)}% = $${annualTax.toLocaleString()}`);
+          steps.push(`Quarterly Bill: $${annualTax.toLocaleString()} ÷ 4 = $${quarterlyBill.toLocaleString()}`);
+          
+          const assessedRaw = getFieldValue(row, DOF_FIELDS.assessedTotal);
+          const assessedValue = parseNumericValue(assessedRaw);
+          
+          const exemptRaw = getFieldValue(row, DOF_FIELDS.exemptTotal);
+          const exemptValue = parseNumericValue(exemptRaw) || 0;
+          
+          const addressRaw = getFieldValue(row, DOF_FIELDS.address);
+          const ownerRaw = getFieldValue(row, DOF_FIELDS.ownerName);
+          const bldgClassRaw = getFieldValue(row, DOF_FIELDS.buildingClass);
+          
+          return {
+            success: true,
+            quarterlyBill,
+            annualTax,
+            taxClass,
+            taxRate: rate,
+            taxRateDescription: rateDescription,
+            billableAV,
+            assessedValue,
+            exemptValue,
+            address: addressRaw ? String(addressRaw) : null,
+            ownerName: ownerRaw ? String(ownerRaw) : null,
+            buildingClass: bldgClassRaw ? String(bldgClassRaw) : null,
+            url,
+            error: null,
+            row,
+            steps,
+          };
+        }
+      }
+      
+      steps.push('DOF row found but missing billable AV or tax class');
+      
     } catch (error) {
-      console.error(`[property-taxes] PLUTO fetch error:`, error);
-      continue;
+      steps.push(`DOF fetch error: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
   
-  return { row: null, url: `${PLUTO_BASE_URL}?bbl=${bbl}`, error: 'No PLUTO data found' };
+  steps.push('Step 1 failed: No usable DOF data found');
+  
+  return {
+    success: false,
+    quarterlyBill: null,
+    annualTax: null,
+    taxClass: null,
+    taxRate: null,
+    taxRateDescription: 'No data',
+    billableAV: null,
+    assessedValue: null,
+    exemptValue: null,
+    address: null,
+    ownerName: null,
+    buildingClass: null,
+    url: `${DOF_ASSESSMENT_BASE_URL}?bbl=${bbl}`,
+    error: 'No usable DOF assessment data',
+    row: null,
+    steps,
+  };
 }
 
-// Calculate tax from assessment data
-function calculateTax(
-  row: Record<string, unknown> | null,
-  includeDebug: boolean
-): { 
+// ============ STEP 2: PLUTO Fallback ============
+
+interface Step2Result {
+  success: boolean;
   quarterlyBill: number | null;
   annualTax: number | null;
   taxClass: string | null;
@@ -253,85 +408,121 @@ function calculateTax(
   address: string | null;
   ownerName: string | null;
   buildingClass: string | null;
-  calculationSteps: string[];
-} {
+  url: string;
+  error: string | null;
+  row: Record<string, unknown> | null;
+  steps: string[];
+}
+
+async function tryStep2PlutoFallback(bbl: string, appToken: string): Promise<Step2Result> {
   const steps: string[] = [];
+  steps.push('Step 2: Attempting PLUTO fallback...');
   
-  if (!row) {
-    steps.push('No PLUTO row available');
-    return {
-      quarterlyBill: null,
-      annualTax: null,
-      taxClass: null,
-      taxRate: null,
-      taxRateDescription: 'No data',
-      assessedValue: null,
-      exemptValue: null,
-      taxableValue: null,
-      address: null,
-      ownerName: null,
-      buildingClass: null,
-      calculationSteps: steps,
-    };
+  const candidates = [bbl, bbl.replace(/^0+/, '')];
+  
+  for (const candidateBbl of [...new Set(candidates)]) {
+    const url = `${PLUTO_BASE_URL}?bbl=${candidateBbl}&$limit=1`;
+    steps.push(`Trying PLUTO: bbl=${candidateBbl}`);
+    
+    const headers: Record<string, string> = { 'Accept': 'application/json' };
+    if (appToken) headers['X-App-Token'] = appToken;
+    
+    try {
+      const response = await fetch(url, { headers });
+      
+      if (!response.ok) {
+        steps.push(`PLUTO API error: ${response.status}`);
+        continue;
+      }
+      
+      const data = await response.json();
+      
+      if (!Array.isArray(data) || data.length === 0) {
+        steps.push('PLUTO returned no rows');
+        continue;
+      }
+      
+      const row = data[0] as Record<string, unknown>;
+      steps.push(`PLUTO returned row with keys: ${Object.keys(row).slice(0, 10).join(', ')}...`);
+      
+      // Extract values
+      const taxClassRaw = getFieldValue(row, PLUTO_FIELDS.taxClass);
+      const taxClass = taxClassRaw ? String(taxClassRaw) : null;
+      steps.push(`Tax Class: ${taxClass || 'not found'}`);
+      
+      const assessTotalRaw = getFieldValue(row, PLUTO_FIELDS.assessTotal);
+      const assessedValue = parseNumericValue(assessTotalRaw);
+      steps.push(`Assessed Total Value: ${assessedValue !== null ? `$${assessedValue.toLocaleString()}` : 'not found'}`);
+      
+      const exemptTotalRaw = getFieldValue(row, PLUTO_FIELDS.exemptTotal);
+      const exemptValue = parseNumericValue(exemptTotalRaw) || 0;
+      steps.push(`Exempt Total Value: $${exemptValue.toLocaleString()}`);
+      
+      // Calculate taxable value (PLUTO doesn't have billable AV, so this is an estimate)
+      const taxableValue = assessedValue !== null ? Math.max(0, assessedValue - exemptValue) : null;
+      steps.push(`Taxable AV (estimated): ${taxableValue !== null ? `$${taxableValue.toLocaleString()}` : 'cannot calculate'}`);
+      
+      // Get tax rate
+      const { rate, rateDescription } = getTaxRate(taxClass);
+      steps.push(`Tax Rate: ${rate !== null ? `${(rate * 100).toFixed(3)}%` : 'unknown'}`);
+      
+      // Calculate tax
+      if (taxableValue !== null && rate !== null) {
+        const annualTax = Math.round(taxableValue * rate * 100) / 100;
+        const quarterlyBill = Math.round(annualTax / 4 * 100) / 100;
+        steps.push(`Annual Tax (estimated): $${taxableValue.toLocaleString()} × ${(rate * 100).toFixed(3)}% = $${annualTax.toLocaleString()}`);
+        steps.push(`Quarterly Bill (estimated): $${annualTax.toLocaleString()} ÷ 4 = $${quarterlyBill.toLocaleString()}`);
+        
+        const addressRaw = getFieldValue(row, PLUTO_FIELDS.address);
+        const ownerRaw = getFieldValue(row, PLUTO_FIELDS.ownerName);
+        const bldgClassRaw = getFieldValue(row, PLUTO_FIELDS.buildingClass);
+        
+        return {
+          success: true,
+          quarterlyBill,
+          annualTax,
+          taxClass,
+          taxRate: rate,
+          taxRateDescription: rateDescription,
+          assessedValue,
+          exemptValue,
+          taxableValue,
+          address: addressRaw ? String(addressRaw) : null,
+          ownerName: ownerRaw ? String(ownerRaw) : null,
+          buildingClass: bldgClassRaw ? String(bldgClassRaw) : null,
+          url,
+          error: null,
+          row,
+          steps,
+        };
+      }
+      
+      steps.push('PLUTO row found but cannot calculate tax (missing taxable value or rate)');
+      
+    } catch (error) {
+      steps.push(`PLUTO fetch error: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
   
-  // Extract values
-  const taxClassRaw = getFieldValue(row, PLUTO_FIELDS.taxClass);
-  const taxClass = taxClassRaw ? String(taxClassRaw) : null;
-  steps.push(`Tax Class: ${taxClass || 'not found'}`);
-  
-  const assessTotalRaw = getFieldValue(row, PLUTO_FIELDS.assessTotal);
-  const assessedValue = parseNumericValue(assessTotalRaw);
-  steps.push(`Assessed Total Value: ${assessedValue !== null ? `$${assessedValue.toLocaleString()}` : 'not found'}`);
-  
-  const exemptTotalRaw = getFieldValue(row, PLUTO_FIELDS.exemptTotal);
-  const exemptValue = parseNumericValue(exemptTotalRaw) || 0;
-  steps.push(`Exempt Total Value: $${exemptValue.toLocaleString()}`);
-  
-  // Calculate taxable value
-  const taxableValue = assessedValue !== null ? Math.max(0, assessedValue - exemptValue) : null;
-  steps.push(`Taxable Billable AV: ${taxableValue !== null ? `$${taxableValue.toLocaleString()}` : 'cannot calculate'}`);
-  
-  // Get tax rate
-  const { rate, rateDescription } = getTaxRate(taxClass);
-  steps.push(`Tax Rate: ${rate !== null ? `${(rate * 100).toFixed(3)}%` : 'unknown'}`);
-  
-  // Calculate annual and quarterly tax
-  let annualTax: number | null = null;
-  let quarterlyBill: number | null = null;
-  
-  if (taxableValue !== null && rate !== null) {
-    annualTax = Math.round(taxableValue * rate * 100) / 100;
-    quarterlyBill = Math.round(annualTax / 4 * 100) / 100;
-    steps.push(`Annual Tax: $${taxableValue.toLocaleString()} × ${(rate * 100).toFixed(3)}% = $${annualTax.toLocaleString()}`);
-    steps.push(`Quarterly Bill: $${annualTax.toLocaleString()} ÷ 4 = $${quarterlyBill.toLocaleString()}`);
-  } else {
-    steps.push('Cannot calculate tax: missing taxable value or tax rate');
-  }
-  
-  // Extract additional info
-  const addressRaw = getFieldValue(row, PLUTO_FIELDS.address);
-  const address = addressRaw ? String(addressRaw) : null;
-  
-  const ownerNameRaw = getFieldValue(row, PLUTO_FIELDS.ownerName);
-  const ownerName = ownerNameRaw ? String(ownerNameRaw) : null;
-  
-  const buildingClassRaw = getFieldValue(row, PLUTO_FIELDS.buildingClass);
-  const buildingClass = buildingClassRaw ? String(buildingClassRaw) : null;
+  steps.push('Step 2 failed: No usable PLUTO data found');
   
   return {
-    quarterlyBill,
-    annualTax,
-    taxClass,
-    taxRate: rate,
-    taxRateDescription: rateDescription,
-    assessedValue,
-    exemptValue,
-    taxableValue,
-    address,
-    ownerName,
-    buildingClass,
-    calculationSteps: steps,
+    success: false,
+    quarterlyBill: null,
+    annualTax: null,
+    taxClass: null,
+    taxRate: null,
+    taxRateDescription: 'No data',
+    assessedValue: null,
+    exemptValue: null,
+    taxableValue: null,
+    address: null,
+    ownerName: null,
+    buildingClass: null,
+    url: `${PLUTO_BASE_URL}?bbl=${bbl}`,
+    error: 'No usable PLUTO data',
+    row: null,
+    steps,
   };
 }
 
@@ -349,7 +540,7 @@ serve(async (req) => {
     
     // Use view_bbl if provided, otherwise bbl
     const viewBbl = view_bbl || bbl;
-    // For condo units, building_bbl is the parent; assessment is often at building level
+    // For condo units, try building_bbl for assessment lookup
     const primaryBbl = building_bbl || viewBbl;
     
     console.log(`[property-taxes] Request - view_bbl: ${viewBbl}, building_bbl: ${building_bbl || 'none'}, primary: ${primaryBbl}, debug: ${includeDebug}`);
@@ -365,7 +556,7 @@ serve(async (req) => {
     const normalizedBbl = normalizeBbl(primaryBbl);
     
     // Check cache (skip if debug mode)
-    const cacheKey = `v3:${normalizedBbl}`;
+    const cacheKey = `v4:${normalizedBbl}`;
     if (!includeDebug) {
       const cached = cache.get(cacheKey);
       if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
@@ -381,51 +572,138 @@ serve(async (req) => {
       }
     }
     
-    // Fetch assessment data from PLUTO
-    const { row, url: plutoUrl, error: fetchError } = await fetchAssessmentData(normalizedBbl, appToken);
+    // Get next due date
+    const { dueDate, dueDateFormatted } = getNextQuarterDueDate();
     
-    // Calculate tax
-    const calculation = calculateTax(row, includeDebug);
+    // ============ 3-STEP DATA STRATEGY ============
     
-    // Get current quarter info
-    const { billingPeriod, dueDate, fiscalYear } = getCurrentQuarter();
+    let basis: TaxBasis = 'unavailable';
+    let confidence: TaxConfidence = 'none';
+    let basisExplanation = 'Assessment/tax data not available for this parcel from public datasets.';
+    let quarterlyBill: number | null = null;
+    let annualTax: number | null = null;
+    let taxClass: string | null = null;
+    let taxRate: number | null = null;
+    let taxRateDescription = 'No data';
+    let billableAV: number | null = null;
+    let assessedValue: number | null = null;
+    let exemptValue: number | null = null;
+    let taxableValue: number | null = null;
+    let address: string | null = null;
+    let ownerName: string | null = null;
+    let buildingClass: string | null = null;
+    let dataSource = 'None';
+    let noDataFound = true;
+    
+    const allSteps: string[] = [];
+    let step1Result: Step1Result | null = null;
+    let step2Result: Step2Result | null = null;
+    
+    // STEP 1: Try DOF Assessment Roll first
+    step1Result = await tryStep1DofAssessment(normalizedBbl, appToken);
+    allSteps.push(...step1Result.steps);
+    
+    if (step1Result.success) {
+      // Use DOF data - highest confidence
+      basis = 'dof_assessment';
+      confidence = 'high';
+      basisExplanation = 'Derived from NYC DOF Assessment Roll data.';
+      quarterlyBill = step1Result.quarterlyBill;
+      annualTax = step1Result.annualTax;
+      taxClass = step1Result.taxClass;
+      taxRate = step1Result.taxRate;
+      taxRateDescription = step1Result.taxRateDescription;
+      billableAV = step1Result.billableAV;
+      assessedValue = step1Result.assessedValue;
+      exemptValue = step1Result.exemptValue;
+      taxableValue = billableAV; // DOF billable AV is the taxable value
+      address = step1Result.address;
+      ownerName = step1Result.ownerName;
+      buildingClass = step1Result.buildingClass;
+      dataSource = `NYC Open Data DOF Assessment (${DOF_ASSESSMENT_DATASET_ID})`;
+      noDataFound = false;
+      allSteps.push('✓ Step 1 SUCCESS: Using DOF Assessment data');
+    } else {
+      // STEP 2: Fall back to PLUTO
+      allSteps.push('Step 1 failed, proceeding to Step 2...');
+      step2Result = await tryStep2PlutoFallback(normalizedBbl, appToken);
+      allSteps.push(...step2Result.steps);
+      
+      if (step2Result.success) {
+        // Use PLUTO data - estimated confidence
+        basis = 'pluto_estimate';
+        confidence = 'estimated';
+        basisExplanation = 'Estimate derived from PLUTO assessed value; may differ from official DOF bill.';
+        quarterlyBill = step2Result.quarterlyBill;
+        annualTax = step2Result.annualTax;
+        taxClass = step2Result.taxClass;
+        taxRate = step2Result.taxRate;
+        taxRateDescription = step2Result.taxRateDescription;
+        assessedValue = step2Result.assessedValue;
+        exemptValue = step2Result.exemptValue;
+        taxableValue = step2Result.taxableValue;
+        address = step2Result.address;
+        ownerName = step2Result.ownerName;
+        buildingClass = step2Result.buildingClass;
+        dataSource = `NYC Open Data PLUTO (${PLUTO_DATASET_ID})`;
+        noDataFound = false;
+        allSteps.push('✓ Step 2 SUCCESS: Using PLUTO estimate');
+      } else {
+        // STEP 3: Fail-safe - no data available
+        allSteps.push('Step 2 failed, entering fail-safe mode (Step 3)');
+        allSteps.push('✗ No assessment data available from any source');
+      }
+    }
     
     // Build result
     const result: TaxResult = {
-      quarterly_bill: calculation.quarterlyBill,
-      annual_tax: calculation.annualTax,
-      billing_period: billingPeriod,
+      quarterly_bill: quarterlyBill,
+      annual_tax: annualTax,
+      billing_cycle: 'Quarterly',
       due_date: dueDate,
-      due_date_formatted: formatDueDate(dueDate),
+      due_date_formatted: dueDateFormatted,
       
-      tax_class: calculation.taxClass,
-      tax_rate: calculation.taxRate,
-      tax_rate_description: calculation.taxRateDescription,
-      assessed_value: calculation.assessedValue,
-      exempt_value: calculation.exemptValue,
-      taxable_value: calculation.taxableValue,
+      basis,
+      confidence,
+      basis_explanation: basisExplanation,
       
-      // Conservative arrears - never claim arrears unless we can confirm
-      arrears: 0,
-      arrears_status: 'none_detected',
-      arrears_note: 'Based on available public records',
+      tax_class: taxClass,
+      tax_rate: taxRate,
+      tax_rate_description: taxRateDescription,
+      assessed_value: assessedValue,
+      exempt_value: exemptValue,
+      taxable_billable_av: taxableValue,
+      
+      // Arrears - always unavailable (we don't have reliable data)
+      arrears: null,
+      arrears_status: 'unavailable',
+      arrears_note: 'Arrears data not available from public records.',
       
       bbl_used: normalizedBbl,
-      address: calculation.address,
-      owner_name: calculation.ownerName,
-      building_class: calculation.buildingClass,
-      data_source: `NYC Open Data PLUTO (${PLUTO_DATASET_ID})`,
-      no_data_found: row === null,
+      address,
+      owner_name: ownerName,
+      building_class: buildingClass,
+      data_source: dataSource,
+      no_data_found: noDataFound,
       cache_status: 'MISS',
       cached_at: null,
     };
     
     if (includeDebug) {
       result.debug = {
-        pluto_request_url: plutoUrl,
-        raw_row: row,
-        raw_row_keys: row ? Object.keys(row).sort() : [],
-        calculation_steps: calculation.calculationSteps,
+        step1_attempted: true,
+        step1_url: step1Result?.url || null,
+        step1_success: step1Result?.success || false,
+        step1_error: step1Result?.error || null,
+        step2_attempted: step2Result !== null,
+        step2_url: step2Result?.url || null,
+        step2_success: step2Result?.success || false,
+        step2_error: step2Result?.error || null,
+        raw_dof_row: step1Result?.row || null,
+        raw_pluto_row: step2Result?.row || null,
+        dof_row_keys: step1Result?.row ? Object.keys(step1Result.row).sort() : [],
+        pluto_row_keys: step2Result?.row ? Object.keys(step2Result.row).sort() : [],
+        calculation_steps: allSteps,
       };
     }
     
@@ -433,7 +711,7 @@ serve(async (req) => {
     const now = Date.now();
     cache.set(cacheKey, { data: result, timestamp: now });
     
-    console.log(`[property-taxes] Result - quarterly: $${result.quarterly_bill}, annual: $${result.annual_tax}, class: ${result.tax_class}`);
+    console.log(`[property-taxes] Result - basis: ${result.basis}, quarterly: $${result.quarterly_bill}, annual: $${result.annual_tax}, class: ${result.tax_class}`);
     
     return new Response(
       JSON.stringify(result),

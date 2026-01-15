@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { ExternalLink, DollarSign, Copy, Check, Info, Building2, Home, ChevronDown, ChevronUp, RefreshCw, AlertCircle, HelpCircle, Bug, Calendar, Receipt } from 'lucide-react';
+import { ExternalLink, DollarSign, Copy, Check, Info, ChevronDown, ChevronUp, RefreshCw, AlertCircle, Bug, Calendar, Receipt, HelpCircle } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -7,7 +7,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
-import { usePropertyTaxes, type DebugInfo } from '@/hooks/usePropertyTaxes';
+import { usePropertyTaxes, type DebugInfo, type TaxBasis, type TaxConfidence } from '@/hooks/usePropertyTaxes';
 
 interface TaxesCardProps {
   viewBbl: string;
@@ -25,14 +25,6 @@ function parseBBL(bbl: string): { borough: string; block: string; lot: string } 
   };
 }
 
-const BOROUGH_NAMES: Record<string, string> = {
-  '1': 'Manhattan',
-  '2': 'Bronx',
-  '3': 'Brooklyn',
-  '4': 'Queens',
-  '5': 'Staten Island',
-};
-
 function formatCurrency(amount: number): string {
   return new Intl.NumberFormat('en-US', {
     style: 'currency',
@@ -47,6 +39,34 @@ function getDOFCityPayUrl(): string {
 
 function getDOFBillsUrl(): string {
   return 'https://www.nyc.gov/site/finance/property/property-tax-bills-and-payments.page';
+}
+
+// Get tooltip text based on basis
+function getBasisTooltip(basis: TaxBasis): string {
+  switch (basis) {
+    case 'dof_assessment':
+      return 'Derived from NYC DOF tax assessment inputs.';
+    case 'pluto_estimate':
+      return 'Estimate derived from assessed value; may differ from official DOF bill.';
+    case 'unavailable':
+      return 'Assessment/tax data not available for this parcel from public datasets.';
+    default:
+      return '';
+  }
+}
+
+// Get confidence badge variant
+function getConfidenceBadge(confidence: TaxConfidence, basis: TaxBasis): { label: string; variant: 'default' | 'secondary' | 'outline' } | null {
+  switch (confidence) {
+    case 'high':
+      return { label: 'DOF Assessment', variant: 'default' };
+    case 'estimated':
+      return { label: 'Estimated', variant: 'secondary' };
+    case 'none':
+      return null;
+    default:
+      return null;
+  }
 }
 
 export function TaxesCard({ viewBbl, buildingBbl, address, isUnitPage = false }: TaxesCardProps) {
@@ -65,9 +85,6 @@ export function TaxesCard({ viewBbl, buildingBbl, address, isUnitPage = false }:
       fetch(viewBbl, buildingBbl);
     }
   }, [viewBbl, buildingBbl, fetch]);
-  
-  const parsedBbl = parseBBL(viewBbl);
-  const boroughName = parsedBbl ? BOROUGH_NAMES[parsedBbl.borough] : '';
   
   const handleCopy = async (value: string) => {
     try {
@@ -89,12 +106,16 @@ export function TaxesCard({ viewBbl, buildingBbl, address, isUnitPage = false }:
   const bblUsed = data?.bbl_used || viewBbl;
   const quarterlyBill = data?.quarterly_bill;
   const annualTax = data?.annual_tax;
-  const billingPeriod = data?.billing_period;
+  const billingCycle = data?.billing_cycle;
   const dueDateFormatted = data?.due_date_formatted;
   const taxClass = data?.tax_class;
-  const taxRateDescription = data?.tax_rate_description;
+  const basis = data?.basis;
+  const confidence = data?.confidence;
+  const basisExplanation = data?.basis_explanation;
   const arrearsStatus = data?.arrears_status;
   const arrearsNote = data?.arrears_note;
+  
+  const confidenceBadge = confidence && basis ? getConfidenceBadge(confidence, basis) : null;
 
   return (
     <Card>
@@ -117,8 +138,8 @@ export function TaxesCard({ viewBbl, buildingBbl, address, isUnitPage = false }:
                 </TooltipTrigger>
                 <TooltipContent className="max-w-xs">
                   <p className="text-sm">
-                    Quarterly tax bill calculated from NYC assessment data. 
-                    You may not receive a bill if taxes are paid through a bank or mortgage servicing company.
+                    {basis ? getBasisTooltip(basis) : 'NYC property tax information.'}
+                    {' '}You may not receive a bill if taxes are paid through a bank or mortgage servicing company.
                   </p>
                 </TooltipContent>
               </Tooltip>
@@ -159,22 +180,37 @@ export function TaxesCard({ viewBbl, buildingBbl, address, isUnitPage = false }:
             <div className="rounded-lg border border-border bg-muted/30 p-4">
               <div className="flex items-start justify-between">
                 <div className="space-y-1">
-                  <p className="text-xs text-muted-foreground uppercase tracking-wide">
-                    Latest Quarterly Property Tax Bill
-                  </p>
+                  <div className="flex items-center gap-2">
+                    <p className="text-xs text-muted-foreground uppercase tracking-wide">
+                      Latest Quarterly Property Tax Bill
+                    </p>
+                    {/* Info tooltip for basis */}
+                    {basis && basis !== 'unavailable' && (
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <HelpCircle className="h-3 w-3 text-muted-foreground cursor-help" />
+                          </TooltipTrigger>
+                          <TooltipContent className="max-w-xs">
+                            <p className="text-xs">{basisExplanation}</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    )}
+                  </div>
                   {quarterlyBill !== null ? (
                     <p className="text-2xl font-bold text-foreground">
                       {formatCurrency(quarterlyBill)}
                     </p>
                   ) : (
                     <p className="text-xl font-medium text-muted-foreground">
-                      Not available
+                      Unavailable
                     </p>
                   )}
                 </div>
-                {billingPeriod && (
-                  <Badge variant="secondary" className="text-xs">
-                    {billingPeriod}
+                {confidenceBadge && (
+                  <Badge variant={confidenceBadge.variant} className="text-xs">
+                    {confidenceBadge.label}
                   </Badge>
                 )}
               </div>
@@ -183,8 +219,15 @@ export function TaxesCard({ viewBbl, buildingBbl, address, isUnitPage = false }:
               {dueDateFormatted && quarterlyBill !== null && (
                 <div className="mt-3 flex items-center gap-2 text-sm text-muted-foreground">
                   <Calendar className="h-4 w-4" />
-                  <span>Due {dueDateFormatted}</span>
+                  <span>Due: {dueDateFormatted}</span>
                 </div>
+              )}
+              
+              {/* Unavailable reason */}
+              {basis === 'unavailable' && (
+                <p className="mt-2 text-xs text-muted-foreground">
+                  Assessment/tax data not available for this parcel from public datasets.
+                </p>
               )}
             </div>
             
@@ -195,11 +238,8 @@ export function TaxesCard({ viewBbl, buildingBbl, address, isUnitPage = false }:
                   <Receipt className="h-4 w-4" />
                   <span>Annual property tax: {formatCurrency(annualTax)}</span>
                 </div>
-                {taxClass && (
-                  <div className="flex items-center gap-2">
-                    <Building2 className="h-4 w-4" />
-                    <span>Billing cycle: Quarterly (NYC Tax Class {taxClass})</span>
-                  </div>
+                {taxClass && billingCycle && (
+                  <span className="ml-6">Billing cycle: {billingCycle} (NYC Tax Class {taxClass})</span>
                 )}
               </div>
             )}
@@ -207,24 +247,26 @@ export function TaxesCard({ viewBbl, buildingBbl, address, isUnitPage = false }:
             {/* Arrears Status */}
             <div className="flex items-center gap-2 text-sm">
               {arrearsStatus === 'none_detected' && (
-                <>
-                  <Badge variant="outline" className="bg-primary/10 text-primary border-primary/20">
-                    Arrears: None detected
-                  </Badge>
-                </>
-              )}
-              {arrearsStatus === 'possible' && (
-                <Badge variant="destructive">
-                  Arrears: Possible
+                <Badge variant="outline" className="bg-primary/10 text-primary border-primary/20">
+                  Arrears: None detected
                 </Badge>
               )}
-              {arrearsStatus === 'unknown' && (
-                <Badge variant="secondary">
-                  Arrears: Unknown
+              {arrearsStatus === 'unavailable' && (
+                <Badge variant="secondary" className="text-muted-foreground">
+                  Arrears: Unavailable
                 </Badge>
               )}
-              {arrearsNote && (
-                <span className="text-xs text-muted-foreground">{arrearsNote}</span>
+              {arrearsNote && arrearsStatus === 'unavailable' && (
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <HelpCircle className="h-3 w-3 text-muted-foreground cursor-help" />
+                    </TooltipTrigger>
+                    <TooltipContent className="max-w-xs">
+                      <p className="text-xs">{arrearsNote}</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
               )}
             </div>
             
@@ -249,7 +291,7 @@ export function TaxesCard({ viewBbl, buildingBbl, address, isUnitPage = false }:
             </div>
             
             {/* Assessment Details Collapsible */}
-            {data.assessed_value !== null && (
+            {data.taxable_billable_av !== null && (
               <Collapsible open={detailsOpen} onOpenChange={setDetailsOpen}>
                 <CollapsibleTrigger asChild>
                   <Button variant="ghost" size="sm" className="w-full justify-between h-8 px-2">
@@ -265,25 +307,37 @@ export function TaxesCard({ viewBbl, buildingBbl, address, isUnitPage = false }:
                 </CollapsibleTrigger>
                 <CollapsibleContent>
                   <div className="mt-2 rounded border border-border p-3 space-y-2 text-xs">
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Assessed Total Value:</span>
-                      <span className="font-mono">{data.assessed_value !== null ? formatCurrency(data.assessed_value) : '—'}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Exempt Value:</span>
-                      <span className="font-mono">{data.exempt_value !== null ? formatCurrency(data.exempt_value) : '—'}</span>
-                    </div>
+                    {data.assessed_value !== null && (
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Assessed Total Value:</span>
+                        <span className="font-mono">{formatCurrency(data.assessed_value)}</span>
+                      </div>
+                    )}
+                    {data.exempt_value !== null && data.exempt_value > 0 && (
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Exempt Value:</span>
+                        <span className="font-mono">{formatCurrency(data.exempt_value)}</span>
+                      </div>
+                    )}
                     <div className="flex justify-between border-t pt-2">
                       <span className="text-muted-foreground font-medium">Taxable Billable AV:</span>
-                      <span className="font-mono font-medium">{data.taxable_value !== null ? formatCurrency(data.taxable_value) : '—'}</span>
+                      <span className="font-mono font-medium">{formatCurrency(data.taxable_billable_av)}</span>
                     </div>
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Tax Rate:</span>
-                      <span className="font-mono">{data.tax_rate !== null ? `${(data.tax_rate * 100).toFixed(3)}%` : '—'}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Tax Class:</span>
-                      <span>{taxRateDescription || '—'}</span>
+                    {data.tax_rate !== null && (
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Tax Rate:</span>
+                        <span className="font-mono">{(data.tax_rate * 100).toFixed(3)}%</span>
+                      </div>
+                    )}
+                    {data.tax_rate_description && (
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Tax Class:</span>
+                        <span>{data.tax_rate_description}</span>
+                      </div>
+                    )}
+                    <div className="flex justify-between text-[10px] text-muted-foreground/70 pt-1">
+                      <span>Source:</span>
+                      <span>{data.data_source}</span>
                     </div>
                   </div>
                 </CollapsibleContent>
@@ -294,7 +348,7 @@ export function TaxesCard({ viewBbl, buildingBbl, address, isUnitPage = false }:
             {data.no_data_found && (
               <Alert className="py-2">
                 <AlertDescription className="text-xs text-muted-foreground">
-                  No NYC PLUTO assessment data found for this property. Tax calculation unavailable.
+                  No assessment data found for this property in public datasets.
                 </AlertDescription>
               </Alert>
             )}
@@ -305,7 +359,6 @@ export function TaxesCard({ viewBbl, buildingBbl, address, isUnitPage = false }:
                 <Badge variant="outline" className={`text-[10px] px-1.5 py-0 ${data.cache_status === 'HIT' ? 'bg-primary/10' : ''}`}>
                   Cache: {data.cache_status}
                 </Badge>
-                <span className="text-muted-foreground/70">Source: {data.data_source}</span>
               </div>
             )}
             
@@ -327,40 +380,85 @@ export function TaxesCard({ viewBbl, buildingBbl, address, isUnitPage = false }:
                 </CollapsibleTrigger>
                 <CollapsibleContent>
                   <div className="mt-2 space-y-3 p-3 rounded border border-amber-500/30 bg-amber-500/5 text-xs">
-                    {/* PLUTO URL */}
-                    <div>
-                      <p className="font-medium text-amber-700 dark:text-amber-400 mb-1">PLUTO Request URL:</p>
-                      <code className="block bg-muted p-2 rounded text-[10px] break-all">
-                        {data.debug.pluto_request_url || 'N/A'}
-                      </code>
+                    {/* Step Results */}
+                    <div className="space-y-2">
+                      <p className="font-medium text-amber-700 dark:text-amber-400">Data Strategy Steps:</p>
+                      <div className="bg-muted p-2 rounded space-y-1">
+                        <div className="flex items-center gap-2">
+                          <span className={data.debug.step1_success ? 'text-green-600' : 'text-red-500'}>
+                            {data.debug.step1_success ? '✓' : '✗'}
+                          </span>
+                          <span>Step 1 (DOF Assessment): {data.debug.step1_success ? 'Success' : 'Failed'}</span>
+                        </div>
+                        {data.debug.step1_url && (
+                          <code className="block text-[10px] break-all ml-5 text-muted-foreground">{data.debug.step1_url}</code>
+                        )}
+                        {data.debug.step2_attempted && (
+                          <>
+                            <div className="flex items-center gap-2">
+                              <span className={data.debug.step2_success ? 'text-green-600' : 'text-red-500'}>
+                                {data.debug.step2_success ? '✓' : '✗'}
+                              </span>
+                              <span>Step 2 (PLUTO Fallback): {data.debug.step2_success ? 'Success' : 'Failed'}</span>
+                            </div>
+                            {data.debug.step2_url && (
+                              <code className="block text-[10px] break-all ml-5 text-muted-foreground">{data.debug.step2_url}</code>
+                            )}
+                          </>
+                        )}
+                      </div>
                     </div>
                     
                     {/* Calculation Steps */}
                     <div>
                       <p className="font-medium text-amber-700 dark:text-amber-400 mb-1">Calculation Steps:</p>
-                      <div className="bg-muted p-2 rounded space-y-1">
+                      <div className="bg-muted p-2 rounded space-y-1 max-h-48 overflow-auto">
                         {data.debug.calculation_steps.map((step, idx) => (
                           <div key={idx} className="text-[10px] font-mono">{step}</div>
                         ))}
                       </div>
                     </div>
                     
-                    {/* Raw Row Keys */}
-                    <div>
-                      <p className="font-medium text-amber-700 dark:text-amber-400 mb-1">
-                        PLUTO Row Keys ({data.debug.raw_row_keys.length}):
-                      </p>
-                      <code className="block bg-muted p-2 rounded text-[10px] break-all">
-                        {data.debug.raw_row_keys.join(', ') || 'None'}
-                      </code>
-                    </div>
+                    {/* DOF Row Keys */}
+                    {data.debug.dof_row_keys.length > 0 && (
+                      <div>
+                        <p className="font-medium text-amber-700 dark:text-amber-400 mb-1">
+                          DOF Row Keys ({data.debug.dof_row_keys.length}):
+                        </p>
+                        <code className="block bg-muted p-2 rounded text-[10px] break-all">
+                          {data.debug.dof_row_keys.join(', ')}
+                        </code>
+                      </div>
+                    )}
                     
-                    {/* Raw Row JSON */}
-                    {data.debug.raw_row && (
+                    {/* PLUTO Row Keys */}
+                    {data.debug.pluto_row_keys.length > 0 && (
+                      <div>
+                        <p className="font-medium text-amber-700 dark:text-amber-400 mb-1">
+                          PLUTO Row Keys ({data.debug.pluto_row_keys.length}):
+                        </p>
+                        <code className="block bg-muted p-2 rounded text-[10px] break-all">
+                          {data.debug.pluto_row_keys.join(', ')}
+                        </code>
+                      </div>
+                    )}
+                    
+                    {/* Raw DOF Row */}
+                    {data.debug.raw_dof_row && (
+                      <div>
+                        <p className="font-medium text-amber-700 dark:text-amber-400 mb-1">Raw DOF Row:</p>
+                        <pre className="bg-muted p-2 rounded text-[10px] overflow-auto max-h-48">
+                          {JSON.stringify(data.debug.raw_dof_row, null, 2)}
+                        </pre>
+                      </div>
+                    )}
+                    
+                    {/* Raw PLUTO Row */}
+                    {data.debug.raw_pluto_row && (
                       <div>
                         <p className="font-medium text-amber-700 dark:text-amber-400 mb-1">Raw PLUTO Row:</p>
                         <pre className="bg-muted p-2 rounded text-[10px] overflow-auto max-h-48">
-                          {JSON.stringify(data.debug.raw_row, null, 2)}
+                          {JSON.stringify(data.debug.raw_pluto_row, null, 2)}
                         </pre>
                       </div>
                     )}

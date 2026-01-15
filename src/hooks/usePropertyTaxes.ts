@@ -1,25 +1,41 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 
-// Arrears status from edge function
-export type ArrearsStatus = 'none_detected' | 'possible' | 'unknown';
+// Basis and confidence types from edge function
+export type TaxBasis = 'dof_assessment' | 'pluto_estimate' | 'unavailable';
+export type TaxConfidence = 'high' | 'estimated' | 'none';
+export type ArrearsStatus = 'none_detected' | 'unavailable';
 
 // Debug info from edge function
 export interface DebugInfo {
-  pluto_request_url: string;
-  raw_row: Record<string, unknown> | null;
-  raw_row_keys: string[];
+  step1_attempted: boolean;
+  step1_url: string | null;
+  step1_success: boolean;
+  step1_error: string | null;
+  step2_attempted: boolean;
+  step2_url: string | null;
+  step2_success: boolean;
+  step2_error: string | null;
+  raw_dof_row: Record<string, unknown> | null;
+  raw_pluto_row: Record<string, unknown> | null;
+  dof_row_keys: string[];
+  pluto_row_keys: string[];
   calculation_steps: string[];
 }
 
-// Result from the assessment-based property-taxes edge function
+// Result from the 3-step property-taxes edge function
 export interface PropertyTaxResult {
   // Primary outputs
   quarterly_bill: number | null;
   annual_tax: number | null;
-  billing_period: string;
+  billing_cycle: string;
   due_date: string;
   due_date_formatted: string;
+  
+  // Data source tracking
+  basis: TaxBasis;
+  confidence: TaxConfidence;
+  basis_explanation: string;
   
   // Assessment data
   tax_class: string | null;
@@ -27,10 +43,10 @@ export interface PropertyTaxResult {
   tax_rate_description: string;
   assessed_value: number | null;
   exempt_value: number | null;
-  taxable_value: number | null;
+  taxable_billable_av: number | null;
   
   // Arrears
-  arrears: number;
+  arrears: number | null;
   arrears_status: ArrearsStatus;
   arrears_note: string;
   
