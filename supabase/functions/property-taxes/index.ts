@@ -11,13 +11,12 @@ const CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
 
 // NYC Open Data DOF Property Charges Balance dataset
 const DATASET_ID = 'scjx-j6np';
-const NYC_OPEN_DATA_BASE = 'https://data.cityofnewyork.us/resource';
 
 interface ChargeRow {
-  parid: string;
-  stmtdate: string;
-  activitythrough: string;
-  value: string;
+  parid?: string;
+  stmtdate?: string;
+  activitythrough?: string;
+  value?: string;
   dession?: string;
   chargetype?: string;
   install?: string;
@@ -25,6 +24,7 @@ interface ChargeRow {
   borough?: string;
   block?: string;
   lot?: string;
+  [key: string]: unknown;
 }
 
 interface TaxResult {
@@ -36,6 +36,7 @@ interface TaxResult {
   scope: 'unit' | 'building' | 'direct';
   parid_used: string;
   data_as_of: string | null;
+  no_data_found?: boolean;
 }
 
 // Convert BBL to PARID (BBL + easement "0")
@@ -46,13 +47,12 @@ function bblToParid(bbl: string): string {
 }
 
 // Query the DOF dataset for a given PARID
-async function queryDOFCharges(parid: string, appToken: string): Promise<ChargeRow[]> {
-  const url = new URL(`${NYC_OPEN_DATA_BASE}/${DATASET_ID}.json`);
-  url.searchParams.set('parid', parid);
-  url.searchParams.set('$limit', '50');
-  url.searchParams.set('$order', 'stmtdate DESC');
+async function queryDOFCharges(parid: string, appToken: string): Promise<{ rows: ChargeRow[]; error?: string }> {
+  // Use simple query format: ?parid=VALUE&$limit=200
+  // Avoid $order and $where until we confirm the API works
+  const url = `https://data.cityofnewyork.us/resource/${DATASET_ID}.json?parid=${encodeURIComponent(parid)}&$limit=200`;
   
-  console.log(`[property-taxes] Querying DOF for PARID: ${parid}`);
+  console.log(`[property-taxes] Request URL: ${url}`);
   
   const headers: Record<string, string> = {
     'Accept': 'application/json',
@@ -62,17 +62,43 @@ async function queryDOFCharges(parid: string, appToken: string): Promise<ChargeR
     headers['X-App-Token'] = appToken;
   }
   
-  const response = await fetch(url.toString(), { headers });
-  
-  if (!response.ok) {
-    console.error(`[property-taxes] DOF API error: ${response.status} ${response.statusText}`);
-    throw new Error(`DOF API returned ${response.status}`);
+  try {
+    const response = await fetch(url, { headers });
+    
+    if (!response.ok) {
+      // Get the full error body for diagnostics
+      const errorBody = await response.text();
+      console.error(`[property-taxes] DOF API error: ${response.status} ${response.statusText}`);
+      console.error(`[property-taxes] Error body: ${errorBody}`);
+      return { 
+        rows: [], 
+        error: `DOF API returned ${response.status}: ${errorBody.substring(0, 500)}` 
+      };
+    }
+    
+    const data = await response.json();
+    
+    // Validate response is an array
+    if (!Array.isArray(data)) {
+      console.error(`[property-taxes] Unexpected response type: ${typeof data}`);
+      return { rows: [], error: 'Unexpected response format from DOF API' };
+    }
+    
+    console.log(`[property-taxes] DOF returned ${data.length} rows for PARID ${parid}`);
+    
+    // Sort by statement date descending (since we removed $order)
+    const sorted = data.sort((a: ChargeRow, b: ChargeRow) => {
+      const dateA = a.stmtdate || '';
+      const dateB = b.stmtdate || '';
+      return dateB.localeCompare(dateA);
+    });
+    
+    return { rows: sorted as ChargeRow[] };
+  } catch (fetchError) {
+    const errMsg = fetchError instanceof Error ? fetchError.message : String(fetchError);
+    console.error(`[property-taxes] Fetch error: ${errMsg}`);
+    return { rows: [], error: `Network error: ${errMsg}` };
   }
-  
-  const data = await response.json();
-  console.log(`[property-taxes] DOF returned ${data.length} rows for PARID ${parid}`);
-  
-  return data as ChargeRow[];
 }
 
 // Process charge rows into a summary
@@ -87,6 +113,7 @@ function processCharges(rows: ChargeRow[], scope: 'unit' | 'building' | 'direct'
       scope,
       parid_used: paridUsed,
       data_as_of: null,
+      no_data_found: true,
     };
   }
   
@@ -102,15 +129,15 @@ function processCharges(rows: ChargeRow[], scope: 'unit' | 'building' | 'direct'
   
   // Get most recent statement date as "bill period"
   const mostRecentRow = rows[0]; // Already sorted DESC
-  const mostRecentBillPeriod = mostRecentRow?.stmtdate || null;
-  const mostRecentDueDate = mostRecentRow?.activitythrough || null;
+  const mostRecentBillPeriod = mostRecentRow?.stmtdate ?? null;
+  const mostRecentDueDate = mostRecentRow?.activitythrough ?? null;
   
   // Find most recent payment (negative value)
   const payments = rows.filter(r => parseFloat(r.value || '0') < 0);
-  const lastPaymentDate = payments.length > 0 ? payments[0].stmtdate : null;
+  const lastPaymentDate = payments.length > 0 ? (payments[0].stmtdate ?? null) : null;
   
   // Data as of - use the most recent activity date
-  const dataAsOf = mostRecentRow?.activitythrough || mostRecentRow?.stmtdate || null;
+  const dataAsOf = mostRecentRow?.activitythrough ?? mostRecentRow?.stmtdate ?? null;
   
   return {
     current_balance_due: Math.round(totalBalance * 100) / 100, // Round to cents
@@ -121,6 +148,7 @@ function processCharges(rows: ChargeRow[], scope: 'unit' | 'building' | 'direct'
     scope,
     parid_used: paridUsed,
     data_as_of: dataAsOf,
+    no_data_found: false,
   };
 }
 
@@ -162,9 +190,11 @@ serve(async (req) => {
     }
     
     // Query for unit PARID first
-    let rows = await queryDOFCharges(unitParid, appToken);
+    let queryResult = await queryDOFCharges(unitParid, appToken);
+    let rows = queryResult.rows;
     let scope: 'unit' | 'building' | 'direct' = 'direct';
     let paridUsed = unitParid;
+    let lastError = queryResult.error;
     
     // If no rows and we have a building BBL, try building PARID
     if (rows.length === 0 && buildingParid && buildingParid !== unitParid) {
@@ -182,21 +212,46 @@ serve(async (req) => {
         );
       }
       
-      rows = await queryDOFCharges(buildingParid, appToken);
+      queryResult = await queryDOFCharges(buildingParid, appToken);
+      rows = queryResult.rows;
       scope = 'building';
       paridUsed = buildingParid;
+      if (queryResult.error) {
+        lastError = queryResult.error;
+      }
     } else if (rows.length > 0 && building_bbl) {
       // We found unit-level data
       scope = 'unit';
     }
     
+    // If we still have no rows and there was an error, report it
+    if (rows.length === 0 && lastError) {
+      console.error(`[property-taxes] Final error after fallback: ${lastError}`);
+      // Return empty result instead of throwing - graceful degradation
+      const emptyResult: TaxResult = {
+        current_balance_due: 0,
+        most_recent_bill_period: null,
+        most_recent_due_date: null,
+        last_payment_date: null,
+        line_items: [],
+        scope,
+        parid_used: paridUsed,
+        data_as_of: null,
+        no_data_found: true,
+      };
+      return new Response(
+        JSON.stringify({ ...emptyResult, api_error: lastError }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+    
     // Process the results
     const result = processCharges(rows, scope, paridUsed);
     
-    // Cache the result
+    // Cache the result (even empty results to avoid repeated calls)
     cache.set(paridUsed, { data: result, timestamp: Date.now() });
     
-    console.log(`[property-taxes] Returning result - scope: ${scope}, balance: ${result.current_balance_due}, rows: ${result.line_items.length}`);
+    console.log(`[property-taxes] Returning result - scope: ${scope}, balance: ${result.current_balance_due}, rows: ${result.line_items.length}, no_data: ${result.no_data_found}`);
     
     return new Response(
       JSON.stringify(result),
@@ -205,7 +260,7 @@ serve(async (req) => {
     
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Failed to fetch tax data';
-    console.error('[property-taxes] Error:', errorMessage);
+    console.error('[property-taxes] Unhandled error:', errorMessage);
     return new Response(
       JSON.stringify({ error: errorMessage }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
