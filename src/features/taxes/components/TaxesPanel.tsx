@@ -4,7 +4,7 @@
  * Decides what to render based on context:
  * - Unit page: TaxesCard with unit BBL
  * - Non-condo building: TaxesCard with building BBL
- * - Condo building: Suppression message (taxes shown in CondoUnitsCard)
+ * - Condo building: Returns null (taxes shown in UnitsTab)
  */
 
 import { Info } from 'lucide-react';
@@ -32,10 +32,9 @@ export function TaxesPanel({
   }
 
   // Condo building page: Suppress building-level taxes
-  // The CondoUnitsCard handles unit-level taxes in its table
+  // UnitsTab handles unit-level taxes in its table
   if (isCondo) {
-    // Return null - the CondoUnitsCard already shows the tax suppression notice
-    // and handles unit-level tax display
+    // Return null - UnitsTab shows unit-level tax display
     return null;
   }
 
@@ -52,7 +51,7 @@ export function TaxesPanel({
 
 /**
  * Standalone condo tax suppression notice
- * Use when you need to show the notice outside of CondoUnitsCard
+ * Use when you need to show the notice outside of UnitsTab
  */
 export function CondoTaxSuppressionNotice() {
   return (

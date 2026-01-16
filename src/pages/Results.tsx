@@ -8,13 +8,11 @@ import { PropertyProfileCard } from '@/components/results/PropertyProfileCard';
 import { RiskSnapshotCard, type RecordCounts, type LoadingStates, type RecordArrays, type NavigationInfo } from '@/components/results/RiskSnapshotCard';
 import brooklynBridgeLines from '@/assets/brooklyn-bridge-lines.png';
 
-import { CondoUnitsCard } from '@/components/results/CondoUnitsCard';
-import type { CondoUnit, CondoUnitsInputRole } from '@/hooks/useCondoUnits';
 import { ResidentialUnitsCard } from '@/components/results/ResidentialUnitsCard';
 import { UnitInsightsCard } from '@/components/results/UnitInsightsCard';
 import { TaxesPanel } from '@/features/taxes';
 import { OverviewTab } from '@/components/results/OverviewTab';
-import { UnitsTab } from '@/components/results/UnitsTab';
+import { UnitsTab, type CondoMeta } from '@/components/results/UnitsTab';
 import { RecordsTab } from '@/components/results/RecordsTab';
 import { FinanceTab } from '@/components/results/FinanceTab';
 import { QueryDebugPanel } from '@/components/results/QueryDebugPanel';
@@ -278,25 +276,18 @@ export default function Results() {
     dobJobFilings.units,
   ]);
 
-  // Condo and scope state
-  const [billingBbl, setBillingBbl] = useState<string | null>(null);
-  const [currentUnitLabel, setCurrentUnitLabel] = useState<string | null>(null);
-  
-  // Condo units data for CondoUnitTaxesCard
-  const [condoUnitsData, setCondoUnitsData] = useState<{
-    units: CondoUnit[];
-    totalApprox: number;
-    isCondo: boolean;
-    inputRole: CondoUnitsInputRole;
-    loading: boolean;
-  }>({
-    units: [],
-    totalApprox: 0,
+  // Condo and scope state - populated by UnitsTab callback
+  const [condoMeta, setCondoMeta] = useState<CondoMeta>({
     isCondo: false,
-    inputRole: 'unknown',
-    loading: false,
+    billingBbl: null,
+    totalUnits: 0,
+    unitLabel: null,
   });
-  const [hasCondoUnits, setHasCondoUnits] = useState(false);
+  
+  // Derived condo state for convenience
+  const billingBbl = condoMeta.billingBbl;
+  const currentUnitLabel = condoMeta.unitLabel;
+  const isCondoBuilding = condoMeta.isCondo;
   
   // Co-op unit context (UI-only, no API calls) - initialized from URL
   const [coopUnitContext, setCoopUnitContext] = useState<string | null>(unitContextParam);
@@ -342,7 +333,8 @@ export default function Results() {
     } else {
       setScope(isUnitLot ? 'unit' : 'building');
     }
-    setCurrentUnitLabel(null);
+    // Reset condo meta when BBL changes (UnitsTab will repopulate it)
+    setCondoMeta({ isCondo: false, billingBbl: null, totalUnits: 0, unitLabel: null });
     // Only reset co-op unit context if BBL changes (not on initial mount if URL has unitContext)
     if (!unitContextParam) {
       setCoopUnitContext(null);
@@ -390,23 +382,9 @@ export default function Results() {
     setContextInfo(queryBbl, billingBbl, bin || null);
   }, [queryBbl, billingBbl, bin, setContextInfo]);
   
-  // Handle billing BBL resolution from condo units card
-  const handleBillingBblResolved = useCallback((resolvedBillingBbl: string | null) => {
-    if (resolvedBillingBbl) {
-      setBillingBbl(resolvedBillingBbl);
-      setHasCondoUnits(true);
-    }
-  }, []);
-
-  // Handle condo data resolution for CondoUnitTaxesCard
-  const handleCondoDataResolved = useCallback((data: {
-    units: CondoUnit[];
-    totalApprox: number;
-    isCondo: boolean;
-    inputRole: CondoUnitsInputRole;
-    loading: boolean;
-  }) => {
-    setCondoUnitsData(data);
+  // Handle condo metadata from UnitsTab
+  const handleCondoMetaResolved = useCallback((meta: CondoMeta) => {
+    setCondoMeta(meta);
   }, []);
 
   // Sync tab changes to URL
@@ -435,7 +413,7 @@ export default function Results() {
 
   // Update document title based on context
   useEffect(() => {
-    const isCondoUnit = hasCondoUnits && isUnitLot;
+    const isCondoUnit = isCondoBuilding && isUnitLot;
     if (isCondoUnit && currentUnitLabel && address) {
       document.title = `${address} — Unit ${currentUnitLabel} | Property Search`;
     } else if (address) {
@@ -449,7 +427,7 @@ export default function Results() {
     return () => {
       document.title = 'Property Search';
     };
-  }, [address, currentUnitLabel, hasCondoUnits, isUnitLot, bbl]);
+  }, [address, currentUnitLabel, isCondoBuilding, isUnitLot, bbl]);
 
   return (
     <div className="flex flex-col min-h-screen">
@@ -517,7 +495,7 @@ export default function Results() {
                   propertyTypeLabel: profile.propertyTypeLabel,
                 } : null}
                 buildingProfileLoading={profileLoading}
-                isCondoUnit={hasCondoUnits && isUnitLot && !isCoop}
+                isCondoUnit={isCondoBuilding && isUnitLot && !isCoop}
                 isCoop={isCoop}
                 coopUnitContext={coopUnitContext}
                 onCoopUnitContextChange={isCoop ? handleCoopUnitContextChange : undefined}
@@ -560,22 +538,8 @@ export default function Results() {
                 viewBbl={bbl}
                 buildingBbl={buildingBblParam || billingBbl || undefined}
                 address={address}
-                isCondo={condoUnitsData.isCondo && !isUnitLot}
+                isCondo={isCondoBuilding && !isUnitLot}
               />
-              
-              {/* Hidden: Resolve billing BBL for condo buildings (needed for data fetching) */}
-              {!isCoop && (
-                <CondoUnitsCard 
-                  bbl={bbl}
-                  buildingAddress={isUnitLot ? (buildingAddressParam || address) : address}
-                  borough={borough}
-                  bin={bin}
-                  onUnitLabelResolved={setCurrentUnitLabel}
-                  onBillingBblResolved={handleBillingBblResolved}
-                  onCondoDataResolved={handleCondoDataResolved}
-                  hidden
-                />
-              )}
 
               {/* Residential Units Card - Co-ops only (informational unit enumeration) */}
               {isCoop && (
@@ -667,9 +631,9 @@ export default function Results() {
                       borough={borough}
                       bbl={effectiveBbl}
                       bin={bin}
-                      isCondo={condoUnitsData.isCondo && !isUnitLot}
+                      isCondo={isCondoBuilding && !isUnitLot}
                       isCoop={isCoop}
-                      totalUnits={condoUnitsData.totalApprox || profile?.totalUnits}
+                      totalUnits={condoMeta.totalUnits || profile?.totalUnits}
                       recordCounts={recordCounts}
                       recordLoading={riskSnapshotLoading}
                       onTabChange={handleTabChange}
@@ -683,6 +647,7 @@ export default function Results() {
                       borough={borough}
                       bin={bin}
                       isCoop={isCoop}
+                      onCondoMetaResolved={handleCondoMetaResolved}
                     />
                   </TabsContent>
                   
