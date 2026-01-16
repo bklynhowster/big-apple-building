@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Building2, Home, Search, ArrowLeft, AlertCircle, Info } from 'lucide-react';
+import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
+import { Building2, Home, Search, ArrowLeft, AlertCircle, Info, Loader2, RefreshCw, CheckCircle2, XCircle, Clock } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -23,6 +23,8 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import { useCondoUnits, type CondoUnit, type CondoUnitsInputRole } from '@/hooks/useCondoUnits';
+import { useCondoUnitTaxes, INITIAL_BATCH_SIZE, type CondoUnitTaxSummary } from '@/hooks/useCondoUnitTaxes';
+import type { PaymentStatus } from '@/hooks/usePropertyTaxes';
 
 interface CondoUnitsCardProps {
   bbl: string;
@@ -79,6 +81,39 @@ function formatLot(lot: string): string {
   return lot;
 }
 
+// Safe USD formatter
+function formatUSD(n: number | null | undefined): string {
+  if (n === null || n === undefined || !Number.isFinite(n)) return '—';
+  return n.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+}
+
+function formatDate(dateStr: string | null | undefined): string {
+  if (!dateStr) return '—';
+  try {
+    const date = new Date(dateStr);
+    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  } catch {
+    return dateStr;
+  }
+}
+
+function getPaymentStatusInfo(status: PaymentStatus | undefined): { 
+  label: string; 
+  variant: 'default' | 'destructive' | 'secondary' | 'outline';
+  icon: React.ReactNode;
+} | null {
+  switch (status) {
+    case 'paid':
+      return { label: 'Paid', variant: 'default', icon: <CheckCircle2 className="h-3 w-3" /> };
+    case 'unpaid':
+      return { label: 'Unpaid', variant: 'destructive', icon: <XCircle className="h-3 w-3" /> };
+    case 'unknown':
+      return { label: 'Unknown', variant: 'secondary', icon: <Clock className="h-3 w-3" /> };
+    default:
+      return null;
+  }
+}
+
 export function CondoUnitsCard({ 
   bbl, 
   buildingAddress, 
@@ -92,6 +127,22 @@ export function CondoUnitsCard({
   const navigate = useNavigate();
   const { loading, loadingMore, error, data, fetchFirstPage, fetchNextPage, retry } = useCondoUnits();
   const [searchQuery, setSearchQuery] = useState('');
+  
+  // Tax lazy loading state - how many units to load taxes for
+  const [taxVisibleCount, setTaxVisibleCount] = useState(INITIAL_BATCH_SIZE);
+  const lastBblRef = useRef<string | null>(null);
+  
+  // Tax hook
+  const {
+    unitTaxes,
+    fetchBatch,
+    fetchOne,
+    reset: resetTaxes,
+    batchLoading: taxBatchLoading,
+    loadedCount: taxLoadedCount,
+    arrearsCount,
+    unpaidCount,
+  } = useCondoUnitTaxes();
 
   const lotLooksLikeBilling = useMemo(() => {
     if (!bbl || bbl.length !== 10) return false;
@@ -121,7 +172,7 @@ export function CondoUnitsCard({
     }
   }, [data?.billingBbl, onBillingBblResolved]);
 
-  // Pass condo data up to parent for CondoUnitTaxesCard
+  // Pass condo data up to parent
   useEffect(() => {
     if (onCondoDataResolved) {
       onCondoDataResolved({
@@ -134,11 +185,48 @@ export function CondoUnitsCard({
     }
   }, [data, loading, onCondoDataResolved]);
 
+  // Fetch condo units on BBL change
   useEffect(() => {
     if (bbl && bbl.length === 10) {
       fetchFirstPage(bbl, 2000);
     }
   }, [bbl, fetchFirstPage]);
+
+  // Reset tax state when BBL changes
+  useEffect(() => {
+    if (bbl !== lastBblRef.current) {
+      lastBblRef.current = bbl;
+      setTaxVisibleCount(INITIAL_BATCH_SIZE);
+      resetTaxes();
+    }
+  }, [bbl, resetTaxes]);
+
+  // Determine if this is a building-level view (not a unit page)
+  const isBuilding = data?.inputRole === 'billing' || data?.inputRole === 'unknown';
+
+  // Get visible units for tax fetching (only on building pages, not unit pages)
+  const unitsForTaxFetch = useMemo(() => {
+    if (!data?.units || !isBuilding) return [];
+    return data.units.slice(0, taxVisibleCount);
+  }, [data?.units, taxVisibleCount, isBuilding]);
+
+  // Fetch taxes for visible units when they change (only on building pages)
+  useEffect(() => {
+    if (!isBuilding || unitsForTaxFetch.length === 0) return;
+
+    // Determine initial fetch size based on total units
+    const totalUnits = data?.units?.length || 0;
+    const shouldFetchAll = totalUnits <= INITIAL_BATCH_SIZE;
+    
+    // Compute which units need fetching
+    const unitsToFetch = unitsForTaxFetch
+      .filter(u => !unitTaxes.has(u.unitBbl))
+      .map(u => ({ unitBbl: u.unitBbl, unitLabel: u.unitLabel }));
+
+    if (unitsToFetch.length > 0) {
+      fetchBatch(unitsToFetch);
+    }
+  }, [unitsForTaxFetch, fetchBatch, isBuilding, data?.units?.length]); // unitTaxes intentionally excluded
 
   const filteredUnits = useMemo(() => {
     if (!data?.units) return [];
@@ -158,13 +246,11 @@ export function CondoUnitsCard({
 
   const currentUnitBbl = data?.inputRole === 'unit' ? data.inputBbl : null;
 
-  const handleOpenUnit = (unitBbl: string) => {
-    // Build URL with building context for the unit page
+  const handleOpenUnit = useCallback((unitBbl: string) => {
     const params = new URLSearchParams();
     params.set('bbl', unitBbl);
     params.set('borough', buildingBorough || boroughNameFromBbl(unitBbl));
     
-    // Pass building context so unit page can display it
     if (buildingAddress) {
       params.set('buildingAddress', buildingAddress);
     }
@@ -176,7 +262,7 @@ export function CondoUnitsCard({
     }
     
     navigate(`/results?${params.toString()}`);
-  };
+  }, [navigate, buildingBorough, buildingAddress, data?.billingBbl, buildingBin]);
 
   const handleBackToBuilding = () => {
     if (!data?.billingBbl) return;
@@ -192,10 +278,50 @@ export function CondoUnitsCard({
     navigate(`/results?${params.toString()}`);
   };
 
+  // Load more taxes - increases visible count for tax fetching
+  const handleLoadMoreTaxes = useCallback(() => {
+    const totalUnits = data?.units?.length || 0;
+    const newCount = Math.min(taxVisibleCount + INITIAL_BATCH_SIZE, totalUnits);
+    setTaxVisibleCount(newCount);
+  }, [taxVisibleCount, data?.units?.length]);
+
+  // Load all taxes
+  const handleLoadAllTaxes = useCallback(() => {
+    const totalUnits = data?.units?.length || 0;
+    setTaxVisibleCount(totalUnits);
+  }, [data?.units?.length]);
+
+  // Retry a single unit's tax fetch
+  const handleRetryTax = useCallback((unitBbl: string, unitLabel: string | null) => {
+    fetchOne(unitBbl, unitLabel);
+  }, [fetchOne]);
+
+  // Get tax summary for a unit
+  const getTaxSummary = useCallback((unitBbl: string, unitLabel: string | null): CondoUnitTaxSummary | null => {
+    if (!isBuilding) return null;
+    
+    const existing = unitTaxes.get(unitBbl);
+    if (existing) return existing;
+    
+    // Check if this unit is in the tax fetch range
+    const unitIndex = data?.units?.findIndex(u => u.unitBbl === unitBbl) ?? -1;
+    if (unitIndex >= 0 && unitIndex < taxVisibleCount) {
+      // Should be loading
+      return {
+        unitBbl,
+        unitLabel,
+        loading: true,
+        error: null,
+        data: null,
+      };
+    }
+    
+    return null; // Not yet in fetch range
+  }, [isBuilding, unitTaxes, data?.units, taxVisibleCount]);
+
   if (loading) return hidden ? null : <LoadingSkeleton />;
 
   if (error) {
-    // Only show Retry for network/server errors, not for "no data" responses
     const isNetworkError = error.error === 'Internal server error' || 
                            error.error === 'Network error' ||
                            error.error?.toLowerCase().includes('fetch') ||
@@ -238,15 +364,30 @@ export function CondoUnitsCard({
   const units = Array.isArray(data.units) ? data.units : [];
   const hasUnits = units.length > 0;
   const hasMore = data.totalApprox > 0 ? units.length < data.totalApprox : false;
+  const totalUnits = units.length;
+  
+  // Tax loading progress
+  const hasMoreTaxes = taxVisibleCount < totalUnits && isBuilding;
+  const taxRemainingCount = totalUnits - taxVisibleCount;
 
   return (
     <Card>
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between">
-          <CardTitle className="flex items-center gap-2 text-base">
-            <Building2 className="h-4 w-4" />
-            Condo Units
-          </CardTitle>
+          <div>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Building2 className="h-4 w-4" />
+              Condo Units
+            </CardTitle>
+            {isBuilding && hasUnits && (
+              <CardDescription className="mt-1 flex items-center gap-2">
+                <span>NYC Department of Finance property tax</span>
+                <Badge variant="outline" className="text-[10px] px-1.5 py-0">
+                  Condominium
+                </Badge>
+              </CardDescription>
+            )}
+          </div>
           <div className="flex items-center gap-2">
             <Badge variant="secondary" className="text-xs">
               {data.isCondo ? 'Condominium' : 'Possible condo'}
@@ -255,6 +396,9 @@ export function CondoUnitsCard({
               <Badge variant="outline" className="text-xs">
                 Units found via block-based condo fallback
               </Badge>
+            )}
+            {taxBatchLoading && (
+              <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
             )}
           </div>
         </div>
@@ -276,13 +420,34 @@ export function CondoUnitsCard({
           </Alert>
         ) : (
           <>
+            {/* Building-level tax suppression notice - only on building pages */}
+            {isBuilding && (
+              <Alert className="py-2 border-primary/30 bg-primary/5">
+                <Info className="h-4 w-4 text-primary" />
+                <AlertDescription className="text-xs">
+                  <strong>Condominium buildings do not have building-level tax liability.</strong>{' '}
+                  All property taxes shown below are unit-specific.
+                </AlertDescription>
+              </Alert>
+            )}
+
+            {/* Stats row */}
             <div className="flex flex-wrap items-center gap-3">
               <div className="flex items-center gap-2">
-                <p className="text-xs text-muted-foreground">Unit count found</p>
+                <p className="text-xs text-muted-foreground">Total units:</p>
                 <Badge variant="outline" className="font-mono">
                   {data.totalApprox || units.length}
                 </Badge>
               </div>
+
+              {isBuilding && (
+                <div className="flex items-center gap-2">
+                  <p className="text-xs text-muted-foreground">Tax preview loaded:</p>
+                  <Badge variant="secondary" className="font-mono">
+                    {taxLoadedCount} / {totalUnits}
+                  </Badge>
+                </div>
+              )}
 
               {data.billingBbl && (
                 <div className="flex items-center gap-2">
@@ -308,7 +473,48 @@ export function CondoUnitsCard({
                   Back to building
                 </Button>
               )}
+
+              {isBuilding && unpaidCount > 0 && (
+                <Badge variant="destructive" className="text-xs">
+                  {unpaidCount} unpaid
+                </Badge>
+              )}
+
+              {isBuilding && arrearsCount > 0 && (
+                <Badge variant="destructive" className="text-xs">
+                  {arrearsCount} with arrears
+                </Badge>
+              )}
             </div>
+
+            {/* Tax loading controls - only on building pages */}
+            {isBuilding && hasMoreTaxes && (
+              <div className="flex items-center gap-2 flex-wrap">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleLoadMoreTaxes}
+                  disabled={taxBatchLoading}
+                  className="gap-1.5"
+                >
+                  {taxBatchLoading ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : null}
+                  Load taxes for next {Math.min(INITIAL_BATCH_SIZE, taxRemainingCount)}
+                </Button>
+                {taxRemainingCount > INITIAL_BATCH_SIZE && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={handleLoadAllTaxes}
+                    disabled={taxBatchLoading}
+                    className="text-xs"
+                  >
+                    Load all ({taxRemainingCount} remaining)
+                  </Button>
+                )}
+              </div>
+            )}
 
             {/* Search */}
             <div className="relative">
@@ -323,20 +529,29 @@ export function CondoUnitsCard({
 
             {/* Table */}
             <div className="border rounded-md">
-              <ScrollArea className={filteredUnits.length > 10 ? 'h-80' : undefined}>
+              <ScrollArea className={filteredUnits.length > 10 ? 'h-96' : undefined}>
                 <Table>
                   <TableHeader>
                     <TableRow className="bg-muted/50">
                       <TableHead className="font-semibold">Unit label</TableHead>
                       <TableHead className="font-semibold">Unit BBL</TableHead>
                       <TableHead className="font-semibold">Lot</TableHead>
+                      {/* Tax columns - only on building pages */}
+                      {isBuilding && (
+                        <>
+                          <TableHead className="font-semibold">Latest Bill</TableHead>
+                          <TableHead className="font-semibold">Due Date</TableHead>
+                          <TableHead className="font-semibold">Status</TableHead>
+                          <TableHead className="font-semibold">Arrears</TableHead>
+                        </>
+                      )}
                       <TableHead className="font-semibold text-right">Action</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {filteredUnits.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={4} className="text-center text-sm text-muted-foreground py-8">
+                        <TableCell colSpan={isBuilding ? 8 : 4} className="text-center text-sm text-muted-foreground py-8">
                           No units match your search.
                         </TableCell>
                       </TableRow>
@@ -346,6 +561,13 @@ export function CondoUnitsCard({
                         const displayLabel = unit.unitLabel || `Lot ${formatLot(unit.lot)}`;
                         const labelSource = unit.unitLabelSource || 'unknown';
                         const isLotFallback = !unit.unitLabel || labelSource === 'fallback.lot';
+                        
+                        // Get tax data for this unit
+                        const taxSummary = getTaxSummary(unit.unitBbl, unit.unitLabel);
+                        const statusInfo = taxSummary?.data ? getPaymentStatusInfo(taxSummary.data.payment_status) : null;
+                        const hasArrears = taxSummary?.data?.arrears !== null && 
+                                          taxSummary?.data?.arrears !== undefined && 
+                                          taxSummary.data.arrears > 0;
 
                         return (
                           <TableRow key={unit.unitBbl} className={isCurrent ? 'bg-muted/40' : undefined}>
@@ -382,6 +604,90 @@ export function CondoUnitsCard({
                             </TableCell>
                             <TableCell className="font-mono text-sm">{unit.unitBbl}</TableCell>
                             <TableCell className="text-sm text-muted-foreground">{formatLot(unit.lot)}</TableCell>
+                            
+                            {/* Tax columns - only on building pages */}
+                            {isBuilding && (
+                              <>
+                                {/* Latest Bill */}
+                                <TableCell className="text-sm">
+                                  {!taxSummary ? (
+                                    <span className="text-muted-foreground text-xs">—</span>
+                                  ) : taxSummary.loading ? (
+                                    <Skeleton className="h-4 w-16" />
+                                  ) : taxSummary.error ? (
+                                    <TooltipProvider>
+                                      <Tooltip>
+                                        <TooltipTrigger asChild>
+                                          <Button
+                                            variant="ghost"
+                                            size="sm"
+                                            className="h-6 px-1 text-destructive"
+                                            onClick={() => handleRetryTax(unit.unitBbl, unit.unitLabel)}
+                                          >
+                                            <RefreshCw className="h-3 w-3 mr-1" />
+                                            <span className="text-xs">Retry</span>
+                                          </Button>
+                                        </TooltipTrigger>
+                                        <TooltipContent>
+                                          <p className="text-xs">{taxSummary.error}</p>
+                                        </TooltipContent>
+                                      </Tooltip>
+                                    </TooltipProvider>
+                                  ) : taxSummary.data?.no_data_found ? (
+                                    <span className="text-muted-foreground text-xs">No data</span>
+                                  ) : (
+                                    formatUSD(taxSummary.data?.latest_bill_amount)
+                                  )}
+                                </TableCell>
+                                
+                                {/* Due Date */}
+                                <TableCell className="text-sm text-muted-foreground">
+                                  {!taxSummary ? (
+                                    '—'
+                                  ) : taxSummary.loading ? (
+                                    <Skeleton className="h-4 w-20" />
+                                  ) : taxSummary.error || taxSummary.data?.no_data_found ? (
+                                    '—'
+                                  ) : (
+                                    formatDate(taxSummary.data?.latest_due_date)
+                                  )}
+                                </TableCell>
+                                
+                                {/* Status */}
+                                <TableCell>
+                                  {!taxSummary ? (
+                                    <span className="text-muted-foreground text-xs">—</span>
+                                  ) : taxSummary.loading ? (
+                                    <Skeleton className="h-5 w-12" />
+                                  ) : statusInfo ? (
+                                    <Badge variant={statusInfo.variant} className="text-xs flex items-center gap-1 w-fit">
+                                      {statusInfo.icon}
+                                      {statusInfo.label}
+                                    </Badge>
+                                  ) : (
+                                    <span className="text-muted-foreground text-xs">—</span>
+                                  )}
+                                </TableCell>
+                                
+                                {/* Arrears */}
+                                <TableCell>
+                                  {!taxSummary ? (
+                                    <span className="text-muted-foreground text-xs">—</span>
+                                  ) : taxSummary.loading ? (
+                                    <Skeleton className="h-4 w-12" />
+                                  ) : hasArrears ? (
+                                    <Badge variant="destructive" className="text-xs">
+                                      {formatUSD(taxSummary.data?.arrears)}
+                                    </Badge>
+                                  ) : taxSummary.data?.arrears_available ? (
+                                    <span className="text-muted-foreground text-xs">None</span>
+                                  ) : (
+                                    <span className="text-muted-foreground text-xs">—</span>
+                                  )}
+                                </TableCell>
+                              </>
+                            )}
+                            
                             <TableCell className="text-right">
                               <Button
                                 variant="ghost"

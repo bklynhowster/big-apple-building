@@ -10,7 +10,6 @@ import { RiskSnapshotCard, type RecordCounts, type LoadingStates, type RecordArr
 import brooklynBridgeLines from '@/assets/brooklyn-bridge-lines.png';
 
 import { CondoUnitsCard } from '@/components/results/CondoUnitsCard';
-import { CondoUnitTaxesCard } from '@/components/results/CondoUnitTaxesCard';
 import type { CondoUnit, CondoUnitsInputRole } from '@/hooks/useCondoUnits';
 import { ResidentialUnitsCard } from '@/components/results/ResidentialUnitsCard';
 import { UnitInsightsCard } from '@/components/results/UnitInsightsCard';
@@ -566,19 +565,8 @@ export default function Results() {
                 onOwnershipOverrideChange={handleOwnershipOverrideChange}
               />
               
-              {/* Taxes Card - Context-aware: Condo buildings show unit taxes, unit pages show unit taxes */}
-              {/* CONDO BUILDING: Show CondoUnitTaxesCard with lazy-loaded unit taxes */}
-              {!isUnitLot && !isCoop && condoUnitsData.isCondo && condoUnitsData.units.length > 0 && (
-                <CondoUnitTaxesCard
-                  units={condoUnitsData.units}
-                  totalUnitCount={condoUnitsData.totalApprox || condoUnitsData.units.length}
-                  billingBbl={billingBbl}
-                  buildingAddress={address}
-                  borough={borough}
-                  bin={bin}
-                  unitsLoading={condoUnitsData.loading}
-                />
-              )}
+              {/* Taxes Card - Context-aware: Condo buildings have tax info in CondoUnitsCard, unit pages show unit taxes */}
+              {/* CONDO BUILDING: Taxes are displayed in CondoUnitsCard above, no separate card needed */}
               
               {/* UNIT PAGE: Show regular TaxesCard for the unit BBL */}
               {isUnitLot && (
