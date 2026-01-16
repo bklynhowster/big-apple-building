@@ -23,8 +23,16 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import { useCondoUnits, type CondoUnit, type CondoUnitsInputRole } from '@/hooks/useCondoUnits';
-import { useCondoUnitTaxes, INITIAL_BATCH_SIZE, type CondoUnitTaxSummary } from '@/hooks/useCondoUnitTaxes';
-import type { PaymentStatus } from '@/hooks/usePropertyTaxes';
+import { 
+  useCondoUnitTaxes, 
+  INITIAL_TAX_BATCH_SIZE,
+  type CondoUnitTaxSummary,
+  type PaymentStatus,
+  formatUSDForTable,
+  formatDate,
+  formatLot,
+  getPaymentStatusInfo,
+} from '@/features/taxes';
 
 // Page size for displaying units (client-side pagination)
 const UNITS_PAGE_SIZE = 25;
