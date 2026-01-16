@@ -1079,8 +1079,9 @@ function EvidenceDrawer({
           </AlertDescription>
         </Alert>
 
-        {/* Scrollable body - min-h-0 is critical for flex containers with overflow */}
-        <ScrollArea className="flex-1 min-h-0 pr-4" style={{ overscrollBehavior: 'contain' }}>
+        {/* Scrollable body wrapper - min-h-0 is critical for flex containers with overflow */}
+        <div className="flex-1 min-h-0 overflow-hidden">
+          <ScrollArea className="h-full pr-4">
           <div className="space-y-4">
             {/* DOB Filings */}
             {stats.filingRefs.length > 0 && (
@@ -1265,7 +1266,8 @@ function EvidenceDrawer({
               </div>
             )}
           </div>
-        </ScrollArea>
+          </ScrollArea>
+        </div>
       </DialogContent>
     </Dialog>
   );
