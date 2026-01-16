@@ -37,12 +37,20 @@ import {
 } from '@/features/taxes';
 import { cn } from '@/lib/utils';
 
+export interface CondoMeta {
+  isCondo: boolean;
+  billingBbl: string | null;
+  totalUnits: number;
+  unitLabel: string | null; // Current unit's label when input is a unit BBL
+}
+
 interface UnitsTabProps {
   bbl: string;
   buildingAddress?: string;
   borough?: string;
   bin?: string;
   isCoop?: boolean;
+  onCondoMetaResolved?: (meta: CondoMeta) => void;
 }
 
 function LoadingSkeleton() {
@@ -77,6 +85,7 @@ export function UnitsTab({
   borough: buildingBorough, 
   bin: buildingBin,
   isCoop = false,
+  onCondoMetaResolved,
 }: UnitsTabProps) {
   const navigate = useNavigate();
   const isMobile = useIsMobileViewport();
@@ -117,6 +126,47 @@ export function UnitsTab({
   const totalUnits = condoData?.totalApprox || 0;
   const isCondo = condoData?.isCondo ?? false;
   const hasMorePages = units.length < totalUnits;
+
+  // Report condo metadata to parent when data loads
+  const lastReportedBblRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!onCondoMetaResolved) return;
+    if (isCoop) {
+      // For co-ops, report as not a condo
+      if (lastReportedBblRef.current !== bbl) {
+        lastReportedBblRef.current = bbl;
+        onCondoMetaResolved({
+          isCondo: false,
+          billingBbl: null,
+          totalUnits: 0,
+          unitLabel: null,
+        });
+      }
+      return;
+    }
+    
+    // Only report once data is loaded and BBL matches
+    if (!condoData || condoData.inputBbl !== bbl) return;
+    if (lastReportedBblRef.current === bbl) return;
+    
+    lastReportedBblRef.current = bbl;
+    
+    // Find current unit's label when input is a unit BBL
+    let unitLabel: string | null = null;
+    if (condoData.inputRole === 'unit' && condoData.units.length > 0) {
+      const currentUnit = condoData.units.find((u) => u.unitBbl === condoData.inputBbl);
+      if (currentUnit) {
+        unitLabel = currentUnit.unitLabel;
+      }
+    }
+    
+    onCondoMetaResolved({
+      isCondo: condoData.isCondo,
+      billingBbl: condoData.billingBbl,
+      totalUnits: condoData.totalApprox || condoData.units.length,
+      unitLabel,
+    });
+  }, [bbl, isCoop, condoData, onCondoMetaResolved]);
 
   // Filter units by search term
   const filteredUnits = useMemo(() => {
