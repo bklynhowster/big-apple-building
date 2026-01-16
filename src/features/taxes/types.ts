@@ -40,11 +40,12 @@ export interface DebugInfo {
     today: string;
     latest_due_date: string | null;
     latest_period_balance: number | null;
+    max_prior_balance: number | null;
+    arrears_final: number;
+    running_balance_detected: boolean;
     periods_considered: number;
     periods_included_in_arrears: string[];
-    max_prior_balance: number | null;
     exclusion_reason?: string;
-    running_balance_detected?: boolean;
   };
 }
 
