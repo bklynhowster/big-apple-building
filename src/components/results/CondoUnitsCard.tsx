@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
-import { Building2, Home, Search, ArrowLeft, AlertCircle, Info, Loader2, RefreshCw, CheckCircle2, XCircle, Clock } from 'lucide-react';
+import { Building2, Home, Search, ArrowLeft, AlertCircle, Info, Loader2, RefreshCw, CheckCircle2, XCircle, Clock, ChevronDown } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -25,6 +25,9 @@ import {
 import { useCondoUnits, type CondoUnit, type CondoUnitsInputRole } from '@/hooks/useCondoUnits';
 import { useCondoUnitTaxes, INITIAL_BATCH_SIZE, type CondoUnitTaxSummary } from '@/hooks/useCondoUnitTaxes';
 import type { PaymentStatus } from '@/hooks/usePropertyTaxes';
+
+// Page size for displaying units (client-side pagination)
+const UNITS_PAGE_SIZE = 25;
 
 interface CondoUnitsCardProps {
   bbl: string;
@@ -128,6 +131,9 @@ export function CondoUnitsCard({
   const { loading, loadingMore, error, data, fetchFirstPage, fetchNextPage, retry } = useCondoUnits();
   const [searchQuery, setSearchQuery] = useState('');
   
+  // Client-side pagination: how many units to show in the table
+  const [visibleUnitCount, setVisibleUnitCount] = useState(UNITS_PAGE_SIZE);
+  
   // Tax lazy loading state - how many units to load taxes for
   const [taxVisibleCount, setTaxVisibleCount] = useState(INITIAL_BATCH_SIZE);
   const lastBblRef = useRef<string | null>(null);
@@ -192,10 +198,11 @@ export function CondoUnitsCard({
     }
   }, [bbl, fetchFirstPage]);
 
-  // Reset tax state when BBL changes
+  // Reset state when BBL changes
   useEffect(() => {
     if (bbl !== lastBblRef.current) {
       lastBblRef.current = bbl;
+      setVisibleUnitCount(UNITS_PAGE_SIZE);
       setTaxVisibleCount(INITIAL_BATCH_SIZE);
       resetTaxes();
     }
@@ -213,10 +220,6 @@ export function CondoUnitsCard({
   // Fetch taxes for visible units when they change (only on building pages)
   useEffect(() => {
     if (!isBuilding || unitsForTaxFetch.length === 0) return;
-
-    // Determine initial fetch size based on total units
-    const totalUnits = data?.units?.length || 0;
-    const shouldFetchAll = totalUnits <= INITIAL_BATCH_SIZE;
     
     // Compute which units need fetching
     const unitsToFetch = unitsForTaxFetch
@@ -228,6 +231,7 @@ export function CondoUnitsCard({
     }
   }, [unitsForTaxFetch, fetchBatch, isBuilding, data?.units?.length]); // unitTaxes intentionally excluded
 
+  // Filter units by search query (searches across ALL loaded units)
   const filteredUnits = useMemo(() => {
     if (!data?.units) return [];
     if (!searchQuery.trim()) return data.units;
@@ -243,6 +247,20 @@ export function CondoUnitsCard({
       );
     });
   }, [data?.units, searchQuery]);
+
+  // Units to display (client-side pagination) - only applies when NOT searching
+  const displayedUnits = useMemo(() => {
+    if (searchQuery.trim()) {
+      // When searching, show all filtered results (up to a reasonable limit)
+      return filteredUnits.slice(0, Math.max(visibleUnitCount, 100));
+    }
+    return filteredUnits.slice(0, visibleUnitCount);
+  }, [filteredUnits, visibleUnitCount, searchQuery]);
+
+  // Pagination state
+  const totalFilteredUnits = filteredUnits.length;
+  const displayedCount = displayedUnits.length;
+  const hasMoreUnitsToShow = displayedCount < totalFilteredUnits;
 
   const currentUnitBbl = data?.inputRole === 'unit' ? data.inputBbl : null;
 
@@ -277,6 +295,16 @@ export function CondoUnitsCard({
     }
     navigate(`/results?${params.toString()}`);
   };
+
+  // Load more units in the display (client-side pagination)
+  const handleLoadMoreUnits = useCallback(() => {
+    setVisibleUnitCount((prev) => Math.min(prev + UNITS_PAGE_SIZE, totalFilteredUnits));
+  }, [totalFilteredUnits]);
+
+  // Load all units in the display
+  const handleLoadAllUnits = useCallback(() => {
+    setVisibleUnitCount(totalFilteredUnits);
+  }, [totalFilteredUnits]);
 
   // Load more taxes - increases visible count for tax fetching
   const handleLoadMoreTaxes = useCallback(() => {
@@ -363,7 +391,6 @@ export function CondoUnitsCard({
   // Defensive: ensure units is always an array
   const units = Array.isArray(data.units) ? data.units : [];
   const hasUnits = units.length > 0;
-  const hasMore = data.totalApprox > 0 ? units.length < data.totalApprox : false;
   const totalUnits = units.length;
   
   // Tax loading progress
@@ -516,20 +543,36 @@ export function CondoUnitsCard({
               </div>
             )}
 
-            {/* Search */}
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Search by unit label, lot, or BBL…"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-9"
-              />
+            {/* Search + showing indicator */}
+            <div className="flex flex-col gap-2">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search by unit label, lot, or BBL…"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="pl-9"
+                />
+              </div>
+              <div className="flex items-center justify-between text-xs text-muted-foreground">
+                <span>
+                  Showing <strong className="text-foreground">{displayedCount}</strong> of{' '}
+                  <strong className="text-foreground">{totalFilteredUnits}</strong> units
+                  {searchQuery.trim() && totalFilteredUnits !== totalUnits && (
+                    <span className="ml-1">(filtered from {totalUnits} total)</span>
+                  )}
+                </span>
+                {searchQuery.trim() && hasMoreUnitsToShow && (
+                  <span className="text-muted-foreground italic">
+                    Search covers loaded units only
+                  </span>
+                )}
+              </div>
             </div>
 
             {/* Table */}
             <div className="border rounded-md">
-              <ScrollArea className={filteredUnits.length > 10 ? 'h-96' : undefined}>
+              <ScrollArea className={displayedUnits.length > 10 ? 'h-96' : undefined}>
                 <Table>
                   <TableHeader>
                     <TableRow className="bg-muted/50">
@@ -549,14 +592,14 @@ export function CondoUnitsCard({
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {filteredUnits.length === 0 ? (
+                    {displayedUnits.length === 0 ? (
                       <TableRow>
                         <TableCell colSpan={isBuilding ? 8 : 4} className="text-center text-sm text-muted-foreground py-8">
                           No units match your search.
                         </TableCell>
                       </TableRow>
                     ) : (
-                      filteredUnits.map((unit) => {
+                      displayedUnits.map((unit) => {
                         const isCurrent = Boolean(currentUnitBbl && unit.unitBbl === currentUnitBbl);
                         const displayLabel = unit.unitLabel || `Lot ${formatLot(unit.lot)}`;
                         const labelSource = unit.unitLabelSource || 'unknown';
@@ -707,11 +750,33 @@ export function CondoUnitsCard({
                 </Table>
               </ScrollArea>
 
-              {hasMore && (
-                <div className="p-2 border-t text-center">
-                  <Button variant="ghost" size="sm" onClick={() => fetchNextPage()} disabled={loadingMore}>
-                    {loadingMore ? 'Loading…' : `Load more (${data.totalApprox - units.length} remaining)`}
+              {/* Unit pagination controls */}
+              {hasMoreUnitsToShow && (
+                <div className="p-3 border-t flex items-center justify-center gap-3">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleLoadMoreUnits}
+                    className="gap-1.5"
+                  >
+                    <ChevronDown className="h-3.5 w-3.5" />
+                    Load next {Math.min(UNITS_PAGE_SIZE, totalFilteredUnits - displayedCount)}
                   </Button>
+                  {totalFilteredUnits - displayedCount > UNITS_PAGE_SIZE && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={handleLoadAllUnits}
+                      className="text-xs"
+                    >
+                      Load all ({totalFilteredUnits - displayedCount} remaining)
+                    </Button>
+                  )}
+                </div>
+              )}
+              {!hasMoreUnitsToShow && totalFilteredUnits > UNITS_PAGE_SIZE && (
+                <div className="p-2 border-t text-center text-xs text-muted-foreground">
+                  All {totalFilteredUnits} units loaded
                 </div>
               )}
             </div>
