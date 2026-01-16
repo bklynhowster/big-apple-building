@@ -15,7 +15,9 @@ import {
 interface UseCondoUnitTaxesResult {
   /** Map of unitBbl -> tax data */
   unitTaxes: Map<string, CondoUnitTaxSummary>;
-  /** Fetch taxes for a batch of unit BBLs */
+  /** Ensure taxes are loaded for a set of BBLs (dedupes and fetches only missing) */
+  ensureLoaded: (units: Array<{ unitBbl: string; unitLabel: string | null }>) => void;
+  /** Fetch taxes for a batch of unit BBLs (replaces fetchBatch for backwards compat) */
   fetchBatch: (units: Array<{ unitBbl: string; unitLabel: string | null }>) => void;
   /** Fetch a single unit's taxes */
   fetchOne: (unitBbl: string, unitLabel: string | null) => void;
@@ -31,6 +33,10 @@ interface UseCondoUnitTaxesResult {
   arrearsCount: number;
   /** Count of units with unpaid status */
   unpaidCount: number;
+  /** Check if a BBL is in-flight (loading) */
+  isLoading: (unitBbl: string) => boolean;
+  /** Check if a BBL has been requested (in-flight or loaded) */
+  isRequested: (unitBbl: string) => boolean;
 }
 
 // In-memory cache for unit taxes
@@ -288,6 +294,45 @@ export function useCondoUnitTaxes(): UseCondoUnitTaxesResult {
     setBatchLoading(false);
   }, []);
 
+  // ensureLoaded: dedupes BBLs already fetched or in-flight, fetches only missing
+  const ensureLoaded = useCallback((
+    units: Array<{ unitBbl: string; unitLabel: string | null }>
+  ) => {
+    if (units.length === 0) return;
+
+    // Filter out units that are already loaded or in-flight
+    const missingUnits = units.filter(u => {
+      const existing = unitTaxes.get(u.unitBbl);
+      // Skip if already has data (loaded or error)
+      if (existing && !existing.loading) return false;
+      // Skip if in-flight
+      if (inFlightBblsRef.current.has(u.unitBbl)) return false;
+      return true;
+    });
+
+    if (missingUnits.length === 0) {
+      if (DEBUG_MODE) console.log('[useCondoUnitTaxes] ensureLoaded: all units already loaded/in-flight');
+      return;
+    }
+
+    if (DEBUG_MODE) {
+      console.log(`[useCondoUnitTaxes] ensureLoaded: fetching ${missingUnits.length} missing units`);
+    }
+
+    // Use fetchBatch for the missing units
+    fetchBatch(missingUnits);
+  }, [unitTaxes, fetchBatch]);
+
+  // Check if a specific BBL is currently loading
+  const isLoading = useCallback((unitBbl: string): boolean => {
+    return inFlightBblsRef.current.has(unitBbl);
+  }, []);
+
+  // Check if a BBL has been requested (either in-flight or in unitTaxes)
+  const isRequested = useCallback((unitBbl: string): boolean => {
+    return inFlightBblsRef.current.has(unitBbl) || unitTaxes.has(unitBbl);
+  }, [unitTaxes]);
+
   // Cleanup on unmount
   useEffect(() => {
     return () => {
@@ -312,6 +357,7 @@ export function useCondoUnitTaxes(): UseCondoUnitTaxesResult {
 
   return {
     unitTaxes,
+    ensureLoaded,
     fetchBatch,
     fetchOne,
     reset,
@@ -320,6 +366,8 @@ export function useCondoUnitTaxes(): UseCondoUnitTaxesResult {
     errorCount,
     arrearsCount,
     unpaidCount,
+    isLoading,
+    isRequested,
   };
 }
 
