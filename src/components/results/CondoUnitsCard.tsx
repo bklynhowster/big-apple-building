@@ -4,9 +4,9 @@ import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Skeleton } from '@/components/ui/skeleton';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Input } from '@/components/ui/input';
+import { Skeleton } from '@/components/ui/skeleton';
 import {
   Table,
   TableBody,
@@ -29,10 +29,9 @@ import {
   formatDate,
   formatLot,
   getPaymentStatusInfo,
+  UNITS_PAGE_SIZE,
+  LOAD_ALL_BATCH_DELAY_MS,
 } from '@/features/taxes';
-
-// Page size for displaying units (client-side pagination)
-const UNITS_PAGE_SIZE = 25;
 
 // Debug mode for tax fetching
 const DEBUG_TAX_SYNC = typeof window !== 'undefined' && 
@@ -106,21 +105,23 @@ export function CondoUnitsCard({
   // Client-side pagination: how many units to show in the table
   const [visibleUnitCount, setVisibleUnitCount] = useState(UNITS_PAGE_SIZE);
   
-  const lastBblRef = useRef<string | null>(null);
+  // "Load all" progressive loading state
+  const [loadingAll, setLoadingAll] = useState(false);
+  const loadingAllRef = useRef(false);
   
-  // Track which BBLs we've already requested taxes for
-  const requestedTaxBblsRef = useRef<Set<string>>(new Set());
+  const lastBblRef = useRef<string | null>(null);
   
   // Tax hook
   const {
     unitTaxes,
-    fetchBatch,
+    ensureLoaded,
     fetchOne,
     reset: resetTaxes,
     batchLoading: taxBatchLoading,
     loadedCount: taxLoadedCount,
     arrearsCount,
     unpaidCount,
+    isLoading: isTaxLoading,
   } = useCondoUnitTaxes();
 
   const lotLooksLikeBilling = useMemo(() => {
@@ -176,7 +177,8 @@ export function CondoUnitsCard({
     if (bbl !== lastBblRef.current) {
       lastBblRef.current = bbl;
       setVisibleUnitCount(UNITS_PAGE_SIZE);
-      requestedTaxBblsRef.current.clear();
+      setLoadingAll(false);
+      loadingAllRef.current = false;
       resetTaxes();
     }
   }, [bbl, resetTaxes]);
@@ -214,22 +216,18 @@ export function CondoUnitsCard({
   useEffect(() => {
     if (!isBuilding || displayedUnits.length === 0) return;
     
-    // Find units that need tax fetching (not already requested and not in unitTaxes)
-    const unitsToFetch = displayedUnits
-      .filter(u => !requestedTaxBblsRef.current.has(u.unitBbl) && !unitTaxes.has(u.unitBbl))
-      .map(u => ({ unitBbl: u.unitBbl, unitLabel: u.unitLabel }));
+    // Use ensureLoaded which dedupes automatically
+    const unitsToFetch = displayedUnits.map(u => ({ 
+      unitBbl: u.unitBbl, 
+      unitLabel: u.unitLabel 
+    }));
 
-    if (unitsToFetch.length > 0) {
-      if (DEBUG_TAX_SYNC) {
-        console.log(`[CondoUnitsCard] Auto-fetching taxes for ${unitsToFetch.length} displayed units`);
-      }
-      // Mark as requested before fetching to prevent duplicate requests
-      for (const u of unitsToFetch) {
-        requestedTaxBblsRef.current.add(u.unitBbl);
-      }
-      fetchBatch(unitsToFetch);
+    if (DEBUG_TAX_SYNC) {
+      console.log(`[CondoUnitsCard] Ensuring taxes loaded for ${unitsToFetch.length} displayed units`);
     }
-  }, [displayedUnits, fetchBatch, isBuilding]); // unitTaxes intentionally excluded to prevent loops
+    
+    ensureLoaded(unitsToFetch);
+  }, [displayedUnits, ensureLoaded, isBuilding]);
 
   // Pagination state
   const totalFilteredUnits = filteredUnits.length;
@@ -275,15 +273,38 @@ export function CondoUnitsCard({
     setVisibleUnitCount((prev) => Math.min(prev + UNITS_PAGE_SIZE, totalFilteredUnits));
   }, [totalFilteredUnits]);
 
-  // Load all units in the display
-  const handleLoadAllUnits = useCallback(() => {
-    setVisibleUnitCount(totalFilteredUnits);
-  }, [totalFilteredUnits]);
+  // Load all units progressively (avoids UI freeze on large buildings)
+  const handleLoadAllUnits = useCallback(async () => {
+    if (loadingAllRef.current) return;
+    
+    loadingAllRef.current = true;
+    setLoadingAll(true);
+    
+    const targetCount = totalFilteredUnits;
+    let current = visibleUnitCount;
+    
+    while (current < targetCount && loadingAllRef.current) {
+      const nextCount = Math.min(current + UNITS_PAGE_SIZE, targetCount);
+      setVisibleUnitCount(nextCount);
+      current = nextCount;
+      
+      // Yield to main thread to keep UI responsive
+      await new Promise(resolve => setTimeout(resolve, LOAD_ALL_BATCH_DELAY_MS));
+    }
+    
+    loadingAllRef.current = false;
+    setLoadingAll(false);
+  }, [totalFilteredUnits, visibleUnitCount]);
+
+  // Cancel "load all" when navigating away
+  useEffect(() => {
+    return () => {
+      loadingAllRef.current = false;
+    };
+  }, []);
 
   // Retry a single unit's tax fetch
   const handleRetryTax = useCallback((unitBbl: string, unitLabel: string | null) => {
-    // Remove from requested set so it can be re-fetched
-    requestedTaxBblsRef.current.delete(unitBbl);
     fetchOne(unitBbl, unitLabel);
   }, [fetchOne]);
 
@@ -294,8 +315,8 @@ export function CondoUnitsCard({
     const existing = unitTaxes.get(unitBbl);
     if (existing) return existing;
     
-    // If this unit is displayed and was requested, show loading
-    if (requestedTaxBblsRef.current.has(unitBbl)) {
+    // If this unit is in-flight (loading), show loading state
+    if (isTaxLoading(unitBbl)) {
       return {
         unitBbl,
         unitLabel,
@@ -305,8 +326,16 @@ export function CondoUnitsCard({
       };
     }
     
-    return null; // Not yet requested
-  }, [isBuilding, unitTaxes]);
+    // For displayed units without tax data yet, show loading
+    // (they will be fetched by ensureLoaded effect)
+    return {
+      unitBbl,
+      unitLabel,
+      loading: true,
+      error: null,
+      data: null,
+    };
+  }, [isBuilding, unitTaxes, isTaxLoading]);
 
   if (loading) return hidden ? null : <LoadingSkeleton />;
 
@@ -589,25 +618,36 @@ export function CondoUnitsCard({
                               <>
                                 {/* Latest Bill */}
                                 <TableCell>
-                                  {!taxSummary ? (
-                                    <span className="text-muted-foreground text-xs">—</span>
-                                  ) : taxSummary.loading ? (
-                                    <Skeleton className="h-4 w-16" />
+                                  {taxSummary.loading ? (
+                                    <span className="text-muted-foreground text-xs italic">Loading…</span>
+                                  ) : taxSummary.error ? (
+                                    <TooltipProvider>
+                                      <Tooltip>
+                                        <TooltipTrigger asChild>
+                                          <span className="text-destructive text-xs cursor-help">Error</span>
+                                        </TooltipTrigger>
+                                        <TooltipContent>
+                                          <p className="text-xs">{taxSummary.error}</p>
+                                        </TooltipContent>
+                                      </Tooltip>
+                                    </TooltipProvider>
+                                  ) : taxSummary.data?.no_data_found ? (
+                                    <span className="text-muted-foreground text-xs">No bill found</span>
                                   ) : taxSummary.data ? (
                                     <span className="text-sm font-medium">
                                       {formatUSDForTable(taxSummary.data.latest_bill_amount)}
                                     </span>
                                   ) : (
-                                    <span className="text-muted-foreground text-xs">—</span>
+                                    <span className="text-muted-foreground text-xs">No bill found</span>
                                   )}
                                 </TableCell>
                                 
                                 {/* Due Date */}
                                 <TableCell>
-                                  {!taxSummary ? (
+                                  {taxSummary.loading ? (
+                                    <span className="text-muted-foreground text-xs italic">—</span>
+                                  ) : taxSummary.error ? (
                                     <span className="text-muted-foreground text-xs">—</span>
-                                  ) : taxSummary.loading ? (
-                                    <Skeleton className="h-4 w-16" />
                                   ) : taxSummary.data?.latest_due_date ? (
                                     <span className="text-sm text-muted-foreground">
                                       {formatDate(taxSummary.data.latest_due_date)}
@@ -619,10 +659,10 @@ export function CondoUnitsCard({
                                 
                                 {/* Status */}
                                 <TableCell>
-                                  {!taxSummary ? (
+                                  {taxSummary.loading ? (
+                                    <span className="text-muted-foreground text-xs italic">—</span>
+                                  ) : taxSummary.error ? (
                                     <span className="text-muted-foreground text-xs">—</span>
-                                  ) : taxSummary.loading ? (
-                                    <Skeleton className="h-4 w-16" />
                                   ) : statusInfo ? (
                                     <Badge 
                                       variant={statusInfo.variant as 'default' | 'secondary' | 'destructive' | 'outline'}
@@ -638,10 +678,10 @@ export function CondoUnitsCard({
                                 
                                 {/* Arrears */}
                                 <TableCell>
-                                  {!taxSummary ? (
+                                  {taxSummary.loading ? (
+                                    <span className="text-muted-foreground text-xs italic">—</span>
+                                  ) : taxSummary.error ? (
                                     <span className="text-muted-foreground text-xs">—</span>
-                                  ) : taxSummary.loading ? (
-                                    <Skeleton className="h-4 w-12" />
                                   ) : hasArrears ? (
                                     <Badge variant="destructive" className="text-xs">
                                       {formatUSDForTable(taxSummary.data?.arrears)}
@@ -680,6 +720,7 @@ export function CondoUnitsCard({
                     variant="outline"
                     size="sm"
                     onClick={handleLoadMoreUnits}
+                    disabled={loadingAll}
                     className="gap-1.5"
                   >
                     <ChevronDown className="h-3.5 w-3.5" />
@@ -690,9 +731,14 @@ export function CondoUnitsCard({
                       variant="ghost"
                       size="sm"
                       onClick={handleLoadAllUnits}
-                      className="text-xs"
+                      disabled={loadingAll}
+                      className="text-xs gap-1.5"
                     >
-                      Load all ({totalFilteredUnits - displayedCount} remaining)
+                      {loadingAll && <Loader2 className="h-3 w-3 animate-spin" />}
+                      {loadingAll 
+                        ? `Loading… ${displayedCount} / ${totalFilteredUnits}`
+                        : `Load all (${totalFilteredUnits - displayedCount} remaining)`
+                      }
                     </Button>
                   )}
                 </div>

@@ -175,6 +175,12 @@ export interface CondoUnitTaxPreviewProps {
 /** Initial number of units to fetch taxes for */
 export const INITIAL_TAX_BATCH_SIZE = 10;
 
+/** Units per page for condo unit list */
+export const UNITS_PAGE_SIZE = 10;
+
+/** Delay between "Load all" batch increments (ms) */
+export const LOAD_ALL_BATCH_DELAY_MS = 100;
+
 /** Maximum concurrent tax fetch requests */
 export const MAX_CONCURRENT_TAX_REQUESTS = 3;
 
