@@ -35,9 +35,16 @@ import {
   LOAD_ALL_BATCH_DELAY_MS,
 } from '@/features/taxes';
 
-// Debug mode for tax fetching
+// Debug mode for tax fetching - enabled via ?debug=1
 const DEBUG_TAX_SYNC = typeof window !== 'undefined' && 
-  new URLSearchParams(window.location.search).has('debugTaxSync');
+  new URLSearchParams(window.location.search).has('debug');
+
+// Normalize BBL to ensure consistent 10-digit format
+function normalizeBbl(bbl: string): string {
+  if (!bbl) return '';
+  const cleaned = bbl.replace(/\D/g, '');
+  return cleaned.padStart(10, '0').slice(-10);
+}
 
 interface CondoUnitsCardProps {
   bbl: string;
@@ -216,21 +223,33 @@ export function CondoUnitsCard({
   }, [filteredUnits, visibleUnitCount, searchQuery]);
 
   // Auto-fetch taxes for displayed units (only on building pages)
+  // This effect is a safety net - handleLoadMoreUnits also calls ensureLoaded directly
   useEffect(() => {
     if (!isBuilding || displayedUnits.length === 0) return;
     
-    // Use ensureLoaded which dedupes automatically
+    // Normalize BBLs for consistent lookup
     const unitsToFetch = displayedUnits.map(u => ({ 
-      unitBbl: u.unitBbl, 
+      unitBbl: normalizeBbl(u.unitBbl), 
       unitLabel: u.unitLabel 
     }));
 
     if (DEBUG_TAX_SYNC) {
-      console.log(`[CondoUnitsCard] Ensuring taxes loaded for ${unitsToFetch.length} displayed units`);
+      const taxMapKeys = Array.from(unitTaxes.keys());
+      const missingUnits = unitsToFetch.filter(u => !unitTaxes.has(u.unitBbl));
+      console.log(`[CondoUnitsCard] Tax sync check:`, {
+        visibleUnitCount,
+        displayedUnitsLength: displayedUnits.length,
+        firstThreeKeys: unitsToFetch.slice(0, 3).map(u => u.unitBbl),
+        lastThreeKeys: unitsToFetch.slice(-3).map(u => u.unitBbl),
+        taxMapSize: unitTaxes.size,
+        taxMapSampleKeys: taxMapKeys.slice(0, 5),
+        missingCount: missingUnits.length,
+        missingFirst5: missingUnits.slice(0, 5).map(u => `${u.unitLabel || 'no-label'} (${u.unitBbl})`),
+      });
     }
     
     ensureLoaded(unitsToFetch);
-  }, [displayedUnits, ensureLoaded, isBuilding]);
+  }, [displayedUnits, ensureLoaded, isBuilding, unitTaxes, visibleUnitCount]);
 
   // Pagination state
   const totalFilteredUnits = filteredUnits.length;
@@ -272,9 +291,28 @@ export function CondoUnitsCard({
   };
 
   // Load more units in the display (client-side pagination)
+  // Immediately triggers ensureLoaded for new batch (not just via effect)
   const handleLoadMoreUnits = useCallback(() => {
-    setVisibleUnitCount((prev) => Math.min(prev + UNITS_PAGE_SIZE, totalFilteredUnits));
-  }, [totalFilteredUnits]);
+    const newCount = Math.min(visibleUnitCount + UNITS_PAGE_SIZE, totalFilteredUnits);
+    setVisibleUnitCount(newCount);
+    
+    // Immediately fetch taxes for the newly revealed units
+    if (isBuilding) {
+      const newUnits = filteredUnits.slice(visibleUnitCount, newCount).map(u => ({
+        unitBbl: normalizeBbl(u.unitBbl),
+        unitLabel: u.unitLabel,
+      }));
+      
+      if (DEBUG_TAX_SYNC) {
+        console.log(`[CondoUnitsCard] Load next: fetching ${newUnits.length} new units`, 
+          newUnits.slice(0, 3).map(u => u.unitBbl));
+      }
+      
+      if (newUnits.length > 0) {
+        ensureLoaded(newUnits);
+      }
+    }
+  }, [visibleUnitCount, totalFilteredUnits, isBuilding, filteredUnits, ensureLoaded]);
 
   // Load all units progressively using requestAnimationFrame for smooth rendering
   const handleLoadAllUnits = useCallback(() => {
@@ -330,13 +368,21 @@ export function CondoUnitsCard({
   const getTaxSummary = useCallback((unitBbl: string, unitLabel: string | null): CondoUnitTaxSummary | null => {
     if (!isBuilding) return null;
     
-    const existing = unitTaxes.get(unitBbl);
+    // Normalize the BBL for consistent lookup
+    const normalizedBbl = normalizeBbl(unitBbl);
+    
+    // Check if we have data in the map (using normalized key)
+    const existing = unitTaxes.get(normalizedBbl);
     if (existing) return existing;
     
+    // Also check original BBL in case of inconsistency
+    const existingOriginal = unitTaxes.get(unitBbl);
+    if (existingOriginal) return existingOriginal;
+    
     // If this unit is in-flight (loading), show loading state
-    if (isTaxLoading(unitBbl)) {
+    if (isTaxLoading(normalizedBbl) || isTaxLoading(unitBbl)) {
       return {
-        unitBbl,
+        unitBbl: normalizedBbl,
         unitLabel,
         loading: true,
         error: null,
@@ -344,12 +390,12 @@ export function CondoUnitsCard({
       };
     }
     
-    // For displayed units without tax data yet, show loading
-    // (they will be fetched by ensureLoaded effect)
+    // Unit has not been fetched yet - this will be picked up by ensureLoaded
+    // Show "not fetched yet" distinct from "loading"
     return {
-      unitBbl,
+      unitBbl: normalizedBbl,
       unitLabel,
-      loading: true,
+      loading: true, // Will display "Loading..." in the UI
       error: null,
       data: null,
     };
@@ -547,6 +593,41 @@ export function CondoUnitsCard({
                 )}
               </div>
             </div>
+
+            {/* Debug Panel (only when ?debug=1) */}
+            {DEBUG_TAX_SYNC && isBuilding && (
+              <div className="p-3 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-md text-xs font-mono space-y-2">
+                <div className="font-semibold text-amber-800 dark:text-amber-200">Tax Debug Panel</div>
+                <div className="grid grid-cols-2 gap-2 text-amber-700 dark:text-amber-300">
+                  <div>visibleUnitCount: {visibleUnitCount}</div>
+                  <div>displayedUnits: {displayedUnits.length}</div>
+                  <div>taxMap size: {unitTaxes.size}</div>
+                  <div>taxBatchLoading: {String(taxBatchLoading)}</div>
+                </div>
+                {(() => {
+                  // Calculate missing units for debug display
+                  const missingUnits = displayedUnits.filter(u => {
+                    const normalized = normalizeBbl(u.unitBbl);
+                    return !unitTaxes.has(normalized) && !unitTaxes.has(u.unitBbl);
+                  });
+                  return (
+                    <>
+                      <div className="text-amber-700 dark:text-amber-300">
+                        <strong>Displayed units missing tax:</strong> {missingUnits.length}
+                      </div>
+                      {missingUnits.length > 0 && (
+                        <ul className="list-disc list-inside text-amber-600 dark:text-amber-400 max-h-24 overflow-auto">
+                          {missingUnits.slice(0, 5).map(u => (
+                            <li key={u.unitBbl}>{u.unitLabel || 'no-label'} ({normalizeBbl(u.unitBbl)})</li>
+                          ))}
+                          {missingUnits.length > 5 && <li>…and {missingUnits.length - 5} more</li>}
+                        </ul>
+                      )}
+                    </>
+                  );
+                })()}
+              </div>
+            )}
 
             {/* Mobile: Card list layout */}
             {isMobile ? (
