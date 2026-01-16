@@ -46,6 +46,13 @@ const unitTaxCache = new Map<string, { data: PropertyTaxResult; timestamp: numbe
 const DEBUG_MODE = typeof window !== 'undefined' && 
   new URLSearchParams(window.location.search).has('debug');
 
+// Normalize BBL to ensure consistent 10-digit format
+function normalizeBbl(bbl: string): string {
+  if (!bbl) return '';
+  const cleaned = bbl.replace(/\D/g, '');
+  return cleaned.padStart(10, '0').slice(-10);
+}
+
 export function useCondoUnitTaxes(): UseCondoUnitTaxesResult {
   const [unitTaxes, setUnitTaxes] = useState<Map<string, CondoUnitTaxSummary>>(() => new Map());
   const [batchLoading, setBatchLoading] = useState(false);
@@ -59,16 +66,19 @@ export function useCondoUnitTaxes(): UseCondoUnitTaxesResult {
     unitBbl: string,
     signal?: AbortSignal
   ): Promise<PropertyTaxResult | null> => {
+    // Normalize BBL for consistent cache key
+    const normalizedBbl = normalizeBbl(unitBbl);
+    
     // Check cache first
-    const cached = unitTaxCache.get(unitBbl);
+    const cached = unitTaxCache.get(normalizedBbl);
     if (cached && Date.now() - cached.timestamp < TAX_CACHE_TTL_MS) {
-      if (DEBUG_MODE) console.log(`[useCondoUnitTaxes] Cache HIT for ${unitBbl}`);
+      if (DEBUG_MODE) console.log(`[useCondoUnitTaxes] Cache HIT for ${normalizedBbl}`);
       return cached.data;
     }
 
     try {
       const { data: result, error: fnError } = await supabase.functions.invoke('property-taxes', {
-        body: { bbl: unitBbl, debug: false },
+        body: { bbl: normalizedBbl, debug: false },
       });
 
       if (signal?.aborted) return null;
@@ -83,8 +93,8 @@ export function useCondoUnitTaxes(): UseCondoUnitTaxesResult {
 
       const taxData = result as PropertyTaxResult;
       
-      // Update cache
-      unitTaxCache.set(unitBbl, { data: taxData, timestamp: Date.now() });
+      // Update cache with normalized key
+      unitTaxCache.set(normalizedBbl, { data: taxData, timestamp: Date.now() });
       
       return taxData;
     } catch (err) {
@@ -97,19 +107,22 @@ export function useCondoUnitTaxes(): UseCondoUnitTaxesResult {
 
   // Fetch taxes for a single unit and update state
   const fetchOne = useCallback((unitBbl: string, unitLabel: string | null) => {
+    // Normalize BBL
+    const normalizedBbl = normalizeBbl(unitBbl);
+    
     // Skip if already in-flight
-    if (inFlightBblsRef.current.has(unitBbl)) {
-      if (DEBUG_MODE) console.log(`[useCondoUnitTaxes] Skipping ${unitBbl} - already in flight`);
+    if (inFlightBblsRef.current.has(normalizedBbl)) {
+      if (DEBUG_MODE) console.log(`[useCondoUnitTaxes] Skipping ${normalizedBbl} - already in flight`);
       return;
     }
     
-    inFlightBblsRef.current.add(unitBbl);
+    inFlightBblsRef.current.add(normalizedBbl);
     
     // Set loading state
     setUnitTaxes(prev => {
       const next = new Map(prev);
-      next.set(unitBbl, {
-        unitBbl,
+      next.set(normalizedBbl, {
+        unitBbl: normalizedBbl,
         unitLabel,
         loading: true,
         error: null,
@@ -121,13 +134,13 @@ export function useCondoUnitTaxes(): UseCondoUnitTaxesResult {
     // Start async fetch
     (async () => {
       try {
-        const taxData = await fetchSingleUnit(unitBbl, abortControllerRef.current?.signal);
+        const taxData = await fetchSingleUnit(normalizedBbl, abortControllerRef.current?.signal);
         
         if (taxData) {
           setUnitTaxes(prev => {
             const next = new Map(prev);
-            next.set(unitBbl, {
-              unitBbl,
+            next.set(normalizedBbl, {
+              unitBbl: normalizedBbl,
               unitLabel,
               loading: false,
               error: null,
@@ -139,8 +152,8 @@ export function useCondoUnitTaxes(): UseCondoUnitTaxesResult {
       } catch (err) {
         setUnitTaxes(prev => {
           const next = new Map(prev);
-          next.set(unitBbl, {
-            unitBbl,
+          next.set(normalizedBbl, {
+            unitBbl: normalizedBbl,
             unitLabel,
             loading: false,
             error: err instanceof Error ? err.message : 'Failed to fetch tax data',
@@ -149,7 +162,7 @@ export function useCondoUnitTaxes(): UseCondoUnitTaxesResult {
           return next;
         });
       } finally {
-        inFlightBblsRef.current.delete(unitBbl);
+        inFlightBblsRef.current.delete(normalizedBbl);
       }
     })();
   }, [fetchSingleUnit]);
@@ -159,6 +172,12 @@ export function useCondoUnitTaxes(): UseCondoUnitTaxesResult {
     units: Array<{ unitBbl: string; unitLabel: string | null }>
   ) => {
     if (units.length === 0) return;
+
+    // Normalize all BBLs upfront
+    const normalizedUnits = units.map(u => ({
+      unitBbl: normalizeBbl(u.unitBbl),
+      unitLabel: u.unitLabel,
+    }));
 
     // Cancel previous batch
     if (abortControllerRef.current) {
@@ -170,11 +189,11 @@ export function useCondoUnitTaxes(): UseCondoUnitTaxesResult {
     setBatchLoading(true);
 
     if (DEBUG_MODE) {
-      console.log(`[useCondoUnitTaxes] Starting batch fetch for ${units.length} units`);
+      console.log(`[useCondoUnitTaxes] Starting batch fetch for ${normalizedUnits.length} units`);
     }
 
     // Filter out in-flight units
-    const unitsToFetch = units.filter(u => !inFlightBblsRef.current.has(u.unitBbl));
+    const unitsToFetch = normalizedUnits.filter(u => !inFlightBblsRef.current.has(u.unitBbl));
 
     if (unitsToFetch.length === 0) {
       setBatchLoading(false);
@@ -213,7 +232,7 @@ export function useCondoUnitTaxes(): UseCondoUnitTaxesResult {
         
         const promises = batch.map(async (unit) => {
           try {
-            // Check cache
+            // Check cache (already normalized)
             const cached = unitTaxCache.get(unit.unitBbl);
             if (cached && Date.now() - cached.timestamp < TAX_CACHE_TTL_MS) {
               if (!signal.aborted) {
@@ -300,15 +319,20 @@ export function useCondoUnitTaxes(): UseCondoUnitTaxesResult {
   ) => {
     if (units.length === 0) return;
 
-    // Filter out units that are already loaded or in-flight
-    const missingUnits = units.filter(u => {
-      const existing = unitTaxes.get(u.unitBbl);
-      // Skip if already has data (loaded or error)
-      if (existing && !existing.loading) return false;
-      // Skip if in-flight
-      if (inFlightBblsRef.current.has(u.unitBbl)) return false;
-      return true;
-    });
+    // Normalize all BBLs and filter out already loaded or in-flight
+    const missingUnits = units
+      .map(u => ({
+        unitBbl: normalizeBbl(u.unitBbl),
+        unitLabel: u.unitLabel,
+      }))
+      .filter(u => {
+        const existing = unitTaxes.get(u.unitBbl);
+        // Skip if already has data (loaded or error)
+        if (existing && !existing.loading) return false;
+        // Skip if in-flight
+        if (inFlightBblsRef.current.has(u.unitBbl)) return false;
+        return true;
+      });
 
     if (missingUnits.length === 0) {
       if (DEBUG_MODE) console.log('[useCondoUnitTaxes] ensureLoaded: all units already loaded/in-flight');
@@ -316,7 +340,8 @@ export function useCondoUnitTaxes(): UseCondoUnitTaxesResult {
     }
 
     if (DEBUG_MODE) {
-      console.log(`[useCondoUnitTaxes] ensureLoaded: fetching ${missingUnits.length} missing units`);
+      console.log(`[useCondoUnitTaxes] ensureLoaded: fetching ${missingUnits.length} missing units`, 
+        missingUnits.slice(0, 3).map(u => u.unitBbl));
     }
 
     // Use fetchBatch for the missing units
@@ -325,12 +350,14 @@ export function useCondoUnitTaxes(): UseCondoUnitTaxesResult {
 
   // Check if a specific BBL is currently loading
   const isLoading = useCallback((unitBbl: string): boolean => {
-    return inFlightBblsRef.current.has(unitBbl);
+    const normalized = normalizeBbl(unitBbl);
+    return inFlightBblsRef.current.has(normalized);
   }, []);
 
   // Check if a BBL has been requested (either in-flight or in unitTaxes)
   const isRequested = useCallback((unitBbl: string): boolean => {
-    return inFlightBblsRef.current.has(unitBbl) || unitTaxes.has(unitBbl);
+    const normalized = normalizeBbl(unitBbl);
+    return inFlightBblsRef.current.has(normalized) || unitTaxes.has(normalized);
   }, [unitTaxes]);
 
   // Cleanup on unmount
