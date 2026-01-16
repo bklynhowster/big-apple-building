@@ -1,5 +1,7 @@
 /**
  * Hook for batch/lazy fetching condo unit taxes with concurrency control
+ * 
+ * CRITICAL: All BBL keys are normalized to 10-digit format using normalizeBbl()
  */
 
 import { useState, useCallback, useRef, useEffect } from 'react';
@@ -11,9 +13,10 @@ import {
   YIELD_INTERVAL_MS,
   TAX_CACHE_TTL_MS,
 } from '../types';
+import { normalizeBbl } from '../utils/format';
 
 interface UseCondoUnitTaxesResult {
-  /** Map of unitBbl -> tax data */
+  /** Map of normalized unitBbl -> tax data */
   unitTaxes: Map<string, CondoUnitTaxSummary>;
   /** Ensure taxes are loaded for a set of BBLs (dedupes and fetches only missing) */
   ensureLoaded: (units: Array<{ unitBbl: string; unitLabel: string | null }>) => void;
@@ -39,36 +42,26 @@ interface UseCondoUnitTaxesResult {
   isRequested: (unitBbl: string) => boolean;
 }
 
-// In-memory cache for unit taxes
+// In-memory cache for unit taxes (keyed by normalized BBL)
 const unitTaxCache = new Map<string, { data: PropertyTaxResult; timestamp: number }>();
 
 // Debug mode check
 const DEBUG_MODE = typeof window !== 'undefined' && 
   new URLSearchParams(window.location.search).has('debug');
 
-// Normalize BBL to ensure consistent 10-digit format
-function normalizeBbl(bbl: string): string {
-  if (!bbl) return '';
-  const cleaned = bbl.replace(/\D/g, '');
-  return cleaned.padStart(10, '0').slice(-10);
-}
-
 export function useCondoUnitTaxes(): UseCondoUnitTaxesResult {
   const [unitTaxes, setUnitTaxes] = useState<Map<string, CondoUnitTaxSummary>>(() => new Map());
   const [batchLoading, setBatchLoading] = useState(false);
   
-  // Track in-flight requests
+  // Track in-flight requests by normalized BBL
   const abortControllerRef = useRef<AbortController | null>(null);
   const inFlightBblsRef = useRef<Set<string>>(new Set());
 
   // Fetch tax data for a single unit - returns promise
   const fetchSingleUnit = useCallback(async (
-    unitBbl: string,
+    normalizedBbl: string,
     signal?: AbortSignal
   ): Promise<PropertyTaxResult | null> => {
-    // Normalize BBL for consistent cache key
-    const normalizedBbl = normalizeBbl(unitBbl);
-    
     // Check cache first
     const cached = unitTaxCache.get(normalizedBbl);
     if (cached && Date.now() - cached.timestamp < TAX_CACHE_TTL_MS) {
@@ -107,8 +100,8 @@ export function useCondoUnitTaxes(): UseCondoUnitTaxesResult {
 
   // Fetch taxes for a single unit and update state
   const fetchOne = useCallback((unitBbl: string, unitLabel: string | null) => {
-    // Normalize BBL
     const normalizedBbl = normalizeBbl(unitBbl);
+    if (!normalizedBbl) return;
     
     // Skip if already in-flight
     if (inFlightBblsRef.current.has(normalizedBbl)) {
@@ -173,11 +166,15 @@ export function useCondoUnitTaxes(): UseCondoUnitTaxesResult {
   ) => {
     if (units.length === 0) return;
 
-    // Normalize all BBLs upfront
-    const normalizedUnits = units.map(u => ({
-      unitBbl: normalizeBbl(u.unitBbl),
-      unitLabel: u.unitLabel,
-    }));
+    // Normalize all BBLs upfront and filter empty
+    const normalizedUnits = units
+      .map(u => ({
+        unitBbl: normalizeBbl(u.unitBbl),
+        unitLabel: u.unitLabel,
+      }))
+      .filter(u => u.unitBbl.length === 10);
+
+    if (normalizedUnits.length === 0) return;
 
     // Cancel previous batch
     if (abortControllerRef.current) {
@@ -189,7 +186,8 @@ export function useCondoUnitTaxes(): UseCondoUnitTaxesResult {
     setBatchLoading(true);
 
     if (DEBUG_MODE) {
-      console.log(`[useCondoUnitTaxes] Starting batch fetch for ${normalizedUnits.length} units`);
+      console.log(`[useCondoUnitTaxes] Starting batch fetch for ${normalizedUnits.length} units`, 
+        normalizedUnits.slice(0, 3).map(u => u.unitBbl));
     }
 
     // Filter out in-flight units
@@ -205,12 +203,13 @@ export function useCondoUnitTaxes(): UseCondoUnitTaxesResult {
       inFlightBblsRef.current.add(unit.unitBbl);
     }
 
-    // Initialize loading state
+    // Initialize loading state for all units to fetch
     setUnitTaxes(prev => {
       const next = new Map(prev);
       for (const unit of unitsToFetch) {
+        // Only set loading if not already has data
         const existing = next.get(unit.unitBbl);
-        if (!existing || (!existing.data && !existing.loading)) {
+        if (!existing || (!existing.data && !existing.loading && !existing.error)) {
           next.set(unit.unitBbl, {
             unitBbl: unit.unitBbl,
             unitLabel: unit.unitLabel,
@@ -232,7 +231,7 @@ export function useCondoUnitTaxes(): UseCondoUnitTaxesResult {
         
         const promises = batch.map(async (unit) => {
           try {
-            // Check cache (already normalized)
+            // Check cache first
             const cached = unitTaxCache.get(unit.unitBbl);
             if (cached && Date.now() - cached.timestamp < TAX_CACHE_TTL_MS) {
               if (!signal.aborted) {
@@ -314,39 +313,50 @@ export function useCondoUnitTaxes(): UseCondoUnitTaxesResult {
   }, []);
 
   // ensureLoaded: dedupes BBLs already fetched or in-flight, fetches only missing
+  // Uses refs to avoid stale closure issues
   const ensureLoaded = useCallback((
     units: Array<{ unitBbl: string; unitLabel: string | null }>
   ) => {
     if (units.length === 0) return;
 
-    // Normalize all BBLs and filter out already loaded or in-flight
-    const missingUnits = units
-      .map(u => ({
-        unitBbl: normalizeBbl(u.unitBbl),
-        unitLabel: u.unitLabel,
-      }))
-      .filter(u => {
-        const existing = unitTaxes.get(u.unitBbl);
-        // Skip if already has data (loaded or error)
-        if (existing && !existing.loading) return false;
-        // Skip if in-flight
-        if (inFlightBblsRef.current.has(u.unitBbl)) return false;
-        return true;
-      });
+    // Use functional update to access latest state without stale closures
+    setUnitTaxes(currentTaxes => {
+      // Normalize all BBLs and filter out already loaded or in-flight
+      const missingUnits = units
+        .map(u => ({
+          unitBbl: normalizeBbl(u.unitBbl),
+          unitLabel: u.unitLabel,
+        }))
+        .filter(u => {
+          if (u.unitBbl.length !== 10) return false;
+          const existing = currentTaxes.get(u.unitBbl);
+          // Skip if already has data or error (complete)
+          if (existing && (existing.data || existing.error)) return false;
+          // Skip if loading
+          if (existing?.loading) return false;
+          // Skip if in-flight
+          if (inFlightBblsRef.current.has(u.unitBbl)) return false;
+          return true;
+        });
 
-    if (missingUnits.length === 0) {
-      if (DEBUG_MODE) console.log('[useCondoUnitTaxes] ensureLoaded: all units already loaded/in-flight');
-      return;
-    }
+      if (missingUnits.length === 0) {
+        if (DEBUG_MODE) console.log('[useCondoUnitTaxes] ensureLoaded: all units already loaded/in-flight');
+        return currentTaxes; // No state change
+      }
 
-    if (DEBUG_MODE) {
-      console.log(`[useCondoUnitTaxes] ensureLoaded: fetching ${missingUnits.length} missing units`, 
-        missingUnits.slice(0, 3).map(u => u.unitBbl));
-    }
+      if (DEBUG_MODE) {
+        console.log(`[useCondoUnitTaxes] ensureLoaded: queueing ${missingUnits.length} missing units`, 
+          missingUnits.slice(0, 3).map(u => u.unitBbl));
+      }
 
-    // Use fetchBatch for the missing units
-    fetchBatch(missingUnits);
-  }, [unitTaxes, fetchBatch]);
+      // Schedule fetch outside of state update
+      setTimeout(() => {
+        fetchBatch(missingUnits);
+      }, 0);
+
+      return currentTaxes; // No state change here - fetchBatch will update
+    });
+  }, [fetchBatch]);
 
   // Check if a specific BBL is currently loading
   const isLoading = useCallback((unitBbl: string): boolean => {
