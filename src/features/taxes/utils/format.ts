@@ -82,3 +82,18 @@ export function formatLot(lot: string): string {
   if (Number.isFinite(n)) return String(Math.trunc(n));
   return lot;
 }
+
+/**
+ * Normalize BBL to canonical 10-digit format
+ * Borough: 1 digit, Block: 5 digits (left-padded), Lot: 4 digits (left-padded)
+ * Example: "3053070070"
+ * 
+ * CRITICAL: This is the ONLY normalization function to use throughout the tax feature
+ */
+export function normalizeBbl(bbl: string | null | undefined): string {
+  if (!bbl) return '';
+  const cleaned = bbl.replace(/\D/g, '');
+  if (cleaned.length === 0) return '';
+  // Ensure exactly 10 digits: pad with zeros on left, then take last 10
+  return cleaned.padStart(10, '0').slice(-10);
+}

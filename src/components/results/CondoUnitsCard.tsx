@@ -31,6 +31,7 @@ import {
   formatDate,
   formatLot,
   getPaymentStatusInfo,
+  normalizeBbl,
   UNITS_PAGE_SIZE,
   LOAD_ALL_BATCH_DELAY_MS,
 } from '@/features/taxes';
@@ -38,13 +39,6 @@ import {
 // Debug mode for tax fetching - enabled via ?debug=1
 const DEBUG_TAX_SYNC = typeof window !== 'undefined' && 
   new URLSearchParams(window.location.search).has('debug');
-
-// Normalize BBL to ensure consistent 10-digit format
-function normalizeBbl(bbl: string): string {
-  if (!bbl) return '';
-  const cleaned = bbl.replace(/\D/g, '');
-  return cleaned.padStart(10, '0').slice(-10);
-}
 
 interface CondoUnitsCardProps {
   bbl: string;
@@ -223,7 +217,8 @@ export function CondoUnitsCard({
   }, [filteredUnits, visibleUnitCount, searchQuery]);
 
   // Auto-fetch taxes for displayed units (only on building pages)
-  // This effect is a safety net - handleLoadMoreUnits also calls ensureLoaded directly
+  // This effect triggers on displayedUnits changes - ensureLoaded handles deduplication
+  // IMPORTANT: Do NOT include unitTaxes in deps - it would cause infinite re-renders
   useEffect(() => {
     if (!isBuilding || displayedUnits.length === 0) return;
     
@@ -231,25 +226,20 @@ export function CondoUnitsCard({
     const unitsToFetch = displayedUnits.map(u => ({ 
       unitBbl: normalizeBbl(u.unitBbl), 
       unitLabel: u.unitLabel 
-    }));
+    })).filter(u => u.unitBbl.length === 10);
 
     if (DEBUG_TAX_SYNC) {
-      const taxMapKeys = Array.from(unitTaxes.keys());
-      const missingUnits = unitsToFetch.filter(u => !unitTaxes.has(u.unitBbl));
-      console.log(`[CondoUnitsCard] Tax sync check:`, {
+      console.log(`[CondoUnitsCard] Tax sync effect triggered:`, {
         visibleUnitCount,
         displayedUnitsLength: displayedUnits.length,
         firstThreeKeys: unitsToFetch.slice(0, 3).map(u => u.unitBbl),
         lastThreeKeys: unitsToFetch.slice(-3).map(u => u.unitBbl),
-        taxMapSize: unitTaxes.size,
-        taxMapSampleKeys: taxMapKeys.slice(0, 5),
-        missingCount: missingUnits.length,
-        missingFirst5: missingUnits.slice(0, 5).map(u => `${u.unitLabel || 'no-label'} (${u.unitBbl})`),
       });
     }
     
+    // ensureLoaded handles deduplication internally using functional state update
     ensureLoaded(unitsToFetch);
-  }, [displayedUnits, ensureLoaded, isBuilding, unitTaxes, visibleUnitCount]);
+  }, [displayedUnits, ensureLoaded, isBuilding, visibleUnitCount]);
 
   // Pagination state
   const totalFilteredUnits = filteredUnits.length;
@@ -315,6 +305,7 @@ export function CondoUnitsCard({
   }, [visibleUnitCount, totalFilteredUnits, isBuilding, filteredUnits, ensureLoaded]);
 
   // Load all units progressively using requestAnimationFrame for smooth rendering
+  // Also triggers ensureLoaded for each batch to fetch taxes
   const handleLoadAllUnits = useCallback(() => {
     if (loadingAllRef.current) return;
     
@@ -322,6 +313,7 @@ export function CondoUnitsCard({
     setLoadingAll(true);
     
     const targetCount = totalFilteredUnits;
+    let currentCount = visibleUnitCount;
     
     const loadNextBatch = () => {
       if (!loadingAllRef.current) {
@@ -329,28 +321,43 @@ export function CondoUnitsCard({
         return;
       }
       
-      setVisibleUnitCount(prev => {
-        const nextCount = Math.min(prev + UNITS_PAGE_SIZE, targetCount);
+      const prevCount = currentCount;
+      const nextCount = Math.min(prevCount + UNITS_PAGE_SIZE, targetCount);
+      currentCount = nextCount;
+      
+      setVisibleUnitCount(nextCount);
+      
+      // Immediately trigger tax fetch for the new batch
+      if (isBuilding) {
+        const newUnits = filteredUnits.slice(prevCount, nextCount).map(u => ({
+          unitBbl: normalizeBbl(u.unitBbl),
+          unitLabel: u.unitLabel,
+        })).filter(u => u.unitBbl.length === 10);
         
-        if (nextCount >= targetCount) {
-          // Done loading
-          loadingAllRef.current = false;
-          setLoadingAll(false);
-          return nextCount;
+        if (newUnits.length > 0) {
+          if (DEBUG_TAX_SYNC) {
+            console.log(`[CondoUnitsCard] Load all batch: ${prevCount} → ${nextCount}, fetching ${newUnits.length} units`);
+          }
+          ensureLoaded(newUnits);
         }
-        
-        // Schedule next batch using rAF for smooth rendering, then setTimeout for yield
-        requestAnimationFrame(() => {
-          setTimeout(loadNextBatch, LOAD_ALL_BATCH_DELAY_MS);
-        });
-        
-        return nextCount;
+      }
+      
+      if (nextCount >= targetCount) {
+        // Done loading
+        loadingAllRef.current = false;
+        setLoadingAll(false);
+        return;
+      }
+      
+      // Schedule next batch using rAF for smooth rendering, then setTimeout for yield
+      requestAnimationFrame(() => {
+        setTimeout(loadNextBatch, LOAD_ALL_BATCH_DELAY_MS);
       });
     };
     
     // Start the first batch
     requestAnimationFrame(loadNextBatch);
-  }, [totalFilteredUnits]);
+  }, [totalFilteredUnits, visibleUnitCount, isBuilding, filteredUnits, ensureLoaded]);
 
   // Cancel "load all" when navigating away
   useEffect(() => {
@@ -364,23 +371,26 @@ export function CondoUnitsCard({
     fetchOne(unitBbl, unitLabel);
   }, [fetchOne]);
 
-  // Get tax summary for a unit - returns loading state for displayed units
+  // Get tax summary for a unit
+  // Returns:
+  //   - null: Unit tax has NOT been fetched yet (show "Not loaded yet")
+  //   - { loading: true }: Unit is currently being fetched (show "Loading...")
+  //   - { data: ... }: Unit has data
+  //   - { error: ... }: Unit fetch failed
+  //   - { data: { no_data_found: true } }: No tax bill found
   const getTaxSummary = useCallback((unitBbl: string, unitLabel: string | null): CondoUnitTaxSummary | null => {
     if (!isBuilding) return null;
     
     // Normalize the BBL for consistent lookup
     const normalizedBbl = normalizeBbl(unitBbl);
+    if (!normalizedBbl) return null;
     
     // Check if we have data in the map (using normalized key)
     const existing = unitTaxes.get(normalizedBbl);
     if (existing) return existing;
     
-    // Also check original BBL in case of inconsistency
-    const existingOriginal = unitTaxes.get(unitBbl);
-    if (existingOriginal) return existingOriginal;
-    
     // If this unit is in-flight (loading), show loading state
-    if (isTaxLoading(normalizedBbl) || isTaxLoading(unitBbl)) {
+    if (isTaxLoading(normalizedBbl)) {
       return {
         unitBbl: normalizedBbl,
         unitLabel,
@@ -390,15 +400,9 @@ export function CondoUnitsCard({
       };
     }
     
-    // Unit has not been fetched yet - this will be picked up by ensureLoaded
-    // Show "not fetched yet" distinct from "loading"
-    return {
-      unitBbl: normalizedBbl,
-      unitLabel,
-      loading: true, // Will display "Loading..." in the UI
-      error: null,
-      data: null,
-    };
+    // Unit has NOT been fetched yet - return null to show "Not loaded yet"
+    // This is distinct from { loading: true } which means actively fetching
+    return null;
   }, [isBuilding, unitTaxes, isTaxLoading]);
 
   if (loading) return hidden ? null : <LoadingSkeleton />;
@@ -597,31 +601,70 @@ export function CondoUnitsCard({
             {/* Debug Panel (only when ?debug=1) */}
             {DEBUG_TAX_SYNC && isBuilding && (
               <div className="p-3 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-md text-xs font-mono space-y-2">
-                <div className="font-semibold text-amber-800 dark:text-amber-200">Tax Debug Panel</div>
+                <div className="font-semibold text-amber-800 dark:text-amber-200">🔍 Tax Debug Panel</div>
                 <div className="grid grid-cols-2 gap-2 text-amber-700 dark:text-amber-300">
                   <div>visibleUnitCount: {visibleUnitCount}</div>
-                  <div>displayedUnits: {displayedUnits.length}</div>
-                  <div>taxMap size: {unitTaxes.size}</div>
+                  <div>displayedUnits.length: {displayedUnits.length}</div>
+                  <div>unitTaxes.size: {unitTaxes.size}</div>
                   <div>taxBatchLoading: {String(taxBatchLoading)}</div>
+                  <div>taxLoadedCount: {taxLoadedCount}</div>
+                  <div>loadingAll: {String(loadingAll)}</div>
                 </div>
                 {(() => {
-                  // Calculate missing units for debug display
-                  const missingUnits = displayedUnits.filter(u => {
+                  // Analyze each displayed unit's tax state
+                  const analysis = displayedUnits.map(u => {
                     const normalized = normalizeBbl(u.unitBbl);
-                    return !unitTaxes.has(normalized) && !unitTaxes.has(u.unitBbl);
+                    const taxEntry = unitTaxes.get(normalized);
+                    const isInFlight = isTaxLoading(normalized);
+                    let state: string;
+                    if (!taxEntry && !isInFlight) {
+                      state = 'not_requested';
+                    } else if (isInFlight || taxEntry?.loading) {
+                      state = 'loading';
+                    } else if (taxEntry?.error) {
+                      state = 'error';
+                    } else if (taxEntry?.data?.no_data_found) {
+                      state = 'no_bill';
+                    } else if (taxEntry?.data) {
+                      state = 'loaded';
+                    } else {
+                      state = 'unknown';
+                    }
+                    return { label: u.unitLabel, bbl: normalized, state };
                   });
+                  
+                  const notRequested = analysis.filter(a => a.state === 'not_requested');
+                  const loading = analysis.filter(a => a.state === 'loading');
+                  const loaded = analysis.filter(a => a.state === 'loaded');
+                  const errors = analysis.filter(a => a.state === 'error');
+                  
                   return (
                     <>
-                      <div className="text-amber-700 dark:text-amber-300">
-                        <strong>Displayed units missing tax:</strong> {missingUnits.length}
+                      <div className="text-amber-700 dark:text-amber-300 space-y-1">
+                        <div>✅ Loaded: {loaded.length}</div>
+                        <div>⏳ Loading: {loading.length}</div>
+                        <div>⚠️ Not requested: {notRequested.length}</div>
+                        <div>❌ Errors: {errors.length}</div>
                       </div>
-                      {missingUnits.length > 0 && (
-                        <ul className="list-disc list-inside text-amber-600 dark:text-amber-400 max-h-24 overflow-auto">
-                          {missingUnits.slice(0, 5).map(u => (
-                            <li key={u.unitBbl}>{u.unitLabel || 'no-label'} ({normalizeBbl(u.unitBbl)})</li>
-                          ))}
-                          {missingUnits.length > 5 && <li>…and {missingUnits.length - 5} more</li>}
-                        </ul>
+                      
+                      {/* First 3 and last 3 displayed BBLs */}
+                      <div className="text-amber-600 dark:text-amber-400">
+                        <strong>First 3 BBLs:</strong> {analysis.slice(0, 3).map(a => `${a.bbl} (${a.state})`).join(', ')}
+                      </div>
+                      <div className="text-amber-600 dark:text-amber-400">
+                        <strong>Last 3 BBLs:</strong> {analysis.slice(-3).map(a => `${a.bbl} (${a.state})`).join(', ')}
+                      </div>
+                      
+                      {notRequested.length > 0 && (
+                        <div className="mt-2">
+                          <strong className="text-red-600 dark:text-red-400">⚠️ Units not requested (bug!):</strong>
+                          <ul className="list-disc list-inside text-red-600 dark:text-red-400 max-h-24 overflow-auto">
+                            {notRequested.slice(0, 5).map(u => (
+                              <li key={u.bbl}>{u.label || 'no-label'} ({u.bbl})</li>
+                            ))}
+                            {notRequested.length > 5 && <li>…and {notRequested.length - 5} more</li>}
+                          </ul>
+                        </div>
                       )}
                     </>
                   );
@@ -779,7 +822,9 @@ export function CondoUnitsCard({
                               <>
                                 {/* Latest Bill */}
                                 <TableCell>
-                                  {taxSummary.loading ? (
+                                  {!taxSummary ? (
+                                    <span className="text-muted-foreground text-xs italic">Not loaded yet</span>
+                                  ) : taxSummary.loading ? (
                                     <span className="text-muted-foreground text-xs italic">Loading…</span>
                                   ) : taxSummary.error ? (
                                     <TooltipProvider>
@@ -805,7 +850,9 @@ export function CondoUnitsCard({
                                 
                                 {/* Due Date */}
                                 <TableCell>
-                                  {taxSummary.loading ? (
+                                  {!taxSummary ? (
+                                    <span className="text-muted-foreground text-xs">—</span>
+                                  ) : taxSummary.loading ? (
                                     <span className="text-muted-foreground text-xs italic">—</span>
                                   ) : taxSummary.error ? (
                                     <span className="text-muted-foreground text-xs">—</span>
@@ -820,10 +867,12 @@ export function CondoUnitsCard({
                                 
                                 {/* Status */}
                                 <TableCell>
-                                  {taxSummary.loading ? (
-                                    <span className="text-muted-foreground text-xs italic">—</span>
+                                  {!taxSummary ? (
+                                    <Badge variant="outline" className="text-xs text-muted-foreground">Not loaded</Badge>
+                                  ) : taxSummary.loading ? (
+                                    <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
                                   ) : taxSummary.error ? (
-                                    <span className="text-muted-foreground text-xs">—</span>
+                                    <Badge variant="destructive" className="text-xs">Error</Badge>
                                   ) : statusInfo ? (
                                     <Badge 
                                       variant={statusInfo.variant as 'default' | 'secondary' | 'destructive' | 'outline'}
@@ -839,7 +888,9 @@ export function CondoUnitsCard({
                                 
                                 {/* Arrears */}
                                 <TableCell>
-                                  {taxSummary.loading ? (
+                                  {!taxSummary ? (
+                                    <span className="text-muted-foreground text-xs">—</span>
+                                  ) : taxSummary.loading ? (
                                     <span className="text-muted-foreground text-xs italic">—</span>
                                   ) : taxSummary.error ? (
                                     <span className="text-muted-foreground text-xs">—</span>
