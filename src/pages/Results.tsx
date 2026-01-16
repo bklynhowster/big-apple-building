@@ -24,6 +24,7 @@ import { HPDTab } from '@/components/results/HPDTab';
 import { ThreeOneOneTab } from '@/components/results/ThreeOneOneTab';
 import { QueryDebugPanel } from '@/components/results/QueryDebugPanel';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { MobileTabsList, MobileTabsTrigger } from '@/components/ui/mobile-tabs';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -37,7 +38,7 @@ import { useViolations } from '@/hooks/useViolations';
 import { useECB } from '@/hooks/useECB';
 import { usePermits } from '@/hooks/usePermits';
 import { useLandmarkStatus } from '@/hooks/useLandmarkStatus';
-
+import { useIsMobileViewport } from '@/hooks/useBreakpoint';
 const VALID_TABS = ['summary', 'violations', 'ecb', 'safety', 'permits', 'hpd', '311', 'all'] as const;
 type ValidTab = typeof VALID_TABS[number];
 
@@ -54,6 +55,7 @@ function isValidTab(tab: string | null): tab is ValidTab {
 export default function Results() {
   const location = useLocation();
   const navigate = useNavigate();
+  const isMobile = useIsMobileViewport();
   const { setContextInfo } = useQueryDebug();
 
   // Read all params from URL
@@ -486,17 +488,17 @@ export default function Results() {
           />
         </div>
         
-        <div className="container mx-auto px-4 py-6 relative z-10">
+        <div className="container mx-auto px-3 sm:px-4 py-4 sm:py-6 relative z-10">
 
           {/* Missing/Invalid BBL State */}
           {!isValidBBL && (
             <Card className="border-destructive/50">
-              <CardContent className="flex flex-col items-center justify-center py-16">
+              <CardContent className="flex flex-col items-center justify-center py-12 sm:py-16">
                 <AlertCircle className="h-8 w-8 text-destructive mb-4" />
-                <p className="text-foreground font-medium mb-2">Missing property identifier (BBL)</p>
-                <p className="text-sm text-muted-foreground mb-4">Please run the search again.</p>
+                <p className="text-foreground font-medium mb-2 text-center">Missing property identifier (BBL)</p>
+                <p className="text-sm text-muted-foreground mb-4 text-center">Please run the search again.</p>
                 <Link to="/">
-                  <Button variant="outline">Return to Search</Button>
+                  <Button variant="outline" className="min-h-[44px]">Return to Search</Button>
                 </Link>
               </CardContent>
             </Card>
@@ -504,7 +506,7 @@ export default function Results() {
 
           {/* Results - render tabs only when we have a valid BBL */}
           {isValidBBL && (
-            <div className="space-y-6">
+            <div className="space-y-4 sm:space-y-6">
               {/* Query Debug Panel - visible when ?debug=1 */}
               <QueryDebugPanel />
               
@@ -643,72 +645,97 @@ export default function Results() {
               />
 
               <Tabs ref={tabsRef} value={activeTab} onValueChange={handleTabChange} className="w-full">
-                <div className="flex items-center justify-between bg-card border-b border-border">
-                  <TabsList className="justify-start bg-transparent rounded-none h-auto p-0 flex-wrap">
-                    <TabsTrigger 
-                      value="summary" 
-                      className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent py-3 px-6"
-                    >
-                      Summary
-                    </TabsTrigger>
-                    <TabsTrigger 
-                      value="violations" 
-                      className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent py-3 px-6"
-                    >
-                      Violations
-                    </TabsTrigger>
-                    <TabsTrigger 
-                      value="ecb" 
-                      className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent py-3 px-6"
-                    >
-                      ECB
-                    </TabsTrigger>
-                    <TabsTrigger 
-                      value="safety" 
-                      className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent py-3 px-6"
-                    >
-                      Safety
-                    </TabsTrigger>
-                    <TabsTrigger 
-                      value="permits" 
-                      className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent py-3 px-6"
-                    >
-                      Permits
-                    </TabsTrigger>
-                    <TabsTrigger 
-                      value="hpd" 
-                      className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent py-3 px-6"
-                    >
-                      HPD
-                    </TabsTrigger>
-                    <TabsTrigger 
-                      value="311" 
-                      className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent py-3 px-6"
-                    >
-                      311 Nearby
-                    </TabsTrigger>
-                    <TabsTrigger 
-                      value="all" 
-                      className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent py-3 px-6"
-                    >
-                      All Records
-                    </TabsTrigger>
-                  </TabsList>
-                  
-                  {/* Scope indicator badge for tabs */}
-                  {hasCondoUnits && isUnitLot && (
-                    <div className="px-4 py-2">
-                      <Badge variant={scope === 'unit' ? 'default' : 'secondary'} className="text-xs">
-                        {scope === 'unit' ? 'Unit view' : 'Building view'}
-                      </Badge>
-                    </div>
-                  )}
-                </div>
+                {/* Mobile: horizontally scrollable tab strip */}
+                {isMobile ? (
+                  <div className="bg-card border-b border-border">
+                    <MobileTabsList>
+                      <MobileTabsTrigger value="summary">Summary</MobileTabsTrigger>
+                      <MobileTabsTrigger value="violations">Violations</MobileTabsTrigger>
+                      <MobileTabsTrigger value="ecb">ECB</MobileTabsTrigger>
+                      <MobileTabsTrigger value="safety">Safety</MobileTabsTrigger>
+                      <MobileTabsTrigger value="permits">Permits</MobileTabsTrigger>
+                      <MobileTabsTrigger value="hpd">HPD</MobileTabsTrigger>
+                      <MobileTabsTrigger value="311">311</MobileTabsTrigger>
+                      <MobileTabsTrigger value="all">All</MobileTabsTrigger>
+                    </MobileTabsList>
+                    {/* Scope indicator on mobile */}
+                    {hasCondoUnits && isUnitLot && (
+                      <div className="px-3 pb-2">
+                        <Badge variant={scope === 'unit' ? 'default' : 'secondary'} className="text-xs">
+                          {scope === 'unit' ? 'Unit view' : 'Building view'}
+                        </Badge>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  /* Desktop/Tablet: standard tabs with wrap */
+                  <div className="flex items-center justify-between bg-card border-b border-border">
+                    <TabsList className="justify-start bg-transparent rounded-none h-auto p-0 flex-wrap">
+                      <TabsTrigger 
+                        value="summary" 
+                        className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent py-3 px-6"
+                      >
+                        Summary
+                      </TabsTrigger>
+                      <TabsTrigger 
+                        value="violations" 
+                        className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent py-3 px-6"
+                      >
+                        Violations
+                      </TabsTrigger>
+                      <TabsTrigger 
+                        value="ecb" 
+                        className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent py-3 px-6"
+                      >
+                        ECB
+                      </TabsTrigger>
+                      <TabsTrigger 
+                        value="safety" 
+                        className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent py-3 px-6"
+                      >
+                        Safety
+                      </TabsTrigger>
+                      <TabsTrigger 
+                        value="permits" 
+                        className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent py-3 px-6"
+                      >
+                        Permits
+                      </TabsTrigger>
+                      <TabsTrigger 
+                        value="hpd" 
+                        className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent py-3 px-6"
+                      >
+                        HPD
+                      </TabsTrigger>
+                      <TabsTrigger 
+                        value="311" 
+                        className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent py-3 px-6"
+                      >
+                        311 Nearby
+                      </TabsTrigger>
+                      <TabsTrigger 
+                        value="all" 
+                        className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent py-3 px-6"
+                      >
+                        All Records
+                      </TabsTrigger>
+                    </TabsList>
+                    
+                    {/* Scope indicator badge for tabs */}
+                    {hasCondoUnits && isUnitLot && (
+                      <div className="px-4 py-2">
+                        <Badge variant={scope === 'unit' ? 'default' : 'secondary'} className="text-xs">
+                          {scope === 'unit' ? 'Unit view' : 'Building view'}
+                        </Badge>
+                      </div>
+                    )}
+                  </div>
+                )}
 
-                <div className="mt-6">
+                <div className="mt-4 sm:mt-6">
                   <TabsContent value="summary" className="mt-0">
                     <Card>
-                      <CardContent className="p-6">
+                      <CardContent className="p-4 sm:p-6">
                         <SummaryTab 
                           bbl={effectiveBbl}
                           billingBbl={billingBbl}
@@ -722,7 +749,7 @@ export default function Results() {
                   
                   <TabsContent value="violations" className="mt-0">
                     <Card id="dob-violations">
-                      <CardContent className="p-6">
+                      <CardContent className="p-4 sm:p-6">
                         <ViolationsTab bbl={queryBbl} bin={bin} scope={scope} isCoop={isCoop} coopUnitContext={coopUnitContext} address={address} />
                       </CardContent>
                     </Card>
@@ -730,7 +757,7 @@ export default function Results() {
                   
                   <TabsContent value="ecb" className="mt-0">
                     <Card id="ecb-violations">
-                      <CardContent className="p-6">
+                      <CardContent className="p-4 sm:p-6">
                         <ECBTab bbl={queryBbl} bin={bin} scope={scope} isCoop={isCoop} coopUnitContext={coopUnitContext} address={address} />
                       </CardContent>
                     </Card>
@@ -738,7 +765,7 @@ export default function Results() {
                   
                   <TabsContent value="safety" className="mt-0">
                     <Card>
-                      <CardContent className="p-6">
+                      <CardContent className="p-4 sm:p-6">
                         <SafetyTab bbl={queryBbl} bin={bin} scope={scope} isCoop={isCoop} coopUnitContext={coopUnitContext} address={address} />
                       </CardContent>
                     </Card>
@@ -746,7 +773,7 @@ export default function Results() {
                   
                   <TabsContent value="permits" className="mt-0">
                     <Card id="dob-permits">
-                      <CardContent className="p-6">
+                      <CardContent className="p-4 sm:p-6">
                         <PermitsTab bbl={queryBbl} bin={bin} scope={scope} isCoop={isCoop} coopUnitContext={coopUnitContext} address={address} />
                       </CardContent>
                     </Card>
@@ -754,7 +781,7 @@ export default function Results() {
                   
                   <TabsContent value="hpd" className="mt-0">
                     <Card>
-                      <CardContent className="p-6">
+                      <CardContent className="p-4 sm:p-6">
                         <div id="hpd-violations" />
                         <div id="hpd-complaints" />
                         <HPDTab 
@@ -772,7 +799,7 @@ export default function Results() {
                   
                   <TabsContent value="311" className="mt-0">
                     <Card id="service-requests">
-                      <CardContent className="p-6">
+                      <CardContent className="p-4 sm:p-6">
                         <ThreeOneOneTab 
                           lat={latitude} 
                           lon={longitude} 
@@ -788,7 +815,7 @@ export default function Results() {
                   
                   <TabsContent value="all" className="mt-0">
                     <Card>
-                      <CardContent className="p-6">
+                      <CardContent className="p-4 sm:p-6">
                         <div id="sales-records" />
                         <div id="dob-filings" />
                         <AllRecordsTab bbl={queryBbl} onViewInTab={handleViewInTab} />
