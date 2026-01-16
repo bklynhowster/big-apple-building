@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
-import { Building2, Home, Search, ArrowLeft, AlertCircle, Info, Loader2, RefreshCw, CheckCircle2, XCircle, Clock, ChevronDown } from 'lucide-react';
+import { Building2, Home, Search, ArrowLeft, AlertCircle, Info, Loader2, ChevronDown } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -15,7 +15,6 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import {
   Tooltip,
   TooltipContent,
@@ -27,7 +26,6 @@ import {
   useCondoUnitTaxes, 
   INITIAL_TAX_BATCH_SIZE,
   type CondoUnitTaxSummary,
-  type PaymentStatus,
   formatUSDForTable,
   formatDate,
   formatLot,
@@ -541,9 +539,14 @@ export function CondoUnitsCard({
               </div>
             </div>
 
-            {/* Table */}
-            <div className="border rounded-md">
-              <ScrollArea className={displayedUnits.length > 10 ? 'h-96' : undefined}>
+            {/* Table - no nested vertical scroll; allow horizontal scroll only */}
+            <div 
+              className="border rounded-md overflow-x-auto overflow-y-visible touch-pan-x"
+              style={{
+                WebkitOverflowScrolling: 'touch',
+                overscrollBehavior: 'contain',
+              }}
+            >
                 <Table>
                   <TableHeader>
                     <TableRow className="bg-muted/50">
@@ -619,51 +622,36 @@ export function CondoUnitsCard({
                             <TableCell className="font-mono text-sm">{unit.unitBbl}</TableCell>
                             <TableCell className="text-sm text-muted-foreground">{formatLot(unit.lot)}</TableCell>
                             
-                            {/* Tax columns - only on building pages */}
+                            {/* Tax columns */}
                             {isBuilding && (
                               <>
                                 {/* Latest Bill */}
-                                <TableCell className="text-sm">
+                                <TableCell>
                                   {!taxSummary ? (
                                     <span className="text-muted-foreground text-xs">—</span>
                                   ) : taxSummary.loading ? (
                                     <Skeleton className="h-4 w-16" />
-                                  ) : taxSummary.error ? (
-                                    <TooltipProvider>
-                                      <Tooltip>
-                                        <TooltipTrigger asChild>
-                                          <Button
-                                            variant="ghost"
-                                            size="sm"
-                                            className="h-6 px-1 text-destructive"
-                                            onClick={() => handleRetryTax(unit.unitBbl, unit.unitLabel)}
-                                          >
-                                            <RefreshCw className="h-3 w-3 mr-1" />
-                                            <span className="text-xs">Retry</span>
-                                          </Button>
-                                        </TooltipTrigger>
-                                        <TooltipContent>
-                                          <p className="text-xs">{taxSummary.error}</p>
-                                        </TooltipContent>
-                                      </Tooltip>
-                                    </TooltipProvider>
-                                  ) : taxSummary.data?.no_data_found ? (
-                                    <span className="text-muted-foreground text-xs">No data</span>
+                                  ) : taxSummary.data ? (
+                                    <span className="text-sm font-medium">
+                                      {formatUSDForTable(taxSummary.data.latest_bill_amount)}
+                                    </span>
                                   ) : (
-                                    formatUSDForTable(taxSummary.data?.latest_bill_amount)
+                                    <span className="text-muted-foreground text-xs">—</span>
                                   )}
                                 </TableCell>
                                 
                                 {/* Due Date */}
-                                <TableCell className="text-sm text-muted-foreground">
+                                <TableCell>
                                   {!taxSummary ? (
-                                    '—'
+                                    <span className="text-muted-foreground text-xs">—</span>
                                   ) : taxSummary.loading ? (
-                                    <Skeleton className="h-4 w-20" />
-                                  ) : taxSummary.error || taxSummary.data?.no_data_found ? (
-                                    '—'
+                                    <Skeleton className="h-4 w-16" />
+                                  ) : taxSummary.data?.latest_due_date ? (
+                                    <span className="text-sm text-muted-foreground">
+                                      {formatDate(taxSummary.data.latest_due_date)}
+                                    </span>
                                   ) : (
-                                    formatDate(taxSummary.data?.latest_due_date)
+                                    <span className="text-muted-foreground text-xs">—</span>
                                   )}
                                 </TableCell>
                                 
@@ -672,9 +660,12 @@ export function CondoUnitsCard({
                                   {!taxSummary ? (
                                     <span className="text-muted-foreground text-xs">—</span>
                                   ) : taxSummary.loading ? (
-                                    <Skeleton className="h-5 w-12" />
+                                    <Skeleton className="h-4 w-16" />
                                   ) : statusInfo ? (
-                                    <Badge variant={statusInfo.variant} className="text-xs flex items-center gap-1 w-fit">
+                                    <Badge 
+                                      variant={statusInfo.variant as 'default' | 'secondary' | 'destructive' | 'outline'}
+                                      className="text-xs gap-1"
+                                    >
                                       {statusInfo.icon}
                                       {statusInfo.label}
                                     </Badge>
@@ -719,7 +710,6 @@ export function CondoUnitsCard({
                     )}
                   </TableBody>
                 </Table>
-              </ScrollArea>
 
               {/* Unit pagination controls */}
               {hasMoreUnitsToShow && (
