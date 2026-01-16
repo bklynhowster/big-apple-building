@@ -46,7 +46,7 @@ interface CondoUnitsCardProps {
   borough?: string;
   bin?: string;
   onUnitLabelResolved?: (unitLabel: string | null) => void;
-  onBillingBblResolved?: (billingBbl: string) => void;
+  onBillingBblResolved?: (billingBbl: string | null) => void;
   onCondoDataResolved?: (data: {
     units: CondoUnit[];
     totalApprox: number;

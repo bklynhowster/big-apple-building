@@ -391,9 +391,11 @@ export default function Results() {
   }, [queryBbl, billingBbl, bin, setContextInfo]);
   
   // Handle billing BBL resolution from condo units card
-  const handleBillingBblResolved = useCallback((resolvedBillingBbl: string) => {
-    setBillingBbl(resolvedBillingBbl);
-    setHasCondoUnits(true);
+  const handleBillingBblResolved = useCallback((resolvedBillingBbl: string | null) => {
+    if (resolvedBillingBbl) {
+      setBillingBbl(resolvedBillingBbl);
+      setHasCondoUnits(true);
+    }
   }, []);
 
   // Handle condo data resolution for CondoUnitTaxesCard
