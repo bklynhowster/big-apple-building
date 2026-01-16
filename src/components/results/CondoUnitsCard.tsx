@@ -86,44 +86,7 @@ function boroughNameFromBbl(bbl: string): string {
   );
 }
 
-function formatLot(lot: string): string {
-  const n = Number(lot);
-  if (Number.isFinite(n)) return String(Math.trunc(n));
-  return lot;
-}
-
-// Safe USD formatter
-function formatUSD(n: number | null | undefined): string {
-  if (n === null || n === undefined || !Number.isFinite(n)) return '—';
-  return n.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
-}
-
-function formatDate(dateStr: string | null | undefined): string {
-  if (!dateStr) return '—';
-  try {
-    const date = new Date(dateStr);
-    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-  } catch {
-    return dateStr;
-  }
-}
-
-function getPaymentStatusInfo(status: PaymentStatus | undefined): { 
-  label: string; 
-  variant: 'default' | 'destructive' | 'secondary' | 'outline';
-  icon: React.ReactNode;
-} | null {
-  switch (status) {
-    case 'paid':
-      return { label: 'Paid', variant: 'default', icon: <CheckCircle2 className="h-3 w-3" /> };
-    case 'unpaid':
-      return { label: 'Unpaid', variant: 'destructive', icon: <XCircle className="h-3 w-3" /> };
-    case 'unknown':
-      return { label: 'Unknown', variant: 'secondary', icon: <Clock className="h-3 w-3" /> };
-    default:
-      return null;
-  }
-}
+// formatLot, formatDate, getPaymentStatusInfo imported from @/features/taxes
 
 export function CondoUnitsCard({ 
   bbl, 
@@ -143,7 +106,7 @@ export function CondoUnitsCard({
   const [visibleUnitCount, setVisibleUnitCount] = useState(UNITS_PAGE_SIZE);
   
   // Tax lazy loading state - how many units to load taxes for
-  const [taxVisibleCount, setTaxVisibleCount] = useState(INITIAL_BATCH_SIZE);
+  const [taxVisibleCount, setTaxVisibleCount] = useState(INITIAL_TAX_BATCH_SIZE);
   const lastBblRef = useRef<string | null>(null);
   
   // Tax hook
@@ -211,7 +174,7 @@ export function CondoUnitsCard({
     if (bbl !== lastBblRef.current) {
       lastBblRef.current = bbl;
       setVisibleUnitCount(UNITS_PAGE_SIZE);
-      setTaxVisibleCount(INITIAL_BATCH_SIZE);
+      setTaxVisibleCount(INITIAL_TAX_BATCH_SIZE);
       resetTaxes();
     }
   }, [bbl, resetTaxes]);
@@ -317,7 +280,7 @@ export function CondoUnitsCard({
   // Load more taxes - increases visible count for tax fetching
   const handleLoadMoreTaxes = useCallback(() => {
     const totalUnits = data?.units?.length || 0;
-    const newCount = Math.min(taxVisibleCount + INITIAL_BATCH_SIZE, totalUnits);
+    const newCount = Math.min(taxVisibleCount + INITIAL_TAX_BATCH_SIZE, totalUnits);
     setTaxVisibleCount(newCount);
   }, [taxVisibleCount, data?.units?.length]);
 
@@ -535,9 +498,9 @@ export function CondoUnitsCard({
                   {taxBatchLoading ? (
                     <Loader2 className="h-3.5 w-3.5 animate-spin" />
                   ) : null}
-                  Load taxes for next {Math.min(INITIAL_BATCH_SIZE, taxRemainingCount)}
+                  Load taxes for next {Math.min(INITIAL_TAX_BATCH_SIZE, taxRemainingCount)}
                 </Button>
-                {taxRemainingCount > INITIAL_BATCH_SIZE && (
+                {taxRemainingCount > INITIAL_TAX_BATCH_SIZE && (
                   <Button
                     variant="ghost"
                     size="sm"
@@ -687,7 +650,7 @@ export function CondoUnitsCard({
                                   ) : taxSummary.data?.no_data_found ? (
                                     <span className="text-muted-foreground text-xs">No data</span>
                                   ) : (
-                                    formatUSD(taxSummary.data?.latest_bill_amount)
+                                    formatUSDForTable(taxSummary.data?.latest_bill_amount)
                                   )}
                                 </TableCell>
                                 
@@ -728,7 +691,7 @@ export function CondoUnitsCard({
                                     <Skeleton className="h-4 w-12" />
                                   ) : hasArrears ? (
                                     <Badge variant="destructive" className="text-xs">
-                                      {formatUSD(taxSummary.data?.arrears)}
+                                      {formatUSDForTable(taxSummary.data?.arrears)}
                                     </Badge>
                                   ) : taxSummary.data?.arrears_available ? (
                                     <span className="text-muted-foreground text-xs">None</span>
