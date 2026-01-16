@@ -22,6 +22,8 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import { useCondoUnits, type CondoUnit, type CondoUnitsInputRole } from '@/hooks/useCondoUnits';
+import { useIsMobileViewport } from '@/hooks/useBreakpoint';
+import { UnitCardMobile } from './UnitCardMobile';
 import { 
   useCondoUnitTaxes, 
   type CondoUnitTaxSummary,
@@ -99,6 +101,7 @@ export function CondoUnitsCard({
   hidden 
 }: CondoUnitsCardProps) {
   const navigate = useNavigate();
+  const isMobile = useIsMobileViewport();
   const { loading, error, data, fetchFirstPage, retry } = useCondoUnits();
   const [searchQuery, setSearchQuery] = useState('');
   
@@ -530,14 +533,76 @@ export function CondoUnitsCard({
               </div>
             </div>
 
-            {/* Table - no nested vertical scroll; allow horizontal scroll only */}
-            <div 
-              className="border rounded-md overflow-x-auto overflow-y-visible touch-pan-x"
-              style={{
-                WebkitOverflowScrolling: 'touch',
-                overscrollBehavior: 'contain',
-              }}
-            >
+            {/* Mobile: Card list layout */}
+            {isMobile ? (
+              <div className="space-y-3">
+                {displayedUnits.length === 0 ? (
+                  <div className="text-center text-sm text-muted-foreground py-8 border rounded-md">
+                    No units match your search.
+                  </div>
+                ) : (
+                  displayedUnits.map((unit) => {
+                    const isCurrent = Boolean(currentUnitBbl && unit.unitBbl === currentUnitBbl);
+                    const taxSummary = getTaxSummary(unit.unitBbl, unit.unitLabel);
+                    
+                    return (
+                      <UnitCardMobile
+                        key={unit.unitBbl}
+                        unit={unit}
+                        taxSummary={taxSummary}
+                        isCurrent={isCurrent}
+                        isBuilding={isBuilding}
+                        onOpenUnit={handleOpenUnit}
+                      />
+                    );
+                  })
+                )}
+
+                {/* Mobile pagination controls */}
+                {hasMoreUnitsToShow && (
+                  <div className="flex flex-col gap-2 pt-2">
+                    <Button
+                      variant="outline"
+                      size="default"
+                      onClick={handleLoadMoreUnits}
+                      disabled={loadingAll}
+                      className="w-full min-h-[44px] gap-2"
+                    >
+                      <ChevronDown className="h-4 w-4" />
+                      Load next {Math.min(UNITS_PAGE_SIZE, totalFilteredUnits - displayedCount)}
+                    </Button>
+                    {totalFilteredUnits - displayedCount > UNITS_PAGE_SIZE && (
+                      <Button
+                        variant="ghost"
+                        size="default"
+                        onClick={handleLoadAllUnits}
+                        disabled={loadingAll}
+                        className="w-full min-h-[44px] text-sm gap-2"
+                      >
+                        {loadingAll && <Loader2 className="h-4 w-4 animate-spin" />}
+                        {loadingAll 
+                          ? `Loading… ${displayedCount} / ${totalFilteredUnits}`
+                          : `Load all (${totalFilteredUnits - displayedCount} remaining)`
+                        }
+                      </Button>
+                    )}
+                  </div>
+                )}
+                {!hasMoreUnitsToShow && totalFilteredUnits > UNITS_PAGE_SIZE && (
+                  <div className="text-center text-xs text-muted-foreground py-2">
+                    All {totalFilteredUnits} units loaded
+                  </div>
+                )}
+              </div>
+            ) : (
+              /* Desktop/Tablet: Table layout */
+              <div 
+                className="border rounded-md overflow-x-auto overflow-y-visible touch-pan-x"
+                style={{
+                  WebkitOverflowScrolling: 'touch',
+                  overscrollBehavior: 'contain',
+                }}
+              >
                 <Table>
                   <TableHeader>
                     <TableRow className="bg-muted/50">
@@ -713,42 +778,43 @@ export function CondoUnitsCard({
                   </TableBody>
                 </Table>
 
-              {/* Unit pagination controls */}
-              {hasMoreUnitsToShow && (
-                <div className="p-3 border-t flex items-center justify-center gap-3">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={handleLoadMoreUnits}
-                    disabled={loadingAll}
-                    className="gap-1.5"
-                  >
-                    <ChevronDown className="h-3.5 w-3.5" />
-                    Load next {Math.min(UNITS_PAGE_SIZE, totalFilteredUnits - displayedCount)}
-                  </Button>
-                  {totalFilteredUnits - displayedCount > UNITS_PAGE_SIZE && (
+                {/* Desktop pagination controls */}
+                {hasMoreUnitsToShow && (
+                  <div className="p-3 border-t flex items-center justify-center gap-3">
                     <Button
-                      variant="ghost"
+                      variant="outline"
                       size="sm"
-                      onClick={handleLoadAllUnits}
+                      onClick={handleLoadMoreUnits}
                       disabled={loadingAll}
-                      className="text-xs gap-1.5"
+                      className="gap-1.5"
                     >
-                      {loadingAll && <Loader2 className="h-3 w-3 animate-spin" />}
-                      {loadingAll 
-                        ? `Loading… ${displayedCount} / ${totalFilteredUnits}`
-                        : `Load all (${totalFilteredUnits - displayedCount} remaining)`
-                      }
+                      <ChevronDown className="h-3.5 w-3.5" />
+                      Load next {Math.min(UNITS_PAGE_SIZE, totalFilteredUnits - displayedCount)}
                     </Button>
-                  )}
-                </div>
-              )}
-              {!hasMoreUnitsToShow && totalFilteredUnits > UNITS_PAGE_SIZE && (
-                <div className="p-2 border-t text-center text-xs text-muted-foreground">
-                  All {totalFilteredUnits} units loaded
-                </div>
-              )}
-            </div>
+                    {totalFilteredUnits - displayedCount > UNITS_PAGE_SIZE && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={handleLoadAllUnits}
+                        disabled={loadingAll}
+                        className="text-xs gap-1.5"
+                      >
+                        {loadingAll && <Loader2 className="h-3 w-3 animate-spin" />}
+                        {loadingAll 
+                          ? `Loading… ${displayedCount} / ${totalFilteredUnits}`
+                          : `Load all (${totalFilteredUnits - displayedCount} remaining)`
+                        }
+                      </Button>
+                    )}
+                  </div>
+                )}
+                {!hasMoreUnitsToShow && totalFilteredUnits > UNITS_PAGE_SIZE && (
+                  <div className="p-2 border-t text-center text-xs text-muted-foreground">
+                    All {totalFilteredUnits} units loaded
+                  </div>
+                )}
+              </div>
+            )}
           </>
         )}
       </CardContent>

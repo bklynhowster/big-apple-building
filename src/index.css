@@ -308,6 +308,27 @@
   .tracking-municipal {
     letter-spacing: 0.06em;
   }
+
+  /* Hide scrollbar but keep functionality - mobile horizontal scrolls */
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* iOS safe scrolling utilities */
+  .ios-scroll {
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+  }
+
+  /* Large tap target for mobile - min 44px as per Apple HIG */
+  .tap-target {
+    min-height: 44px;
+    min-width: 44px;
+  }
 }
 
 /* Print styles for reports */
