@@ -24,7 +24,6 @@ import {
 import { useCondoUnits, type CondoUnit, type CondoUnitsInputRole } from '@/hooks/useCondoUnits';
 import { 
   useCondoUnitTaxes, 
-  INITIAL_TAX_BATCH_SIZE,
   type CondoUnitTaxSummary,
   formatUSDForTable,
   formatDate,
@@ -34,6 +33,10 @@ import {
 
 // Page size for displaying units (client-side pagination)
 const UNITS_PAGE_SIZE = 25;
+
+// Debug mode for tax fetching
+const DEBUG_TAX_SYNC = typeof window !== 'undefined' && 
+  new URLSearchParams(window.location.search).has('debugTaxSync');
 
 interface CondoUnitsCardProps {
   bbl: string;
@@ -97,15 +100,16 @@ export function CondoUnitsCard({
   hidden 
 }: CondoUnitsCardProps) {
   const navigate = useNavigate();
-  const { loading, loadingMore, error, data, fetchFirstPage, fetchNextPage, retry } = useCondoUnits();
+  const { loading, error, data, fetchFirstPage, retry } = useCondoUnits();
   const [searchQuery, setSearchQuery] = useState('');
   
   // Client-side pagination: how many units to show in the table
   const [visibleUnitCount, setVisibleUnitCount] = useState(UNITS_PAGE_SIZE);
   
-  // Tax lazy loading state - how many units to load taxes for
-  const [taxVisibleCount, setTaxVisibleCount] = useState(INITIAL_TAX_BATCH_SIZE);
   const lastBblRef = useRef<string | null>(null);
+  
+  // Track which BBLs we've already requested taxes for
+  const requestedTaxBblsRef = useRef<Set<string>>(new Set());
   
   // Tax hook
   const {
@@ -172,33 +176,13 @@ export function CondoUnitsCard({
     if (bbl !== lastBblRef.current) {
       lastBblRef.current = bbl;
       setVisibleUnitCount(UNITS_PAGE_SIZE);
-      setTaxVisibleCount(INITIAL_TAX_BATCH_SIZE);
+      requestedTaxBblsRef.current.clear();
       resetTaxes();
     }
   }, [bbl, resetTaxes]);
 
   // Determine if this is a building-level view (not a unit page)
   const isBuilding = data?.inputRole === 'billing' || data?.inputRole === 'unknown';
-
-  // Get visible units for tax fetching (only on building pages, not unit pages)
-  const unitsForTaxFetch = useMemo(() => {
-    if (!data?.units || !isBuilding) return [];
-    return data.units.slice(0, taxVisibleCount);
-  }, [data?.units, taxVisibleCount, isBuilding]);
-
-  // Fetch taxes for visible units when they change (only on building pages)
-  useEffect(() => {
-    if (!isBuilding || unitsForTaxFetch.length === 0) return;
-    
-    // Compute which units need fetching
-    const unitsToFetch = unitsForTaxFetch
-      .filter(u => !unitTaxes.has(u.unitBbl))
-      .map(u => ({ unitBbl: u.unitBbl, unitLabel: u.unitLabel }));
-
-    if (unitsToFetch.length > 0) {
-      fetchBatch(unitsToFetch);
-    }
-  }, [unitsForTaxFetch, fetchBatch, isBuilding, data?.units?.length]); // unitTaxes intentionally excluded
 
   // Filter units by search query (searches across ALL loaded units)
   const filteredUnits = useMemo(() => {
@@ -225,6 +209,27 @@ export function CondoUnitsCard({
     }
     return filteredUnits.slice(0, visibleUnitCount);
   }, [filteredUnits, visibleUnitCount, searchQuery]);
+
+  // Auto-fetch taxes for displayed units (only on building pages)
+  useEffect(() => {
+    if (!isBuilding || displayedUnits.length === 0) return;
+    
+    // Find units that need tax fetching (not already requested and not in unitTaxes)
+    const unitsToFetch = displayedUnits
+      .filter(u => !requestedTaxBblsRef.current.has(u.unitBbl) && !unitTaxes.has(u.unitBbl))
+      .map(u => ({ unitBbl: u.unitBbl, unitLabel: u.unitLabel }));
+
+    if (unitsToFetch.length > 0) {
+      if (DEBUG_TAX_SYNC) {
+        console.log(`[CondoUnitsCard] Auto-fetching taxes for ${unitsToFetch.length} displayed units`);
+      }
+      // Mark as requested before fetching to prevent duplicate requests
+      for (const u of unitsToFetch) {
+        requestedTaxBblsRef.current.add(u.unitBbl);
+      }
+      fetchBatch(unitsToFetch);
+    }
+  }, [displayedUnits, fetchBatch, isBuilding]); // unitTaxes intentionally excluded to prevent loops
 
   // Pagination state
   const totalFilteredUnits = filteredUnits.length;
@@ -275,35 +280,22 @@ export function CondoUnitsCard({
     setVisibleUnitCount(totalFilteredUnits);
   }, [totalFilteredUnits]);
 
-  // Load more taxes - increases visible count for tax fetching
-  const handleLoadMoreTaxes = useCallback(() => {
-    const totalUnits = data?.units?.length || 0;
-    const newCount = Math.min(taxVisibleCount + INITIAL_TAX_BATCH_SIZE, totalUnits);
-    setTaxVisibleCount(newCount);
-  }, [taxVisibleCount, data?.units?.length]);
-
-  // Load all taxes
-  const handleLoadAllTaxes = useCallback(() => {
-    const totalUnits = data?.units?.length || 0;
-    setTaxVisibleCount(totalUnits);
-  }, [data?.units?.length]);
-
   // Retry a single unit's tax fetch
   const handleRetryTax = useCallback((unitBbl: string, unitLabel: string | null) => {
+    // Remove from requested set so it can be re-fetched
+    requestedTaxBblsRef.current.delete(unitBbl);
     fetchOne(unitBbl, unitLabel);
   }, [fetchOne]);
 
-  // Get tax summary for a unit
+  // Get tax summary for a unit - returns loading state for displayed units
   const getTaxSummary = useCallback((unitBbl: string, unitLabel: string | null): CondoUnitTaxSummary | null => {
     if (!isBuilding) return null;
     
     const existing = unitTaxes.get(unitBbl);
     if (existing) return existing;
     
-    // Check if this unit is in the tax fetch range
-    const unitIndex = data?.units?.findIndex(u => u.unitBbl === unitBbl) ?? -1;
-    if (unitIndex >= 0 && unitIndex < taxVisibleCount) {
-      // Should be loading
+    // If this unit is displayed and was requested, show loading
+    if (requestedTaxBblsRef.current.has(unitBbl)) {
       return {
         unitBbl,
         unitLabel,
@@ -313,8 +305,8 @@ export function CondoUnitsCard({
       };
     }
     
-    return null; // Not yet in fetch range
-  }, [isBuilding, unitTaxes, data?.units, taxVisibleCount]);
+    return null; // Not yet requested
+  }, [isBuilding, unitTaxes]);
 
   if (loading) return hidden ? null : <LoadingSkeleton />;
 
@@ -361,10 +353,6 @@ export function CondoUnitsCard({
   const units = Array.isArray(data.units) ? data.units : [];
   const hasUnits = units.length > 0;
   const totalUnits = units.length;
-  
-  // Tax loading progress
-  const hasMoreTaxes = taxVisibleCount < totalUnits && isBuilding;
-  const taxRemainingCount = totalUnits - taxVisibleCount;
 
   return (
     <Card>
@@ -438,10 +426,13 @@ export function CondoUnitsCard({
 
               {isBuilding && (
                 <div className="flex items-center gap-2">
-                  <p className="text-xs text-muted-foreground">Tax preview loaded:</p>
+                  <p className="text-xs text-muted-foreground">Tax preview:</p>
                   <Badge variant="secondary" className="font-mono">
-                    {taxLoadedCount} / {totalUnits}
+                    {taxLoadedCount} / {displayedCount} visible
                   </Badge>
+                  {taxBatchLoading && (
+                    <span className="text-xs text-muted-foreground italic">Loading…</span>
+                  )}
                 </div>
               )}
 
@@ -482,35 +473,6 @@ export function CondoUnitsCard({
                 </Badge>
               )}
             </div>
-
-            {/* Tax loading controls - only on building pages */}
-            {isBuilding && hasMoreTaxes && (
-              <div className="flex items-center gap-2 flex-wrap">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleLoadMoreTaxes}
-                  disabled={taxBatchLoading}
-                  className="gap-1.5"
-                >
-                  {taxBatchLoading ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : null}
-                  Load taxes for next {Math.min(INITIAL_TAX_BATCH_SIZE, taxRemainingCount)}
-                </Button>
-                {taxRemainingCount > INITIAL_TAX_BATCH_SIZE && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={handleLoadAllTaxes}
-                    disabled={taxBatchLoading}
-                    className="text-xs"
-                  >
-                    Load all ({taxRemainingCount} remaining)
-                  </Button>
-                )}
-              </div>
-            )}
 
             {/* Search + showing indicator */}
             <div className="flex flex-col gap-2">
