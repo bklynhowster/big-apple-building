@@ -1058,8 +1058,8 @@ function EvidenceDrawer({
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-2xl max-h-[80vh] flex flex-col">
-        <DialogHeader>
+      <DialogContent className="max-w-2xl max-h-[calc(100vh-48px)] flex flex-col overflow-hidden">
+        <DialogHeader className="flex-shrink-0">
           <DialogTitle className="flex items-center gap-2">
             <Badge className="bg-primary text-primary-foreground">Mentioned Unit: {unit}</Badge>
             <span className="text-muted-foreground font-normal text-sm">(Inferred from city records)</span>
@@ -1071,7 +1071,7 @@ function EvidenceDrawer({
         </DialogHeader>
 
         {/* Warning banner - reinforced messaging */}
-        <Alert className="elk-info-box border-warning/30">
+        <Alert className="elk-info-box border-warning/30 flex-shrink-0">
           <AlertTriangle className="h-4 w-4 text-warning" />
           <AlertDescription className="text-sm text-muted-foreground">
             <strong className="text-foreground">Building-level records only.</strong> These records are issued at the building level. 
@@ -1079,7 +1079,8 @@ function EvidenceDrawer({
           </AlertDescription>
         </Alert>
 
-        <ScrollArea className="flex-1 pr-4">
+        {/* Scrollable body - min-h-0 is critical for flex containers with overflow */}
+        <ScrollArea className="flex-1 min-h-0 pr-4" style={{ overscrollBehavior: 'contain' }}>
           <div className="space-y-4">
             {/* DOB Filings */}
             {stats.filingRefs.length > 0 && (
