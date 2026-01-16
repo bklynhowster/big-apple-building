@@ -1,10 +1,9 @@
 import { useMemo, useState, useCallback, useEffect, useRef } from 'react';
-import { useLocation, Link, useNavigate } from 'react-router-dom';
-import { ArrowLeft, AlertCircle, Building2, Home } from 'lucide-react';
+import { useLocation, Link } from 'react-router-dom';
+import { AlertCircle } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
 import { Footer } from '@/components/layout/Footer';
 import { ContextBanner, QueryScope } from '@/components/results/ContextBanner';
-import { PropertyOverview } from '@/components/results/PropertyOverview';
 import { PropertyProfileCard } from '@/components/results/PropertyProfileCard';
 import { RiskSnapshotCard, type RecordCounts, type LoadingStates, type RecordArrays, type NavigationInfo } from '@/components/results/RiskSnapshotCard';
 import brooklynBridgeLines from '@/assets/brooklyn-bridge-lines.png';
@@ -14,14 +13,10 @@ import type { CondoUnit, CondoUnitsInputRole } from '@/hooks/useCondoUnits';
 import { ResidentialUnitsCard } from '@/components/results/ResidentialUnitsCard';
 import { UnitInsightsCard } from '@/components/results/UnitInsightsCard';
 import { TaxesPanel } from '@/features/taxes';
-import { SummaryTab } from '@/components/results/SummaryTab';
-import { ViolationsTab } from '@/components/results/ViolationsTab';
-import { ECBTab } from '@/components/results/ECBTab';
-import { SafetyTab } from '@/components/results/SafetyTab';
-import { PermitsTab } from '@/components/results/PermitsTab';
-import { AllRecordsTab } from '@/components/results/AllRecordsTab';
-import { HPDTab } from '@/components/results/HPDTab';
-import { ThreeOneOneTab } from '@/components/results/ThreeOneOneTab';
+import { OverviewTab } from '@/components/results/OverviewTab';
+import { UnitsTab } from '@/components/results/UnitsTab';
+import { RecordsTab } from '@/components/results/RecordsTab';
+import { FinanceTab } from '@/components/results/FinanceTab';
 import { QueryDebugPanel } from '@/components/results/QueryDebugPanel';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { MobileTabsList, MobileTabsTrigger } from '@/components/ui/mobile-tabs';
@@ -39,7 +34,7 @@ import { useECB } from '@/hooks/useECB';
 import { usePermits } from '@/hooks/usePermits';
 import { useLandmarkStatus } from '@/hooks/useLandmarkStatus';
 import { useIsMobileViewport } from '@/hooks/useBreakpoint';
-const VALID_TABS = ['summary', 'violations', 'ecb', 'safety', 'permits', 'hpd', '311', 'all'] as const;
+const VALID_TABS = ['overview', 'units', 'records', 'finance'] as const;
 type ValidTab = typeof VALID_TABS[number];
 
 function normalizeBBL(bbl: string | null): string {
@@ -54,7 +49,6 @@ function isValidTab(tab: string | null): tab is ValidTab {
 
 export default function Results() {
   const location = useLocation();
-  const navigate = useNavigate();
   const isMobile = useIsMobileViewport();
   const { setContextInfo } = useQueryDebug();
 
@@ -63,10 +57,10 @@ export default function Results() {
     return new URLSearchParams(location.search);
   }, [location.search]);
 
-  // Initialize active tab from URL or default to 'summary'
+  // Initialize active tab from URL or default to 'overview'
   const initialTab = useMemo(() => {
     const tabParam = params.get('tab');
-    return isValidTab(tabParam) ? tabParam : 'summary';
+    return isValidTab(tabParam) ? tabParam : 'overview';
   }, [params]);
 
   const [activeTab, setActiveTab] = useState<string>(initialTab);
@@ -119,7 +113,7 @@ export default function Results() {
   const isEffectiveBblValid = effectiveBbl.length === 10;
 
   // Get property profile using the effective BBL (building for units, current for buildings)
-  const { profile, loading: profileLoading, error: profileError } = usePropertyProfile(isEffectiveBblValid ? effectiveBbl : null);
+  const { profile, loading: profileLoading } = usePropertyProfile(isEffectiveBblValid ? effectiveBbl : null);
   
   // Derive isCoopInferred from new two-layer ownership system:
   // Show as co-op if ownership.type === 'Cooperative' AND score >= 8
@@ -284,9 +278,6 @@ export default function Results() {
     dobJobFilings.units,
   ]);
 
-  // State for passing keyword filter to tabs from "View in tab"
-  const [tabKeywordFilter, setTabKeywordFilter] = useState<string | undefined>();
-  
   // Condo and scope state
   const [billingBbl, setBillingBbl] = useState<string | null>(null);
   const [currentUnitLabel, setCurrentUnitLabel] = useState<string | null>(null);
@@ -320,7 +311,6 @@ export default function Results() {
   }, [bbl]);
   
   const isUnitLot = lotNumber >= 1001 && lotNumber <= 6999;
-  const isBillingLot = lotNumber >= 7500 && lotNumber <= 7599;
   
   // Scope defaults: unit lot -> unit scope, billing lot -> building scope
   // For co-ops, always use building scope (no unit-level data)
@@ -418,13 +408,12 @@ export default function Results() {
   }, []);
 
   // Sync tab changes to URL
-  const handleTabChange = useCallback((tab: string, keyword?: string) => {
+  const handleTabChange = useCallback((tab: string) => {
     setActiveTab(tab);
-    setTabKeywordFilter(keyword);
     
     // Update URL with new tab (without full navigation)
     const newParams = new URLSearchParams(location.search);
-    if (tab === 'summary') {
+    if (tab === 'overview') {
       newParams.delete('tab'); // Default tab, no need in URL
     } else {
       newParams.set('tab', tab);
@@ -433,14 +422,10 @@ export default function Results() {
     window.history.replaceState(null, '', newUrl);
   }, [location.search, location.pathname]);
 
-  const handleViewInTab = useCallback((tab: string, keyword?: string) => {
-    handleTabChange(tab, keyword);
-  }, [handleTabChange]);
-
   // Sync from URL when it changes externally (e.g., back/forward navigation)
   useEffect(() => {
     const tabParam = params.get('tab');
-    const validTab = isValidTab(tabParam) ? tabParam : 'summary';
+    const validTab = isValidTab(tabParam) ? tabParam : 'overview';
     if (validTab !== activeTab) {
       setActiveTab(validTab);
     }
@@ -576,24 +561,11 @@ export default function Results() {
                 isCondo={condoUnitsData.isCondo && !isUnitLot}
               />
               
-              {/* Condo Units Discovery - only show when NOT on a unit page and NOT a co-op */}
-              {!isUnitLot && !isCoop && (
+              {/* Hidden: Resolve billing BBL for condo buildings (needed for data fetching) */}
+              {!isCoop && (
                 <CondoUnitsCard 
                   bbl={bbl}
-                  buildingAddress={address}
-                  borough={borough}
-                  bin={bin}
-                  onUnitLabelResolved={setCurrentUnitLabel}
-                  onBillingBblResolved={handleBillingBblResolved}
-                  onCondoDataResolved={handleCondoDataResolved}
-                />
-              )}
-              
-              {/* Hidden component to resolve billing BBL when on unit page */}
-              {isUnitLot && !isCoop && (
-                <CondoUnitsCard 
-                  bbl={bbl}
-                  buildingAddress={buildingAddressParam || address}
+                  buildingAddress={isUnitLot ? (buildingAddressParam || address) : address}
                   borough={borough}
                   bin={bin}
                   onUnitLabelResolved={setCurrentUnitLabel}
@@ -603,7 +575,6 @@ export default function Results() {
                 />
               )}
 
-              {/* Residential Units Card - Co-ops only (informational unit enumeration) */}
               {/* Residential Units Card - Co-ops only (informational unit enumeration) */}
               {isCoop && (
                 <ResidentialUnitsCard
@@ -649,178 +620,88 @@ export default function Results() {
                 {isMobile ? (
                   <div className="bg-card border-b border-border">
                     <MobileTabsList>
-                      <MobileTabsTrigger value="summary">Summary</MobileTabsTrigger>
-                      <MobileTabsTrigger value="violations">Violations</MobileTabsTrigger>
-                      <MobileTabsTrigger value="ecb">ECB</MobileTabsTrigger>
-                      <MobileTabsTrigger value="safety">Safety</MobileTabsTrigger>
-                      <MobileTabsTrigger value="permits">Permits</MobileTabsTrigger>
-                      <MobileTabsTrigger value="hpd">HPD</MobileTabsTrigger>
-                      <MobileTabsTrigger value="311">311</MobileTabsTrigger>
-                      <MobileTabsTrigger value="all">All</MobileTabsTrigger>
+                      <MobileTabsTrigger value="overview">Overview</MobileTabsTrigger>
+                      <MobileTabsTrigger value="units">Units</MobileTabsTrigger>
+                      <MobileTabsTrigger value="records">Records</MobileTabsTrigger>
+                      <MobileTabsTrigger value="finance">Finance</MobileTabsTrigger>
                     </MobileTabsList>
-                    {/* Scope indicator on mobile */}
-                    {hasCondoUnits && isUnitLot && (
-                      <div className="px-3 pb-2">
-                        <Badge variant={scope === 'unit' ? 'default' : 'secondary'} className="text-xs">
-                          {scope === 'unit' ? 'Unit view' : 'Building view'}
-                        </Badge>
-                      </div>
-                    )}
                   </div>
                 ) : (
-                  /* Desktop/Tablet: standard tabs with wrap */
-                  <div className="flex items-center justify-between bg-card border-b border-border">
-                    <TabsList className="justify-start bg-transparent rounded-none h-auto p-0 flex-wrap">
+                  /* Desktop/Tablet: standard tabs */
+                  <div className="bg-card border-b border-border">
+                    <TabsList className="justify-start bg-transparent rounded-none h-auto p-0">
                       <TabsTrigger 
-                        value="summary" 
+                        value="overview" 
                         className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent py-3 px-6"
                       >
-                        Summary
+                        Overview
                       </TabsTrigger>
                       <TabsTrigger 
-                        value="violations" 
+                        value="units" 
                         className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent py-3 px-6"
                       >
-                        Violations
+                        Units
                       </TabsTrigger>
                       <TabsTrigger 
-                        value="ecb" 
+                        value="records" 
                         className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent py-3 px-6"
                       >
-                        ECB
+                        Records
                       </TabsTrigger>
                       <TabsTrigger 
-                        value="safety" 
+                        value="finance" 
                         className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent py-3 px-6"
                       >
-                        Safety
-                      </TabsTrigger>
-                      <TabsTrigger 
-                        value="permits" 
-                        className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent py-3 px-6"
-                      >
-                        Permits
-                      </TabsTrigger>
-                      <TabsTrigger 
-                        value="hpd" 
-                        className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent py-3 px-6"
-                      >
-                        HPD
-                      </TabsTrigger>
-                      <TabsTrigger 
-                        value="311" 
-                        className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent py-3 px-6"
-                      >
-                        311 Nearby
-                      </TabsTrigger>
-                      <TabsTrigger 
-                        value="all" 
-                        className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent py-3 px-6"
-                      >
-                        All Records
+                        Finance
                       </TabsTrigger>
                     </TabsList>
-                    
-                    {/* Scope indicator badge for tabs */}
-                    {hasCondoUnits && isUnitLot && (
-                      <div className="px-4 py-2">
-                        <Badge variant={scope === 'unit' ? 'default' : 'secondary'} className="text-xs">
-                          {scope === 'unit' ? 'Unit view' : 'Building view'}
-                        </Badge>
-                      </div>
-                    )}
                   </div>
                 )}
 
                 <div className="mt-4 sm:mt-6">
-                  <TabsContent value="summary" className="mt-0">
-                    <Card>
-                      <CardContent className="p-4 sm:p-6">
-                        <SummaryTab 
-                          bbl={effectiveBbl}
-                          billingBbl={billingBbl}
-                          isCoop={isCoop}
-                          coopUnitContext={coopUnitContext}
-                          onTabChange={handleTabChange}
-                        />
-                      </CardContent>
-                    </Card>
+                  <TabsContent value="overview" className="mt-0">
+                    <OverviewTab
+                      address={address}
+                      borough={borough}
+                      bbl={effectiveBbl}
+                      bin={bin}
+                      isCondo={condoUnitsData.isCondo && !isUnitLot}
+                      isCoop={isCoop}
+                      totalUnits={condoUnitsData.totalApprox || profile?.totalUnits}
+                      recordCounts={recordCounts}
+                      recordLoading={riskSnapshotLoading}
+                      onTabChange={handleTabChange}
+                    />
                   </TabsContent>
                   
-                  <TabsContent value="violations" className="mt-0">
-                    <Card id="dob-violations">
-                      <CardContent className="p-4 sm:p-6">
-                        <ViolationsTab bbl={queryBbl} bin={bin} scope={scope} isCoop={isCoop} coopUnitContext={coopUnitContext} address={address} />
-                      </CardContent>
-                    </Card>
+                  <TabsContent value="units" className="mt-0">
+                    <UnitsTab
+                      bbl={effectiveBbl}
+                      buildingAddress={address}
+                      borough={borough}
+                      bin={bin}
+                      isCoop={isCoop}
+                    />
                   </TabsContent>
                   
-                  <TabsContent value="ecb" className="mt-0">
-                    <Card id="ecb-violations">
-                      <CardContent className="p-4 sm:p-6">
-                        <ECBTab bbl={queryBbl} bin={bin} scope={scope} isCoop={isCoop} coopUnitContext={coopUnitContext} address={address} />
-                      </CardContent>
-                    </Card>
+                  <TabsContent value="records" className="mt-0">
+                    <RecordsTab
+                      bbl={queryBbl}
+                      bin={bin}
+                      lat={latitude}
+                      lon={longitude}
+                      address={address}
+                      scope={scope}
+                      isCoop={isCoop}
+                      coopUnitContext={coopUnitContext}
+                      recordCounts={recordCounts}
+                      recordLoading={riskSnapshotLoading}
+                      onClearUnitContext={handleClearUnitContext}
+                    />
                   </TabsContent>
                   
-                  <TabsContent value="safety" className="mt-0">
-                    <Card>
-                      <CardContent className="p-4 sm:p-6">
-                        <SafetyTab bbl={queryBbl} bin={bin} scope={scope} isCoop={isCoop} coopUnitContext={coopUnitContext} address={address} />
-                      </CardContent>
-                    </Card>
-                  </TabsContent>
-                  
-                  <TabsContent value="permits" className="mt-0">
-                    <Card id="dob-permits">
-                      <CardContent className="p-4 sm:p-6">
-                        <PermitsTab bbl={queryBbl} bin={bin} scope={scope} isCoop={isCoop} coopUnitContext={coopUnitContext} address={address} />
-                      </CardContent>
-                    </Card>
-                  </TabsContent>
-                  
-                  <TabsContent value="hpd" className="mt-0">
-                    <Card>
-                      <CardContent className="p-4 sm:p-6">
-                        <div id="hpd-violations" />
-                        <div id="hpd-complaints" />
-                        <HPDTab 
-                          bbl={queryBbl} 
-                          bin={bin} 
-                          scope={scope} 
-                          isCoop={isCoop} 
-                          coopUnitContext={coopUnitContext}
-                          onClearUnitContext={handleClearUnitContext}
-                          address={address}
-                        />
-                      </CardContent>
-                    </Card>
-                  </TabsContent>
-                  
-                  <TabsContent value="311" className="mt-0">
-                    <Card id="service-requests">
-                      <CardContent className="p-4 sm:p-6">
-                        <ThreeOneOneTab 
-                          lat={latitude} 
-                          lon={longitude} 
-                          scope={scope}
-                          isCoop={isCoop}
-                          coopUnitContext={coopUnitContext}
-                          onClearUnitContext={handleClearUnitContext}
-                          address={address}
-                        />
-                      </CardContent>
-                    </Card>
-                  </TabsContent>
-                  
-                  <TabsContent value="all" className="mt-0">
-                    <Card>
-                      <CardContent className="p-4 sm:p-6">
-                        <div id="sales-records" />
-                        <div id="dob-filings" />
-                        <AllRecordsTab bbl={queryBbl} onViewInTab={handleViewInTab} />
-                      </CardContent>
-                    </Card>
+                  <TabsContent value="finance" className="mt-0">
+                    <FinanceTab bbl={effectiveBbl} address={address} />
                   </TabsContent>
                 </div>
               </Tabs>
