@@ -201,16 +201,35 @@ export function TaxesCard({ viewBbl, buildingBbl, address, isUnitPage = false }:
                         </TooltipTrigger>
                         <TooltipContent className="max-w-xs">
                           <p className="text-xs">
-                            {arrearsNote || 'Past-due balance from prior billing periods (current period excluded).'}
+                            Arrears excludes the latest bill period; running-balance ledgers are normalized.
                           </p>
+                          {arrearsNote && (
+                            <p className="text-xs text-muted-foreground mt-1 italic">
+                              {arrearsNote}
+                            </p>
+                          )}
                         </TooltipContent>
                       </Tooltip>
                     </TooltipProvider>
                   </>
                 ) : (
-                  <Badge variant="outline" className="bg-primary/10 text-primary border-primary/20 text-xs">
-                    Arrears: None
-                  </Badge>
+                  <div className="flex items-center gap-1.5">
+                    <Badge variant="outline" className="bg-primary/10 text-primary border-primary/20 text-xs">
+                      Arrears: None
+                    </Badge>
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <HelpCircle className="h-3 w-3 text-muted-foreground cursor-help" />
+                        </TooltipTrigger>
+                        <TooltipContent className="max-w-xs">
+                          <p className="text-xs">
+                            Arrears excludes the latest bill period; running-balance ledgers are normalized.
+                          </p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  </div>
                 )
               ) : (
                 <Badge variant="secondary" className="text-xs">
@@ -335,6 +354,10 @@ export function TaxesCard({ viewBbl, buildingBbl, address, isUnitPage = false }:
                         <div className="bg-red-500/10 p-2 rounded text-[10px] space-y-1 border border-red-500/30">
                           <div><strong>today:</strong> {data.debug.arrears_debug.today}</div>
                           <div><strong>latest_due_date (excluded):</strong> {data.debug.arrears_debug.latest_due_date || 'null'}</div>
+                          <div><strong>latest_period_balance:</strong> {formatUSD(data.debug.arrears_debug.latest_period_balance)}</div>
+                          <div><strong>max_prior_balance:</strong> {formatUSD(data.debug.arrears_debug.max_prior_balance)}</div>
+                          <div><strong>arrears_final:</strong> {formatUSD(data.debug.arrears_debug.arrears_final)}</div>
+                          <div><strong>running_balance_detected:</strong> {data.debug.arrears_debug.running_balance_detected ? 'Yes' : 'No'}</div>
                           <div><strong>periods_considered:</strong> {data.debug.arrears_debug.periods_considered}</div>
                           <div><strong>periods_included_in_arrears:</strong> {data.debug.arrears_debug.periods_included_in_arrears.length > 0 ? data.debug.arrears_debug.periods_included_in_arrears.join(', ') : 'NONE (arrears = 0)'}</div>
                           {data.debug.arrears_debug.exclusion_reason && (
