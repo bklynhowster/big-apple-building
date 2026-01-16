@@ -13,7 +13,7 @@ import { CondoUnitsCard } from '@/components/results/CondoUnitsCard';
 import type { CondoUnit, CondoUnitsInputRole } from '@/hooks/useCondoUnits';
 import { ResidentialUnitsCard } from '@/components/results/ResidentialUnitsCard';
 import { UnitInsightsCard } from '@/components/results/UnitInsightsCard';
-import { TaxesCard } from '@/components/results/TaxesCard';
+import { TaxesPanel } from '@/features/taxes';
 import { SummaryTab } from '@/components/results/SummaryTab';
 import { ViolationsTab } from '@/components/results/ViolationsTab';
 import { ECBTab } from '@/components/results/ECBTab';
@@ -565,28 +565,14 @@ export default function Results() {
                 onOwnershipOverrideChange={handleOwnershipOverrideChange}
               />
               
-              {/* Taxes Card - Context-aware: Condo buildings have tax info in CondoUnitsCard, unit pages show unit taxes */}
-              {/* CONDO BUILDING: Taxes are displayed in CondoUnitsCard above, no separate card needed */}
-              
-              {/* UNIT PAGE: Show regular TaxesCard for the unit BBL */}
-              {isUnitLot && (
-                <TaxesCard 
-                  viewBbl={bbl}
-                  buildingBbl={undefined}
-                  address={address}
-                  isUnitPage={true}
-                />
-              )}
-              
-              {/* NON-CONDO BUILDING: Show regular TaxesCard */}
-              {!isUnitLot && !isCoop && !condoUnitsData.isCondo && (
-                <TaxesCard 
-                  viewBbl={bbl}
-                  buildingBbl={buildingBblParam || billingBbl || undefined}
-                  address={address}
-                  isUnitPage={false}
-                />
-              )}
+              {/* Taxes - Single integration point via TaxesPanel */}
+              <TaxesPanel
+                context={isUnitLot ? 'unit' : 'building'}
+                viewBbl={bbl}
+                buildingBbl={buildingBblParam || billingBbl || undefined}
+                address={address}
+                isCondo={condoUnitsData.isCondo && !isUnitLot}
+              />
               
               {/* Condo Units Discovery - only show when NOT on a unit page and NOT a co-op */}
               {!isUnitLot && !isCoop && (
