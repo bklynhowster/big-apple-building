@@ -86,9 +86,14 @@ export const UnitCardMobile = memo(function UnitCardMobile({
           {/* Status badge */}
           {isBuilding && (
             <div className="flex-shrink-0">
-              {taxSummary?.loading ? (
+              {!taxSummary ? (
+                // Null taxSummary = not loaded yet (distinct from no data)
+                <Badge variant="outline" className="text-xs text-muted-foreground">
+                  Not loaded
+                </Badge>
+              ) : taxSummary.loading ? (
                 <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-              ) : taxSummary?.error ? (
+              ) : taxSummary.error ? (
                 <TooltipProvider>
                   <Tooltip>
                     <TooltipTrigger asChild>
@@ -110,7 +115,7 @@ export const UnitCardMobile = memo(function UnitCardMobile({
                   {statusInfo.icon}
                   {statusInfo.label}
                 </Badge>
-              ) : taxSummary?.data?.no_data_found ? (
+              ) : taxSummary.data?.no_data_found ? (
                 <Badge variant="outline" className="text-xs">
                   No bill
                 </Badge>
@@ -125,27 +130,32 @@ export const UnitCardMobile = memo(function UnitCardMobile({
             {/* Latest Bill */}
             <div>
               <p className="text-xs text-muted-foreground mb-0.5">Latest Bill</p>
-              {taxSummary?.loading ? (
+              {!taxSummary ? (
+                // Not loaded yet - distinct from "no data"
+                <span className="text-muted-foreground text-xs italic">Not loaded yet</span>
+              ) : taxSummary.loading ? (
                 <span className="text-muted-foreground text-xs italic">Loading…</span>
-              ) : taxSummary?.error ? (
-                <span className="text-destructive text-xs">—</span>
-              ) : taxSummary?.data?.no_data_found ? (
+              ) : taxSummary.error ? (
+                <span className="text-destructive text-xs">Error</span>
+              ) : taxSummary.data?.no_data_found ? (
                 <span className="text-muted-foreground text-xs">No bill found</span>
-              ) : taxSummary?.data ? (
+              ) : taxSummary.data ? (
                 <span className="font-medium">
                   {formatUSDForTable(taxSummary.data.latest_bill_amount)}
                 </span>
               ) : (
-                <span className="text-muted-foreground text-xs">—</span>
+                <span className="text-muted-foreground text-xs">No bill found</span>
               )}
             </div>
 
             {/* Due Date */}
             <div>
               <p className="text-xs text-muted-foreground mb-0.5">Due Date</p>
-              {taxSummary?.loading ? (
+              {!taxSummary ? (
                 <span className="text-muted-foreground text-xs italic">—</span>
-              ) : taxSummary?.data?.latest_due_date ? (
+              ) : taxSummary.loading ? (
+                <span className="text-muted-foreground text-xs italic">—</span>
+              ) : taxSummary.data?.latest_due_date ? (
                 <span className="text-muted-foreground">
                   {formatDate(taxSummary.data.latest_due_date)}
                 </span>

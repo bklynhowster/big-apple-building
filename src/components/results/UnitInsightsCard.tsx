@@ -1058,7 +1058,7 @@ function EvidenceDrawer({
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-2xl max-h-[80vh] overflow-hidden flex flex-col">
+      <DialogContent className="max-w-2xl max-h-[80vh] flex flex-col">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Badge className="bg-primary text-primary-foreground">Mentioned Unit: {unit}</Badge>

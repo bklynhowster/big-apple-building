@@ -276,28 +276,43 @@ export function CondoUnitsCard({
     setVisibleUnitCount((prev) => Math.min(prev + UNITS_PAGE_SIZE, totalFilteredUnits));
   }, [totalFilteredUnits]);
 
-  // Load all units progressively (avoids UI freeze on large buildings)
-  const handleLoadAllUnits = useCallback(async () => {
+  // Load all units progressively using requestAnimationFrame for smooth rendering
+  const handleLoadAllUnits = useCallback(() => {
     if (loadingAllRef.current) return;
     
     loadingAllRef.current = true;
     setLoadingAll(true);
     
     const targetCount = totalFilteredUnits;
-    let current = visibleUnitCount;
     
-    while (current < targetCount && loadingAllRef.current) {
-      const nextCount = Math.min(current + UNITS_PAGE_SIZE, targetCount);
-      setVisibleUnitCount(nextCount);
-      current = nextCount;
+    const loadNextBatch = () => {
+      if (!loadingAllRef.current) {
+        setLoadingAll(false);
+        return;
+      }
       
-      // Yield to main thread to keep UI responsive
-      await new Promise(resolve => setTimeout(resolve, LOAD_ALL_BATCH_DELAY_MS));
-    }
+      setVisibleUnitCount(prev => {
+        const nextCount = Math.min(prev + UNITS_PAGE_SIZE, targetCount);
+        
+        if (nextCount >= targetCount) {
+          // Done loading
+          loadingAllRef.current = false;
+          setLoadingAll(false);
+          return nextCount;
+        }
+        
+        // Schedule next batch using rAF for smooth rendering, then setTimeout for yield
+        requestAnimationFrame(() => {
+          setTimeout(loadNextBatch, LOAD_ALL_BATCH_DELAY_MS);
+        });
+        
+        return nextCount;
+      });
+    };
     
-    loadingAllRef.current = false;
-    setLoadingAll(false);
-  }, [totalFilteredUnits, visibleUnitCount]);
+    // Start the first batch
+    requestAnimationFrame(loadNextBatch);
+  }, [totalFilteredUnits]);
 
   // Cancel "load all" when navigating away
   useEffect(() => {
