@@ -38,7 +38,7 @@ import {
 
 // Debug mode for tax fetching - enabled via ?debug=1
 const DEBUG_TAX_SYNC = typeof window !== 'undefined' && 
-  new URLSearchParams(window.location.search).has('debug');
+  new URLSearchParams(window.location.search).get('debug') === '1';
 
 interface CondoUnitsCardProps {
   bbl: string;
