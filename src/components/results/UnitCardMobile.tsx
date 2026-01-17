@@ -23,7 +23,7 @@ interface UnitCardMobileProps {
   taxSummary: CondoUnitTaxSummary | null;
   isCurrent: boolean;
   isBuilding: boolean;
-  onOpenUnit: (unitBbl: string) => void;
+  onOpenUnit: (unitBbl: string, unitLabel?: string | null) => void;
 }
 
 export const UnitCardMobile = memo(function UnitCardMobile({
@@ -180,7 +180,7 @@ export const UnitCardMobile = memo(function UnitCardMobile({
         <Button
           variant="outline"
           size="default"
-          onClick={() => onOpenUnit(unit.unitBbl)}
+          onClick={() => onOpenUnit(unit.unitBbl, unit.unitLabel)}
           className="w-full min-h-[44px] gap-2"
         >
           <Home className="h-4 w-4" />
