@@ -5,6 +5,7 @@ import { Header } from '@/components/layout/Header';
 import { Footer } from '@/components/layout/Footer';
 import { ContextBanner, QueryScope } from '@/components/results/ContextBanner';
 import { ResultsContextRail } from '@/components/results/ResultsContextRail';
+import { BuildingHeader } from '@/components/results/BuildingHeader';
 import { PropertyProfileCard } from '@/components/results/PropertyProfileCard';
 import { RiskSnapshotCard, type RecordCounts, type LoadingStates, type RecordArrays, type NavigationInfo } from '@/components/results/RiskSnapshotCard';
 import brooklynBridgeLines from '@/assets/brooklyn-bridge-lines.png';
@@ -779,34 +780,17 @@ export default function Results() {
                 </>
               ) : (
                 /* ===== BUILDING MODE LAYOUT ===== */
-                /* Standard layout: Building context cards, then tabs */
+                /* Standard layout: Single authoritative header, then content cards, then tabs */
                 <>
-                  {/* Context Banner - Primary navigation and scope control */}
-                  <ContextBanner
+                  {/* Building Header - Single authoritative introduction */}
+                  <BuildingHeader
                     address={address}
-                    unitLabel={currentUnitLabel}
-                    unitBbl={bbl}
-                    billingBbl={billingBbl || buildingBblParam}
-                    effectiveBbl={effectiveBbl}
-                    bin={bin}
                     borough={borough}
-                    buildingAddress={buildingAddressParam}
-                    buildingProfile={profile ? {
-                      yearBuilt: profile.yearBuilt,
-                      buildingClass: profile.buildingClass,
-                      totalUnits: profile.totalUnits,
-                      residentialUnits: profile.residentialUnits,
-                      numFloors: profile.numFloors,
-                      grossSqFt: profile.grossSqFt,
-                      propertyTypeLabel: profile.propertyTypeLabel,
-                    } : null}
-                    buildingProfileLoading={profileLoading}
-                    isCondoUnit={isCondoBuilding && isUnitLot && !isCoop}
-                    isCoop={isCoop}
-                    coopUnitContext={coopUnitContext}
-                    onCoopUnitContextChange={isCoop ? handleCoopUnitContextChange : undefined}
-                    scope={scope}
-                    onScopeChange={setScope}
+                    bbl={effectiveBbl}
+                    bin={bin}
+                    propertyType={profile?.propertyTypeLabel}
+                    totalUnits={condoMeta.totalUnits || profile?.totalUnits}
+                    loading={profileLoading}
                   />
 
                   {/* Condo Units Preview - FIRST after header for immediate orientation */}
@@ -879,17 +863,6 @@ export default function Results() {
                     dobNowUrl={dobJobFilings.dobNowUrl}
                     fallbackMode={dobJobFilings.fallbackMode}
                     hideWhenEmpty={true}
-                  />
-
-                  {/* Property Profile with embedded map */}
-                  <PropertyProfileCard 
-                    bbl={effectiveBbl}
-                    unitLabel={currentUnitLabel}
-                    parentAddress={address}
-                    landmarkStatus={landmarkStatus}
-                    lat={latitude}
-                    lon={longitude}
-                    onOwnershipOverrideChange={handleOwnershipOverrideChange}
                   />
                   
                   {/* Taxes - Single integration point via TaxesPanel */}
