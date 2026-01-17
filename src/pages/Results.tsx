@@ -610,36 +610,15 @@ export default function Results() {
                 buildingBbl={buildingBblParam || effectiveBbl}
                 isUnitMode={isUnitMode}
                 onBackToBuilding={handleBackToBuilding}
+                viewScope="unit"
+                onViewScopeChange={(newScope) => {
+                  if (newScope === 'building') {
+                    handleBackToBuilding();
+                  }
+                  // 'unit' scope is default when in unit mode
+                }}
                 buildingContextContent={isUnitMode ? (
                   <>
-                    {/* Context Banner */}
-                    <ContextBanner
-                      address={address}
-                      unitLabel={currentUnitLabel}
-                      unitBbl={bbl}
-                      billingBbl={billingBbl || buildingBblParam}
-                      effectiveBbl={effectiveBbl}
-                      bin={bin}
-                      borough={borough}
-                      buildingAddress={buildingAddressParam}
-                      buildingProfile={profile ? {
-                        yearBuilt: profile.yearBuilt,
-                        buildingClass: profile.buildingClass,
-                        totalUnits: profile.totalUnits,
-                        residentialUnits: profile.residentialUnits,
-                        numFloors: profile.numFloors,
-                        grossSqFt: profile.grossSqFt,
-                        propertyTypeLabel: profile.propertyTypeLabel,
-                      } : null}
-                      buildingProfileLoading={profileLoading}
-                      isCondoUnit={isCondoBuilding && isUnitLot && !isCoop}
-                      isCoop={isCoop}
-                      coopUnitContext={coopUnitContext}
-                      onCoopUnitContextChange={isCoop ? handleCoopUnitContextChange : undefined}
-                      scope={scope}
-                      onScopeChange={setScope}
-                    />
-
                     {/* Risk Snapshot */}
                     <RiskSnapshotCard 
                       counts={recordCounts} 
