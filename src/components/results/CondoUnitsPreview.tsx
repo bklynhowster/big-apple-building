@@ -327,7 +327,15 @@ export function CondoUnitsPreview({
                 <Building2 className="h-5 w-5 text-primary" />
               </div>
               <div>
-                <CardTitle className="text-lg">Condo Units</CardTitle>
+                <div className="flex items-center gap-2">
+                  <CardTitle className="text-lg">Condo Units</CardTitle>
+                  {batchLoading && (
+                    <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      Loading taxes...
+                    </span>
+                  )}
+                </div>
                 <p className="text-sm text-muted-foreground">
                   {totalUnits} registered units in this building
                 </p>
