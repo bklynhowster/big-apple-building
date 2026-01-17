@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
-import { Building2, Home, Search, AlertCircle, Info, Loader2 } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { Building2, Home, Search, AlertCircle, Info, Loader2, Bug } from 'lucide-react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -53,6 +53,50 @@ interface UnitsTabProps {
   onCondoMetaResolved?: (meta: CondoMeta) => void;
 }
 
+// Debug panel shown when ?debug=1
+function DebugPanel({ 
+  searchBbl, 
+  rosterQueryBbl, 
+  billingBbl, 
+  unitsCount, 
+  error,
+  isCondo,
+  loading,
+}: { 
+  searchBbl: string; 
+  rosterQueryBbl: string | null; 
+  billingBbl: string | null; 
+  unitsCount: number; 
+  error: string | null;
+  isCondo: boolean;
+  loading: boolean;
+}) {
+  return (
+    <div className="mb-4 p-4 bg-amber-100 dark:bg-amber-950 border border-amber-300 dark:border-amber-700 rounded-lg font-mono text-xs">
+      <div className="flex items-center gap-2 mb-2 text-amber-800 dark:text-amber-200">
+        <Bug className="h-4 w-4" />
+        <strong>Units Tab Debug (remove ?debug=1 to hide)</strong>
+      </div>
+      <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-amber-900 dark:text-amber-100">
+        <span>searchBbl:</span>
+        <span className="font-bold">{searchBbl || '(none)'}</span>
+        <span>rosterQueryBbl:</span>
+        <span className="font-bold">{rosterQueryBbl || '(none)'}</span>
+        <span>billingBbl (returned):</span>
+        <span className="font-bold">{billingBbl || '(none)'}</span>
+        <span>isCondo:</span>
+        <span className={cn("font-bold", isCondo ? "text-green-700 dark:text-green-400" : "text-red-700 dark:text-red-400")}>{String(isCondo)}</span>
+        <span>units.length:</span>
+        <span className={cn("font-bold", unitsCount > 0 ? "text-green-700 dark:text-green-400" : "text-red-700 dark:text-red-400")}>{unitsCount}</span>
+        <span>loading:</span>
+        <span className="font-bold">{String(loading)}</span>
+        <span>error:</span>
+        <span className={cn("font-bold", error ? "text-red-700 dark:text-red-400" : "")}>{error || '(none)'}</span>
+      </div>
+    </div>
+  );
+}
+
 function LoadingSkeleton() {
   return (
     <div className="space-y-4">
@@ -88,11 +132,16 @@ export function UnitsTab({
   onCondoMetaResolved,
 }: UnitsTabProps) {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const showDebug = searchParams.get('debug') === '1';
   const isMobile = useIsMobileViewport();
   const [searchTerm, setSearchTerm] = useState('');
   const [visibleUnitCount, setVisibleUnitCount] = useState(UNITS_PAGE_SIZE);
   const [loadingAll, setLoadingAll] = useState(false);
   const loadAllAbortRef = useRef(false);
+  
+  // Track which BBL we're actually querying the roster with
+  const [rosterQueryBbl, setRosterQueryBbl] = useState<string | null>(null);
 
   // Condo units hook
   const {
@@ -112,15 +161,39 @@ export function UnitsTab({
     reset: resetTaxes,
   } = useCondoUnitTaxes();
 
-  // Fetch condo units on mount
+  // Fetch condo units on mount - always try, regardless of coop status initially
+  // We need to discover if it's a condo via the API response
+  const lastFetchedBblRef = useRef<string | null>(null);
   useEffect(() => {
-    if (bbl && !isCoop) {
-      fetchFirstPage(bbl);
+    if (!bbl || bbl.length !== 10) return;
+    // Don't gate on isCoop - always fetch to discover if it's a condo
+    // The API will tell us if it's not a condo
+    if (lastFetchedBblRef.current === bbl) return;
+    
+    lastFetchedBblRef.current = bbl;
+    setRosterQueryBbl(bbl);
+    fetchFirstPage(bbl);
+    resetTaxes();
+    setVisibleUnitCount(UNITS_PAGE_SIZE);
+    loadAllAbortRef.current = true; // Abort any ongoing load-all
+  }, [bbl, fetchFirstPage, resetTaxes]);
+  
+  // Handle billing BBL refetch: if response includes a different billingBbl, refetch with that
+  const billingBblRefetchedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!condoData) return;
+    
+    const { billingBbl, inputBbl, isCondo: isCondoResult } = condoData;
+    
+    // If it's a condo and billingBbl differs from what we queried, refetch with billingBbl
+    if (isCondoResult && billingBbl && billingBbl !== inputBbl && billingBblRefetchedRef.current !== billingBbl) {
+      billingBblRefetchedRef.current = billingBbl;
+      setRosterQueryBbl(billingBbl);
+      fetchFirstPage(billingBbl);
       resetTaxes();
       setVisibleUnitCount(UNITS_PAGE_SIZE);
-      loadAllAbortRef.current = true; // Abort any ongoing load-all
     }
-  }, [bbl, isCoop, fetchFirstPage, resetTaxes]);
+  }, [condoData, fetchFirstPage, resetTaxes]);
 
   const units = condoData?.units || [];
   const totalUnits = condoData?.totalApprox || 0;
@@ -271,50 +344,78 @@ export function UnitsTab({
     navigate(`/results?${params.toString()}`);
   }, [navigate, bbl, buildingAddress, buildingBorough, buildingBin]);
 
-  // Early returns
+  // Debug panel data
+  const debugData = {
+    searchBbl: bbl,
+    rosterQueryBbl,
+    billingBbl: condoData?.billingBbl || null,
+    unitsCount: units.length,
+    error: unitsError?.userMessage || unitsError?.error || null,
+    isCondo,
+    loading: unitsLoading,
+  };
+
+  // Early returns - all include debug panel if enabled
   if (isCoop) {
     return (
-      <Alert>
-        <Info className="h-4 w-4" />
-        <AlertDescription>
-          Co-op buildings do not have individually taxed units. All regulatory records apply to the building level.
-        </AlertDescription>
-      </Alert>
+      <div>
+        {showDebug && <DebugPanel {...debugData} />}
+        <Alert>
+          <Info className="h-4 w-4" />
+          <AlertDescription>
+            Co-op buildings do not have individually taxed units. All regulatory records apply to the building level.
+          </AlertDescription>
+        </Alert>
+      </div>
     );
   }
 
   if (unitsLoading && units.length === 0) {
-    return <LoadingSkeleton />;
+    return (
+      <div>
+        {showDebug && <DebugPanel {...debugData} />}
+        <LoadingSkeleton />
+      </div>
+    );
   }
 
   if (unitsError) {
     return (
-      <Alert variant="destructive">
-        <AlertCircle className="h-4 w-4" />
-        <AlertDescription>{unitsError.userMessage || unitsError.error}</AlertDescription>
-      </Alert>
+      <div>
+        {showDebug && <DebugPanel {...debugData} />}
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertDescription>{unitsError.userMessage || unitsError.error}</AlertDescription>
+        </Alert>
+      </div>
     );
   }
 
-  if (!isCondo) {
+  if (!isCondo && !unitsLoading) {
     return (
-      <Alert>
-        <Info className="h-4 w-4" />
-        <AlertDescription>
-          This property is not a condominium. Unit rosters are only available for condo buildings.
-        </AlertDescription>
-      </Alert>
+      <div>
+        {showDebug && <DebugPanel {...debugData} />}
+        <Alert>
+          <Info className="h-4 w-4" />
+          <AlertDescription>
+            This property is not a condominium. Unit rosters are only available for condo buildings.
+          </AlertDescription>
+        </Alert>
+      </div>
     );
   }
 
-  if (units.length === 0 && !unitsLoading) {
+  if (units.length === 0 && !unitsLoading && isCondo) {
     return (
-      <Alert variant="destructive">
-        <AlertCircle className="h-4 w-4" />
-        <AlertDescription>
-          Unable to load the condo unit roster. The roster may be unavailable or still loading. Please try refreshing the page.
-        </AlertDescription>
-      </Alert>
+      <div>
+        {showDebug && <DebugPanel {...debugData} />}
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertDescription>
+            Unable to load the condo unit roster. The roster may be unavailable or still loading. Please try refreshing the page.
+          </AlertDescription>
+        </Alert>
+      </div>
     );
   }
 
@@ -322,6 +423,8 @@ export function UnitsTab({
 
   return (
     <div className="space-y-4">
+      {/* Debug panel */}
+      {showDebug && <DebugPanel {...debugData} />}
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
