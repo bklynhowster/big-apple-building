@@ -177,10 +177,7 @@ export function CondoUnitsPreview({
   if (!isCondo) return null;
 
   return (
-    <div 
-      className="relative z-10 pointer-events-auto"
-      onClickCapture={() => console.log("[CondoUnitsPreview] click CAPTURE on wrapper")}
-    >
+    <div className="relative z-10 pointer-events-auto">
       <Card className="border-primary/20 bg-primary/5">
         <CardHeader className="pb-3">
           <div className="flex items-center justify-between">
@@ -197,10 +194,7 @@ export function CondoUnitsPreview({
             </div>
             <Button 
               type="button"
-              onClick={() => {
-                console.log("[CondoUnitsPreview] View All Units clicked");
-                onViewAllUnits();
-              }} 
+              onClick={onViewAllUnits} 
               className="gap-2 pointer-events-auto"
             >
               View All Units
@@ -217,10 +211,7 @@ export function CondoUnitsPreview({
                 <button
                   key={unit.unitBbl}
                   type="button"
-                  onClick={() => {
-                    console.log("[CondoUnitsPreview] Unit chip clicked:", unit.unitLabel, unit.unitBbl);
-                    onSelectUnit?.(unit.unitBbl, unit.unitLabel || `Lot ${unit.lot}`);
-                  }}
+                  onClick={() => onSelectUnit?.(unit.unitBbl, unit.unitLabel || `Lot ${unit.lot}`)}
                   className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-sm font-medium bg-secondary text-secondary-foreground hover:bg-secondary/80 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 cursor-pointer transition-colors pointer-events-auto"
                 >
                   <Home className="h-3 w-3" />
