@@ -604,6 +604,19 @@ export default function Results() {
                   error={condoRoster.error}
                   isCoop={isCoop}
                   onViewAllUnits={() => handleTabChange('units')}
+                  onSelectUnit={(unitBbl, unitLabel) => {
+                    // Navigate to the unit's detail page with building context
+                    const unitParams = new URLSearchParams();
+                    unitParams.set('bbl', unitBbl);
+                    unitParams.set('address', address);
+                    unitParams.set('buildingBbl', effectiveBbl);
+                    unitParams.set('buildingAddress', address);
+                    if (bin) unitParams.set('bin', bin);
+                    if (latitude) unitParams.set('lat', String(latitude));
+                    if (longitude) unitParams.set('lon', String(longitude));
+                    if (borough) unitParams.set('borough', borough);
+                    window.location.href = `/results?${unitParams.toString()}`;
+                  }}
                 />
               )}
 

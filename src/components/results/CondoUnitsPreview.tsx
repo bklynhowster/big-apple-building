@@ -18,6 +18,7 @@ interface CondoUnitsPreviewProps {
   error: ApiError | null;
   isCoop: boolean;
   onViewAllUnits: () => void;
+  onSelectUnit?: (unitBbl: string, unitLabel: string) => void;
 }
 
 // Debug panel shown when ?debug=1
@@ -76,6 +77,7 @@ export function CondoUnitsPreview({
   error,
   isCoop, 
   onViewAllUnits,
+  onSelectUnit,
 }: CondoUnitsPreviewProps) {
   const [searchParams] = useSearchParams();
   const showDebug = searchParams.get('debug') === '1';
@@ -201,14 +203,15 @@ export function CondoUnitsPreview({
         <CardContent className="pt-0">
           <div className="flex flex-wrap gap-2">
             {previewUnits.map((unit) => (
-              <Badge 
-                key={unit.unitBbl} 
-                variant="secondary" 
-                className="flex items-center gap-1.5 px-2.5 py-1"
+              <button
+                key={unit.unitBbl}
+                type="button"
+                onClick={() => onSelectUnit?.(unit.unitBbl, unit.unitLabel || `Lot ${unit.lot}`)}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-sm font-medium bg-secondary text-secondary-foreground hover:bg-secondary/80 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 cursor-pointer transition-colors"
               >
                 <Home className="h-3 w-3" />
                 {unit.unitLabel || `Lot ${unit.lot}`}
-              </Badge>
+              </button>
             ))}
             {totalUnits > 10 && (
               <Badge variant="outline" className="px-2.5 py-1">
