@@ -56,17 +56,37 @@ function formatDate(dateStr: string | null | undefined): string {
   }
 }
 
-function getPaymentStatusVariant(status: string | undefined): 'default' | 'destructive' | 'secondary' {
-  if (status === 'paid') return 'default';
-  if (status === 'unpaid') return 'destructive';
-  return 'secondary';
+type TaxRiskLevel = 'safe' | 'attention' | 'risk' | 'unknown';
+
+interface TaxStatusInfo {
+  label: string;
+  riskLevel: TaxRiskLevel;
 }
 
-function getPaymentStatusLabel(status: string | undefined): string {
-  if (status === 'paid') return 'Paid';
-  if (status === 'unpaid') return 'Unpaid';
-  return 'Unknown';
+function getTaxStatusInfo(
+  status: string | undefined, 
+  arrears: number | null | undefined
+): TaxStatusInfo {
+  const hasArrears = arrears !== null && arrears !== undefined && arrears > 0;
+  
+  if (status === 'paid') {
+    return { label: 'Paid', riskLevel: 'safe' };
+  }
+  if (status === 'unpaid') {
+    if (hasArrears) {
+      return { label: 'Unpaid — arrears present', riskLevel: 'risk' };
+    }
+    return { label: 'Unpaid — no arrears', riskLevel: 'attention' };
+  }
+  return { label: 'Unknown', riskLevel: 'unknown' };
 }
+
+const taxStatusClasses: Record<TaxRiskLevel, string> = {
+  safe: 'bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300 border-green-300 dark:border-green-700',
+  attention: 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 border-amber-300 dark:border-amber-700',
+  risk: 'bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300 border-red-300 dark:border-red-700',
+  unknown: 'bg-muted text-muted-foreground border-border',
+};
 
 interface SnapshotChip {
   key: string;
@@ -241,11 +261,11 @@ export function UnitOverviewCard({
                 Unit {unitLabel}
               </Badge>
             )}
-            <Badge variant="outline" className="text-sm font-mono">
+            <Badge variant="outline" className="text-xs font-mono text-muted-foreground">
               BBL: {unitBbl}
             </Badge>
             {displayLot && (
-              <Badge variant="outline" className="text-sm font-mono">
+              <Badge variant="outline" className="text-xs font-mono text-muted-foreground">
                 Lot: {displayLot}
               </Badge>
             )}
@@ -269,40 +289,50 @@ export function UnitOverviewCard({
           ) : taxData?.no_data_found ? (
             <p className="text-sm text-muted-foreground">No unit tax bill found.</p>
           ) : taxData ? (
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              {/* Latest Bill */}
-              <div className="space-y-1">
-                <span className="text-xs text-muted-foreground">Latest Bill</span>
-                <p className="text-sm font-medium">{formatCurrency(taxData.latest_bill_amount)}</p>
-              </div>
+            <div className="flex flex-col gap-3">
+              {/* Tax Status - Primary / First-class signal */}
+              {(() => {
+                const statusInfo = getTaxStatusInfo(taxData.payment_status, taxData.arrears);
+                return (
+                  <div className="space-y-1.5">
+                    <span className="text-xs font-medium text-foreground">Tax Status</span>
+                    <div>
+                      <span 
+                        className={cn(
+                          "inline-flex items-center px-3 py-1.5 rounded-md text-sm font-semibold border",
+                          taxStatusClasses[statusInfo.riskLevel]
+                        )}
+                      >
+                        {statusInfo.label}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })()}
               
-              {/* Due Date */}
-              <div className="space-y-1">
-                <span className="text-xs text-muted-foreground">Due Date</span>
-                <p className="text-sm font-medium">{formatDate(taxData.latest_due_date)}</p>
-              </div>
-              
-              {/* Status */}
-              <div className="space-y-1">
-                <span className="text-xs text-muted-foreground">Status</span>
-                <Badge 
-                  variant={getPaymentStatusVariant(taxData.payment_status)}
-                  className="text-xs"
-                >
-                  {getPaymentStatusLabel(taxData.payment_status)}
-                </Badge>
-              </div>
-              
-              {/* Arrears */}
-              <div className="space-y-1">
-                <span className="text-xs text-muted-foreground">Arrears</span>
-                <p className={`text-sm font-medium ${
-                  taxData.arrears && taxData.arrears > 0 ? 'text-destructive' : ''
-                }`}>
-                  {taxData.arrears && taxData.arrears > 0 
-                    ? formatCurrency(taxData.arrears)
-                    : 'None'}
-                </p>
+              {/* Secondary info row - de-emphasized */}
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                {/* Latest Bill - Secondary emphasis */}
+                <div className="space-y-1">
+                  <span className="text-xs text-muted-foreground/70">Latest Bill</span>
+                  <p className="text-sm font-medium">{formatCurrency(taxData.latest_bill_amount)}</p>
+                </div>
+                
+                {/* Due Date - Tertiary emphasis */}
+                <div className="space-y-1">
+                  <span className="text-xs text-muted-foreground/70">Due Date</span>
+                  <p className="text-xs text-muted-foreground">{formatDate(taxData.latest_due_date)}</p>
+                </div>
+                
+                {/* Arrears - Only show if present */}
+                {taxData.arrears && taxData.arrears > 0 && (
+                  <div className="space-y-1">
+                    <span className="text-xs text-muted-foreground/70">Arrears</span>
+                    <p className="text-sm font-semibold text-destructive">
+                      {formatCurrency(taxData.arrears)}
+                    </p>
+                  </div>
+                )}
               </div>
             </div>
           ) : (
