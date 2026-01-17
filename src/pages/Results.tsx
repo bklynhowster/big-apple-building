@@ -1,6 +1,6 @@
 import { useMemo, useState, useCallback, useEffect, useRef } from 'react';
 import { useLocation, Link, useSearchParams, useNavigate } from 'react-router-dom';
-import { AlertCircle } from 'lucide-react';
+import { AlertCircle, ArrowLeft, Building2, Home } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
 import { Footer } from '@/components/layout/Footer';
 import { ContextBanner, QueryScope } from '@/components/results/ContextBanner';
@@ -70,6 +70,7 @@ export default function Results() {
   const longitude = searchParams.get('lon') ? parseFloat(searchParams.get('lon')!) : undefined;
   const unitContextParam = searchParams.get('unitContext') || null;
   const unitLabelFromUrl = searchParams.get('unitLabel') || null;
+  const unitBblFromUrl = searchParams.get('unitBbl') || null;
   
   // Building context params (passed when navigating from building to unit)
   const buildingAddressParam = searchParams.get('buildingAddress') || '';
@@ -83,6 +84,29 @@ export default function Results() {
     const lot = parseInt(bbl.slice(6), 10);
     return lot >= 1001 && lot <= 6999;
   }, [bbl]);
+  
+  // Unit Mode Detection: true when viewing a specific unit (has unitLabel OR unitBbl OR is a unit lot with building context)
+  const isUnitMode = Boolean(unitLabelFromUrl || unitBblFromUrl || (buildingBblParam && isUnitLotEarly));
+  
+  // Handler to go back to building view - clears unit params while preserving others
+  const handleBackToBuilding = useCallback(() => {
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev);
+      // Clear unit-specific params
+      next.delete('unitLabel');
+      next.delete('unitBbl');
+      // If we have building context, restore the building BBL as the main BBL
+      if (buildingBblParam) {
+        next.set('bbl', buildingBblParam);
+        next.delete('buildingBbl');
+      }
+      if (buildingAddressParam) {
+        next.set('address', buildingAddressParam);
+        next.delete('buildingAddress');
+      }
+      return next;
+    }, { replace: true });
+  }, [setSearchParams, buildingBblParam, buildingAddressParam]);
 
   // ==========================================================================
   // EFFECTIVE BBL - Single canonical variable for ALL data fetching
@@ -509,6 +533,58 @@ export default function Results() {
           {/* Results - render tabs only when we have a valid BBL */}
           {isValidBBL && (
             <div className="space-y-4 sm:space-y-6">
+              {/* Unit Context Header - Shown when viewing a specific unit */}
+              {isUnitMode && (
+                <Card className="border-primary/30 bg-primary/5">
+                  <CardContent className="p-4 sm:p-6">
+                    <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+                      <div className="flex-1 min-w-0">
+                        {/* Title line */}
+                        <div className="flex items-center gap-2 mb-1">
+                          <Home className="h-5 w-5 text-primary shrink-0" />
+                          <h2 className="text-lg sm:text-xl font-semibold text-foreground truncate">
+                            Condominium Unit: {unitLabelFromUrl || 'Unknown'}
+                          </h2>
+                        </div>
+                        
+                        {/* Subline */}
+                        <p className="text-muted-foreground text-sm sm:text-base mb-3 truncate">
+                          {buildingAddressParam || address} — {borough || 'New York'}
+                        </p>
+                        
+                        {/* Metadata row */}
+                        <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs sm:text-sm text-muted-foreground">
+                          <span>
+                            <span className="font-medium">Viewing Unit BBL:</span>{' '}
+                            {unitBblFromUrl || bbl || '—'}
+                          </span>
+                          <span>
+                            <span className="font-medium">Records from Building BBL:</span>{' '}
+                            {buildingBblParam || effectiveBbl || '—'}
+                          </span>
+                          <span>
+                            <span className="font-medium">BIN:</span> {bin || '—'}
+                          </span>
+                        </div>
+                      </div>
+                      
+                      {/* Back to building button */}
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={handleBackToBuilding}
+                        className="shrink-0 gap-2"
+                      >
+                        <ArrowLeft className="h-4 w-4" />
+                        <Building2 className="h-4 w-4" />
+                        <span className="hidden sm:inline">Back to building</span>
+                        <span className="sm:hidden">Building</span>
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+              
               {/* Query Debug Panel - visible when ?debug=1 */}
               <QueryDebugPanel />
               
