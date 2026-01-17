@@ -1405,13 +1405,14 @@ export function UnitInsightsCard({
 
   return (
     <>
-      <Card className="elk-highlight-card">
+      {/* Units Referenced in Records - uses muted background for visual distinction */}
+      <Card className="bg-muted/30 border-muted-foreground/10">
         <CardHeader className="pb-3">
           <div className="flex items-center justify-between">
             <TooltipProvider>
               <div className="flex items-center gap-2">
-                <Users className="h-5 w-5 text-primary" />
-                <CardTitle className="text-lg">Mentioned Units <span className="text-muted-foreground font-normal text-sm">(from records)</span></CardTitle>
+                <Users className="h-5 w-5 text-muted-foreground" />
+                <CardTitle className="text-lg">Units Referenced in Records</CardTitle>
                 {isScanning && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -1424,18 +1425,15 @@ export function UnitInsightsCard({
               </div>
             </TooltipProvider>
             {hasData && (
-              <Badge variant="secondary" className="text-xs">
-                {combinedStats.length} unit{combinedStats.length !== 1 ? 's' : ''} mentioned
+              <Badge variant="outline" className="text-xs text-muted-foreground">
+                {combinedStats.length} unit{combinedStats.length !== 1 ? 's' : ''} referenced
               </Badge>
             )}
           </div>
-          {/* CRITICAL DISCLAIMER - Prominent placement */}
-          <div className="mt-2 p-3 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-md">
-            <p className="text-sm text-muted-foreground leading-relaxed">
-              <strong className="text-amber-700 dark:text-amber-400">⚠️ Not the official unit roster:</strong> These units are inferred from text in city records (HPD complaints, DOB filings, 311 requests). 
-              They do not represent the complete list of units. For condo buildings, view the <strong>Units tab</strong> for the official roster.
-            </p>
-          </div>
+          {/* Helper text explaining the difference */}
+          <p className="text-sm text-muted-foreground mt-2">
+            These units are inferred from record text and may not reflect the full unit roster.
+          </p>
         </CardHeader>
 
         <CardContent className="space-y-4">
@@ -1462,28 +1460,27 @@ export function UnitInsightsCard({
             </Alert>
           )}
 
-          {/* Info banner */}
-          <Alert className="elk-info-box">
-            <Info className="h-4 w-4 text-primary" />
-            <AlertDescription className="text-sm text-muted-foreground">
-              Mentioned units are inferred only when city records explicitly reference an apartment or unit number (e.g., "APT 2G", "Unit PH").
-              {fallbackMode && (
-                <span className="block mt-1 text-amber-600 dark:text-amber-400">
-                  Note: DOB job filings API unavailable.{' '}
-                  {dobNowUrl && (
-                    <a href={dobNowUrl} target="_blank" rel="noopener noreferrer" className="underline inline-flex items-center gap-1">
-                      Open in DOB NOW <ExternalLink className="h-3 w-3" />
-                    </a>
-                  )}
-                </span>
-              )}
-              {salesWarning === 'rolling_sales_unavailable' && !fallbackMode && (
-                <span className="block mt-1 text-amber-600 dark:text-amber-400">
-                  Note: Rolling Sales data is currently unavailable.
-                </span>
-              )}
-            </AlertDescription>
-          </Alert>
+          {/* Contextual warnings */}
+          {(fallbackMode || salesWarning === 'rolling_sales_unavailable') && (
+            <Alert className="elk-info-box border-muted">
+              <Info className="h-4 w-4 text-muted-foreground" />
+              <AlertDescription className="text-sm text-muted-foreground">
+                {fallbackMode && (
+                  <span>
+                    DOB job filings API unavailable.{' '}
+                    {dobNowUrl && (
+                      <a href={dobNowUrl} target="_blank" rel="noopener noreferrer" className="underline inline-flex items-center gap-1">
+                        Open in DOB NOW <ExternalLink className="h-3 w-3" />
+                      </a>
+                    )}
+                  </span>
+                )}
+                {salesWarning === 'rolling_sales_unavailable' && !fallbackMode && (
+                  <span>Rolling Sales data is currently unavailable.</span>
+                )}
+              </AlertDescription>
+            </Alert>
+          )}
 
           {/* DEV-only diagnostics panel */}
           <UnitExtractionDiagnostics

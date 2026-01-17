@@ -1,14 +1,16 @@
-import { useMemo } from 'react';
+import { useMemo, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Building2, ChevronRight, Loader2, Home, AlertCircle, Bug } from 'lucide-react';
+import { Building2, ChevronRight, Loader2, Home, AlertCircle, Bug, DollarSign } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import type { CondoUnitsResponse } from '@/hooks/useCondoUnits';
+import type { CondoUnitsResponse, CondoUnit } from '@/hooks/useCondoUnits';
 import type { ApiError } from '@/types/api-error';
 import { cn } from '@/lib/utils';
+import { useCondoUnitTaxes, INITIAL_TAX_BATCH_SIZE } from '@/features/taxes/hooks/useCondoUnitTaxes';
+import type { CondoUnitTaxSummary } from '@/features/taxes/types';
 
 interface CondoUnitsPreviewProps {
   searchBbl: string;
@@ -69,6 +71,131 @@ function DebugPanel({
   );
 }
 
+// Risk-based status styling (mirrors UnitOverviewCard)
+type TaxRiskLevel = 'safe' | 'attention' | 'risk' | 'unknown';
+
+function getTaxRiskLevel(taxSummary: CondoUnitTaxSummary | undefined): TaxRiskLevel {
+  if (!taxSummary || taxSummary.loading || taxSummary.error || !taxSummary.data) return 'unknown';
+  
+  const { payment_status, arrears, no_data_found } = taxSummary.data;
+  if (no_data_found) return 'unknown';
+  
+  const hasArrears = (arrears ?? 0) > 0;
+  const isPaid = payment_status === 'paid';
+  
+  if (isPaid && !hasArrears) return 'safe';
+  if (!isPaid && hasArrears) return 'risk';
+  if (!isPaid) return 'attention';
+  return 'safe';
+}
+
+const statusClasses: Record<TaxRiskLevel, { bg: string; text: string; border: string }> = {
+  safe: { 
+    bg: 'bg-green-100 dark:bg-green-900/30', 
+    text: 'text-green-800 dark:text-green-300',
+    border: 'border-green-200 dark:border-green-800'
+  },
+  attention: { 
+    bg: 'bg-amber-100 dark:bg-amber-900/30', 
+    text: 'text-amber-800 dark:text-amber-300',
+    border: 'border-amber-200 dark:border-amber-800'
+  },
+  risk: { 
+    bg: 'bg-red-100 dark:bg-red-900/30', 
+    text: 'text-red-800 dark:text-red-300',
+    border: 'border-red-200 dark:border-red-800'
+  },
+  unknown: { 
+    bg: 'bg-muted', 
+    text: 'text-muted-foreground',
+    border: 'border-border'
+  },
+};
+
+function getStatusLabel(taxSummary: CondoUnitTaxSummary | undefined): string {
+  if (!taxSummary) return '—';
+  if (taxSummary.loading) return '...';
+  if (taxSummary.error) return 'Error';
+  if (!taxSummary.data || taxSummary.data.no_data_found) return 'No data';
+  
+  const { payment_status, arrears } = taxSummary.data;
+  const hasArrears = (arrears ?? 0) > 0;
+  
+  if (payment_status === 'paid') return 'Paid';
+  if (hasArrears) return 'Arrears';
+  return 'Unpaid';
+}
+
+function formatAmount(amount: number | null | undefined): string {
+  if (amount === null || amount === undefined) return '—';
+  return `$${amount.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
+}
+
+// Unit row component with tax info
+function UnitPreviewRow({ 
+  unit, 
+  taxSummary,
+  onClick,
+}: { 
+  unit: CondoUnit; 
+  taxSummary: CondoUnitTaxSummary | undefined;
+  onClick: () => void;
+}) {
+  const displayLabel = unit.unitLabel || `Lot ${unit.lot}`;
+  const riskLevel = getTaxRiskLevel(taxSummary);
+  const statusLabel = getStatusLabel(taxSummary);
+  const classes = statusClasses[riskLevel];
+  
+  const latestBill = taxSummary?.data?.latest_bill_amount;
+  const arrears = taxSummary?.data?.arrears;
+  const hasArrears = (arrears ?? 0) > 0;
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "w-full flex items-center justify-between gap-3 px-3 py-2 rounded-lg border transition-colors",
+        "hover:bg-accent/50 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-1",
+        "bg-card text-card-foreground"
+      )}
+    >
+      {/* Left: Unit label */}
+      <div className="flex items-center gap-2 min-w-0">
+        <Home className="h-4 w-4 text-muted-foreground shrink-0" />
+        <span className="font-medium truncate">{displayLabel}</span>
+      </div>
+      
+      {/* Middle: Amount (de-emphasized) */}
+      <div className="hidden sm:flex items-center gap-1.5 text-sm text-muted-foreground shrink-0">
+        {taxSummary?.loading ? (
+          <Skeleton className="h-4 w-16" />
+        ) : latestBill ? (
+          <>
+            <DollarSign className="h-3 w-3" />
+            <span>{formatAmount(latestBill)}</span>
+          </>
+        ) : null}
+      </div>
+      
+      {/* Right: Status pill + arrears */}
+      <div className="flex items-center gap-2 shrink-0">
+        {hasArrears && !taxSummary?.loading && (
+          <span className="text-xs font-semibold text-red-600 dark:text-red-400">
+            ${arrears?.toLocaleString()}
+          </span>
+        )}
+        <span className={cn(
+          "inline-flex items-center px-2 py-0.5 rounded text-xs font-medium border",
+          classes.bg, classes.text, classes.border
+        )}>
+          {statusLabel}
+        </span>
+      </div>
+    </button>
+  );
+}
+
 export function CondoUnitsPreview({ 
   searchBbl,
   rosterQueryBbl,
@@ -87,8 +214,22 @@ export function CondoUnitsPreview({
   const isCondo = condoData?.isCondo ?? false;
   const billingBbl = condoData?.billingBbl || null;
 
-  // Preview first 10 units
-  const previewUnits = useMemo(() => units.slice(0, 10), [units]);
+  // Preview first 6 units (show enough to be useful, not overwhelming)
+  const previewUnits = useMemo(() => units.slice(0, 6), [units]);
+
+  // Lazy-load tax data for preview units
+  const { unitTaxes, ensureLoaded, batchLoading } = useCondoUnitTaxes();
+
+  // Fetch tax data when preview units are available
+  useEffect(() => {
+    if (previewUnits.length > 0 && !loading) {
+      const unitsToLoad = previewUnits.map(u => ({
+        unitBbl: u.unitBbl,
+        unitLabel: u.unitLabel,
+      }));
+      ensureLoaded(unitsToLoad);
+    }
+  }, [previewUnits, loading, ensureLoaded]);
 
   // Don't render for co-ops
   if (isCoop) return null;
@@ -96,7 +237,7 @@ export function CondoUnitsPreview({
   // Show loading state
   if (loading) {
     return (
-      <Card className="border-primary/20 bg-primary/5">
+      <Card className="border-primary/20 bg-card">
         <CardHeader className="pb-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
@@ -114,9 +255,9 @@ export function CondoUnitsPreview({
           </div>
         </CardHeader>
         <CardContent className="pt-0">
-          <div className="flex flex-wrap gap-2">
-            {[1, 2, 3, 4, 5].map((i) => (
-              <Skeleton key={i} className="h-7 w-16" />
+          <div className="space-y-2">
+            {[1, 2, 3].map((i) => (
+              <Skeleton key={i} className="h-12 w-full" />
             ))}
           </div>
           {showDebug && (
@@ -178,7 +319,7 @@ export function CondoUnitsPreview({
 
   return (
     <div className="relative z-10 pointer-events-auto">
-      <Card className="border-primary/20 bg-primary/5">
+      <Card className="border-primary/20 bg-card">
         <CardHeader className="pb-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
@@ -195,38 +336,46 @@ export function CondoUnitsPreview({
             <Button 
               type="button"
               onClick={onViewAllUnits} 
+              variant="outline"
               className="gap-2 pointer-events-auto"
             >
-              View All Units
+              View all {totalUnits} units
               <ChevronRight className="h-4 w-4" />
             </Button>
           </div>
         </CardHeader>
         
-        {/* Preview of first few units */}
+        {/* Preview list of first few units with tax info */}
         {previewUnits.length > 0 && (
           <CardContent className="pt-0">
-            <div className="flex flex-wrap gap-2 pointer-events-auto">
+            <div className="space-y-2 pointer-events-auto">
               {previewUnits.map((unit) => {
-                const displayLabel = unit.unitLabel || `Lot ${unit.lot}`;
+                const taxSummary = unitTaxes.get(unit.unitBbl);
                 return (
-                  <button
+                  <UnitPreviewRow
                     key={unit.unitBbl}
-                    type="button"
-                    onClick={() => onSelectUnit?.(unit.unitBbl, displayLabel)}
-                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-sm font-medium bg-secondary text-secondary-foreground hover:bg-secondary/80 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 cursor-pointer transition-colors pointer-events-auto"
-                  >
-                    <Home className="h-3 w-3" />
-                    {displayLabel}
-                  </button>
+                    unit={unit}
+                    taxSummary={taxSummary}
+                    onClick={() => onSelectUnit?.(unit.unitBbl, unit.unitLabel)}
+                  />
                 );
               })}
-              {totalUnits > 10 && (
-                <Badge variant="outline" className="px-2.5 py-1">
-                  +{totalUnits - 10} more
-                </Badge>
+              
+              {/* Show how many more */}
+              {totalUnits > 6 && (
+                <div className="text-center pt-2">
+                  <Button 
+                    variant="ghost" 
+                    size="sm"
+                    onClick={onViewAllUnits}
+                    className="text-muted-foreground hover:text-foreground"
+                  >
+                    + {totalUnits - 6} more units →
+                  </Button>
+                </div>
               )}
             </div>
+            
             {showDebug && (
               <DebugPanel
                 searchBbl={searchBbl}
