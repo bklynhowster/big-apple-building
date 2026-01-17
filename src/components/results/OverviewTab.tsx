@@ -8,6 +8,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { cn } from '@/lib/utils';
 import type { RecordCounts, LoadingStates } from './RiskSnapshotCard';
 import { UnitOverviewCard } from './UnitOverviewCard';
+import { UnitRecordsSummary } from './UnitRecordsSummary';
 import type { PropertyTaxResult } from '@/features/taxes/types';
 
 interface OverviewTabProps {
@@ -299,6 +300,11 @@ export function OverviewTab({
     return cats;
   }, [recordCounts, recordLoading]);
 
+  // For unit mode: navigate to building records
+  const handleViewBuildingRecords = () => {
+    onTabChange('records');
+  };
+
   return (
     <div className="space-y-6">
       {/* Unit Overview Card - Unit Mode Only */}
@@ -310,11 +316,17 @@ export function OverviewTab({
           taxData={unitTaxData ?? null}
           taxLoading={unitTaxLoading ?? false}
           taxError={unitTaxError ?? null}
-          mentionCount={unitMentionCount ?? 0}
+        />
+      )}
+
+      {/* Unit Records Summary - Unit Mode Only (replaces multi-section records) */}
+      {isUnitMode && (
+        <UnitRecordsSummary
+          unitMentionCount={unitMentionCount ?? 0}
           mentionsLoading={unitMentionsLoading ?? false}
           recordCounts={recordCounts}
           recordLoading={recordLoading}
-          onViewRecords={() => onTabChange('records')}
+          onViewBuildingRecords={handleViewBuildingRecords}
         />
       )}
 
@@ -344,8 +356,8 @@ export function OverviewTab({
         </Card>
       )}
 
-      {/* Condo Units CTA - Prominent for condo buildings */}
-      {isCondo && (
+      {/* Condo Units CTA - Prominent for condo buildings, but not in unit mode */}
+      {isCondo && !isUnitMode && (
         <Card className="border-primary/30 bg-primary/5">
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between">
@@ -369,21 +381,23 @@ export function OverviewTab({
         </Card>
       )}
 
-      {/* Status Strip */}
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-base flex items-center gap-2">
-            <CheckCircle className="h-4 w-4 text-muted-foreground" />
-            Status at a Glance
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <StatusStrip items={statusItems} loading={isLoading} />
-        </CardContent>
-      </Card>
+      {/* Status Strip - Building mode only */}
+      {!isUnitMode && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base flex items-center gap-2">
+              <CheckCircle className="h-4 w-4 text-muted-foreground" />
+              Status at a Glance
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <StatusStrip items={statusItems} loading={isLoading} />
+          </CardContent>
+        </Card>
+      )}
 
-      {/* Highlights */}
-      {highlights.length > 0 && (
+      {/* Highlights - Building mode only */}
+      {!isUnitMode && highlights.length > 0 && (
         <Card>
           <CardContent className="pt-4">
             <HighlightsSection highlights={highlights} />
@@ -391,8 +405,8 @@ export function OverviewTab({
         </Card>
       )}
 
-      {/* Zero categories toggle */}
-      {zeroCategories.length > 0 && (
+      {/* Zero categories toggle - Building mode only */}
+      {!isUnitMode && zeroCategories.length > 0 && (
         <ZeroCategoryList
           zeroCategories={zeroCategories}
           showAll={showZeroCategories}
@@ -400,17 +414,19 @@ export function OverviewTab({
         />
       )}
 
-      {/* Quick actions */}
-      <div className="flex flex-wrap gap-2">
-        <Button variant="outline" size="sm" onClick={() => onTabChange('records')}>
-          View All Records
-        </Button>
-        {isCoop && (
-          <Button variant="outline" size="sm" onClick={() => onTabChange('units')}>
-            View Unit Info
+      {/* Quick actions - Building mode only */}
+      {!isUnitMode && (
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outline" size="sm" onClick={() => onTabChange('records')}>
+            View All Records
           </Button>
-        )}
-      </div>
+          {isCoop && (
+            <Button variant="outline" size="sm" onClick={() => onTabChange('units')}>
+              View Unit Info
+            </Button>
+          )}
+        </div>
+      )}
     </div>
   );
 }
