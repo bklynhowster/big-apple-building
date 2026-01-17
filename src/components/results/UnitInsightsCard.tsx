@@ -1411,14 +1411,14 @@ export function UnitInsightsCard({
             <TooltipProvider>
               <div className="flex items-center gap-2">
                 <Users className="h-5 w-5 text-primary" />
-                <CardTitle className="text-lg">Mentioned Units</CardTitle>
+                <CardTitle className="text-lg">Mentioned Units <span className="text-muted-foreground font-normal text-sm">(from records)</span></CardTitle>
                 {isScanning && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <Info className="h-4 w-4 text-muted-foreground cursor-help" />
                   </TooltipTrigger>
                   <TooltipContent className="max-w-xs">
-                    <p>A "Mentioned Unit" means the unit identifier appears in the text or metadata of a city record. It does not imply unit-level enforcement, responsibility, or issuance.</p>
+                    <p>These are inferred from text in city records. This is <strong>not</strong> the official unit roster.</p>
                   </TooltipContent>
                 </Tooltip>
               </div>
@@ -1430,10 +1430,10 @@ export function UnitInsightsCard({
             )}
           </div>
           {/* CRITICAL DISCLAIMER - Prominent placement */}
-          <div className="mt-2 p-3 bg-muted/50 border border-border rounded-md">
+          <div className="mt-2 p-3 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-md">
             <p className="text-sm text-muted-foreground leading-relaxed">
-              <strong className="text-foreground">Important:</strong> A "Mentioned Unit" means the unit identifier appears in the text or metadata of a city record. 
-              It does not imply unit-level enforcement, responsibility, or issuance. All NYC co-op records are issued at the building level.
+              <strong className="text-amber-700 dark:text-amber-400">⚠️ Not the official unit roster:</strong> These units are inferred from text in city records (HPD complaints, DOB filings, 311 requests). 
+              They do not represent the complete list of units. For condo buildings, view the <strong>Units tab</strong> for the official roster.
             </p>
           </div>
         </CardHeader>
@@ -1550,7 +1550,7 @@ export function UnitInsightsCard({
             <div className="space-y-2">
               {/* Table context explainer */}
               <p className="text-sm text-muted-foreground">
-                Units appear here only when explicitly mentioned in DOB filings, HPD complaints, or 311 requests tied to this building.
+                Units below are <strong>inferred from record text</strong>—not the official roster. For complete unit lists, see the Units tab.
               </p>
               <div className="rounded-md border border-amber-200 dark:border-amber-800 overflow-hidden">
               <Table>
@@ -1563,7 +1563,7 @@ export function UnitInsightsCard({
                         className="flex items-center gap-1.5 hover:text-foreground transition-colors"
                         title="Sort by unit (natural order: 1, 1A, 2, 2B, ... PH, BSMT)"
                       >
-                        Mentioned Unit
+                        Mentioned Unit (inferred)
                         {getSortIcon('unit')}
                       </button>
                     </TableHead>
