@@ -1,6 +1,6 @@
 import { useMemo, useState, useCallback, useEffect, useRef } from 'react';
 import { useLocation, Link, useSearchParams, useNavigate } from 'react-router-dom';
-import { AlertCircle, ArrowLeft, Building2, Home } from 'lucide-react';
+import { AlertCircle, ArrowLeft, Building2, Home, ChevronDown } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
 import { Footer } from '@/components/layout/Footer';
 import { ContextBanner, QueryScope } from '@/components/results/ContextBanner';
@@ -18,6 +18,7 @@ import { RecordsTab } from '@/components/results/RecordsTab';
 import { FinanceTab } from '@/components/results/FinanceTab';
 import { QueryDebugPanel } from '@/components/results/QueryDebugPanel';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { MobileTabsList, MobileTabsTrigger } from '@/components/ui/mobile-tabs';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -607,233 +608,416 @@ export default function Results() {
                 </div>
               )}
               
-              {/* Context Banner - Primary navigation and scope control */}
-              <ContextBanner
-                address={address}
-                unitLabel={currentUnitLabel}
-                unitBbl={bbl}
-                billingBbl={billingBbl || buildingBblParam}
-                effectiveBbl={effectiveBbl}
-                bin={bin}
-                borough={borough}
-                buildingAddress={buildingAddressParam}
-                buildingProfile={profile ? {
-                  yearBuilt: profile.yearBuilt,
-                  buildingClass: profile.buildingClass,
-                  totalUnits: profile.totalUnits,
-                  residentialUnits: profile.residentialUnits,
-                  numFloors: profile.numFloors,
-                  grossSqFt: profile.grossSqFt,
-                  propertyTypeLabel: profile.propertyTypeLabel,
-                } : null}
-                buildingProfileLoading={profileLoading}
-                isCondoUnit={isCondoBuilding && isUnitLot && !isCoop}
-                isCoop={isCoop}
-                coopUnitContext={coopUnitContext}
-                onCoopUnitContextChange={isCoop ? handleCoopUnitContextChange : undefined}
-                scope={scope}
-                onScopeChange={setScope}
-              />
+              {/* ===== UNIT MODE LAYOUT ===== */}
+              {/* In Unit Mode: Tabs first, then Building Context in collapsible */}
+              {isUnitMode ? (
+                <>
+                  {/* Tabs - Primary content in Unit Mode */}
+                  <div id="results-tabs" className="scroll-mt-24">
+                    <Tabs ref={tabsRef} value={activeTab} onValueChange={handleTabChange} className="w-full">
+                      {/* Mobile: horizontally scrollable tab strip */}
+                      {isMobile ? (
+                        <div className="bg-card border-b border-border">
+                          <MobileTabsList>
+                            <MobileTabsTrigger value="overview">Overview</MobileTabsTrigger>
+                            <MobileTabsTrigger value="units">Units</MobileTabsTrigger>
+                            <MobileTabsTrigger value="records">Records</MobileTabsTrigger>
+                            <MobileTabsTrigger value="finance">Finance</MobileTabsTrigger>
+                          </MobileTabsList>
+                        </div>
+                      ) : (
+                        /* Desktop/Tablet: standard tabs */
+                        <div className="bg-card border-b border-border">
+                          <TabsList className="justify-start bg-transparent rounded-none h-auto p-0">
+                            <TabsTrigger 
+                              value="overview" 
+                              className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent py-3 px-6"
+                            >
+                              Overview
+                            </TabsTrigger>
+                            <TabsTrigger 
+                              value="units" 
+                              className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent py-3 px-6"
+                            >
+                              Units
+                            </TabsTrigger>
+                            <TabsTrigger 
+                              value="records" 
+                              className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent py-3 px-6"
+                            >
+                              Records
+                            </TabsTrigger>
+                            <TabsTrigger 
+                              value="finance" 
+                              className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent py-3 px-6"
+                            >
+                              Finance
+                            </TabsTrigger>
+                          </TabsList>
+                        </div>
+                      )}
 
-              {/* Risk Snapshot - Building-level risk signals summary */}
-              <RiskSnapshotCard 
-                counts={recordCounts} 
-                loading={riskSnapshotLoading}
-                records={riskSnapshotRecords}
-                onNavigateToSection={(info: NavigationInfo) => {
-                  // Set scope to match dataset requirement
-                  if (info.scope === 'building' && scope !== 'building') {
-                    setScope('building');
-                  } else if (info.scope === 'unit' && scope !== 'unit') {
-                    setScope('unit');
-                  }
-                  // Navigate to tab
-                  handleTabChange(info.tab);
-                }}
-              />
-
-              {/* Property Profile with embedded map */}
-              {/* Use effectiveBbl (building BBL for condo units) to avoid 404 on unit BBLs */}
-              <PropertyProfileCard 
-                bbl={effectiveBbl}
-                unitLabel={currentUnitLabel}
-                parentAddress={address}
-                landmarkStatus={landmarkStatus}
-                lat={latitude}
-                lon={longitude}
-                onOwnershipOverrideChange={handleOwnershipOverrideChange}
-              />
-              
-              {/* Taxes - Single integration point via TaxesPanel */}
-              <TaxesPanel
-                context={isUnitLot ? 'unit' : 'building'}
-                viewBbl={bbl}
-                buildingBbl={buildingBblParam || billingBbl || undefined}
-                address={address}
-                isCondo={isCondoBuilding && !isUnitLot}
-              />
-
-              {/* Residential Units Card - Co-ops only (informational unit enumeration) */}
-              {isCoop && (
-                <ResidentialUnitsCard
-                  buildingBbl={effectiveBbl}
-                  selectedUnit={coopUnitContext}
-                  onUnitSelect={handleCoopUnitContextChange}
-                />
-              )}
-
-              {/* Condo Units Preview - Shows above Mentioned Units for condo buildings */}
-              {!isCoop && !isUnitLot && (
-                <CondoUnitsPreview
-                  searchBbl={effectiveBbl}
-                  rosterQueryBbl={condoRosterQueryBbl}
-                  condoData={condoRoster.data}
-                  loading={condoRoster.loading}
-                  error={condoRoster.error}
-                  isCoop={isCoop}
-                  onViewAllUnits={() => handleTabChange('units')}
-                  onSelectUnit={(unitBbl, unitLabel) => {
-                    // Navigate to the unit's detail page with building context using React Router
-                    const unitParams = new URLSearchParams();
-                    unitParams.set('bbl', unitBbl);
-                    unitParams.set('address', address);
-                    unitParams.set('buildingBbl', effectiveBbl);
-                    unitParams.set('buildingAddress', address);
-                    if (unitLabel) unitParams.set('unitLabel', unitLabel);
-                    if (bin) unitParams.set('bin', bin);
-                    if (latitude) unitParams.set('lat', String(latitude));
-                    if (longitude) unitParams.set('lon', String(longitude));
-                    if (borough) unitParams.set('borough', borough);
-                    navigate(`/results?${unitParams.toString()}`);
-                  }}
-                />
-              )}
-
-              {/* Mentioned Units Card - Shows whenever unit mentions exist (NOT gated by ownership) */}
-              <UnitInsightsCard
-                buildingBbl={effectiveBbl}
-                bin={bin}
-                hpdViolations={hpdViolations.items}
-                hpdComplaints={hpdComplaints.items}
-                serviceRequests={threeOneOne.items}
-                salesUnits={coopUnitRoster.units}
-                dobFilingsUnits={dobJobFilings.units}
-                dobFilings={dobJobFilings.filings}
-                dobViolations={dobViolationsHook.items}
-                ecbViolations={ecbHook.items}
-                dobPermits={permitsHook.items}
-                selectedUnit={coopUnitContext}
-                onUnitSelect={handleUnitInsightSelect}
-                onClearUnitFilter={() => handleCoopUnitContextChange(null)}
-                loadingStates={{
-                  filings: dobJobFilings.loading || coopUnitRoster.loading,
-                  permits: permitsHook.loading,
-                  hpd: hpdViolations.loading || hpdComplaints.loading,
-                  threeOneOne: threeOneOne.loading,
-                  violations: dobViolationsHook.loading,
-                  ecb: ecbHook.loading,
-                }}
-                rosterError={coopUnitRoster.error}
-                salesWarning={coopUnitRoster.warning}
-                dobNowUrl={dobJobFilings.dobNowUrl}
-                fallbackMode={dobJobFilings.fallbackMode}
-                hideWhenEmpty={true}
-              />
-
-              <div id="results-tabs" className="scroll-mt-24">
-              <Tabs ref={tabsRef} value={activeTab} onValueChange={handleTabChange} className="w-full">
-                {/* Mobile: horizontally scrollable tab strip */}
-                {isMobile ? (
-                  <div className="bg-card border-b border-border">
-                    <MobileTabsList>
-                      <MobileTabsTrigger value="overview">Overview</MobileTabsTrigger>
-                      <MobileTabsTrigger value="units">Units</MobileTabsTrigger>
-                      <MobileTabsTrigger value="records">Records</MobileTabsTrigger>
-                      <MobileTabsTrigger value="finance">Finance</MobileTabsTrigger>
-                    </MobileTabsList>
+                      <div className="mt-4 sm:mt-6">
+                        <TabsContent value="overview" className="mt-0">
+                          <OverviewTab
+                            address={address}
+                            borough={borough}
+                            bbl={effectiveBbl}
+                            bin={bin}
+                            isCondo={isCondoBuilding && !isUnitLot}
+                            isCoop={isCoop}
+                            totalUnits={condoMeta.totalUnits || profile?.totalUnits}
+                            recordCounts={recordCounts}
+                            recordLoading={riskSnapshotLoading}
+                            onTabChange={handleTabChange}
+                          />
+                        </TabsContent>
+                        
+                        <TabsContent value="units" className="mt-0" forceMount style={{ display: activeTab === 'units' ? 'block' : 'none' }}>
+                          <UnitsTab
+                            bbl={effectiveBbl}
+                            buildingAddress={address}
+                            borough={borough}
+                            bin={bin}
+                            isCoop={isCoop}
+                            condoRoster={condoRoster}
+                            rosterQueryBbl={condoRosterQueryBbl}
+                          />
+                        </TabsContent>
+                        
+                        <TabsContent value="records" className="mt-0">
+                          <RecordsTab
+                            bbl={queryBbl}
+                            bin={bin}
+                            lat={latitude}
+                            lon={longitude}
+                            address={address}
+                            scope={scope}
+                            isCoop={isCoop}
+                            coopUnitContext={coopUnitContext}
+                            recordCounts={recordCounts}
+                            recordLoading={riskSnapshotLoading}
+                            onClearUnitContext={handleClearUnitContext}
+                          />
+                        </TabsContent>
+                        
+                        <TabsContent value="finance" className="mt-0">
+                          <FinanceTab bbl={effectiveBbl} address={address} />
+                        </TabsContent>
+                      </div>
+                    </Tabs>
                   </div>
-                ) : (
-                  /* Desktop/Tablet: standard tabs */
-                  <div className="bg-card border-b border-border">
-                    <TabsList className="justify-start bg-transparent rounded-none h-auto p-0">
-                      <TabsTrigger 
-                        value="overview" 
-                        className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent py-3 px-6"
-                      >
-                        Overview
-                      </TabsTrigger>
-                      <TabsTrigger 
-                        value="units" 
-                        className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent py-3 px-6"
-                      >
-                        Units
-                      </TabsTrigger>
-                      <TabsTrigger 
-                        value="records" 
-                        className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent py-3 px-6"
-                      >
-                        Records
-                      </TabsTrigger>
-                      <TabsTrigger 
-                        value="finance" 
-                        className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent py-3 px-6"
-                      >
-                        Finance
-                      </TabsTrigger>
-                    </TabsList>
-                  </div>
-                )}
 
-                <div className="mt-4 sm:mt-6">
-                  <TabsContent value="overview" className="mt-0">
-                    <OverviewTab
-                      address={address}
-                      borough={borough}
-                      bbl={effectiveBbl}
-                      bin={bin}
-                      isCondo={isCondoBuilding && !isUnitLot}
-                      isCoop={isCoop}
-                      totalUnits={condoMeta.totalUnits || profile?.totalUnits}
-                      recordCounts={recordCounts}
-                      recordLoading={riskSnapshotLoading}
-                      onTabChange={handleTabChange}
-                    />
-                  </TabsContent>
+                  {/* Building Context - Collapsible in Unit Mode */}
+                  <Collapsible defaultOpen={false}>
+                    <Card className="border-muted">
+                      <CollapsibleTrigger className="w-full">
+                        <CardContent className="p-4 flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <Building2 className="h-4 w-4 text-muted-foreground" />
+                            <span className="text-sm font-medium text-muted-foreground">Building Context</span>
+                          </div>
+                          <ChevronDown className="h-4 w-4 text-muted-foreground transition-transform duration-200 [[data-state=open]>&]:rotate-180" />
+                        </CardContent>
+                      </CollapsibleTrigger>
+                      <CollapsibleContent>
+                        <div className="px-4 pb-4 space-y-4">
+                          {/* Context Banner */}
+                          <ContextBanner
+                            address={address}
+                            unitLabel={currentUnitLabel}
+                            unitBbl={bbl}
+                            billingBbl={billingBbl || buildingBblParam}
+                            effectiveBbl={effectiveBbl}
+                            bin={bin}
+                            borough={borough}
+                            buildingAddress={buildingAddressParam}
+                            buildingProfile={profile ? {
+                              yearBuilt: profile.yearBuilt,
+                              buildingClass: profile.buildingClass,
+                              totalUnits: profile.totalUnits,
+                              residentialUnits: profile.residentialUnits,
+                              numFloors: profile.numFloors,
+                              grossSqFt: profile.grossSqFt,
+                              propertyTypeLabel: profile.propertyTypeLabel,
+                            } : null}
+                            buildingProfileLoading={profileLoading}
+                            isCondoUnit={isCondoBuilding && isUnitLot && !isCoop}
+                            isCoop={isCoop}
+                            coopUnitContext={coopUnitContext}
+                            onCoopUnitContextChange={isCoop ? handleCoopUnitContextChange : undefined}
+                            scope={scope}
+                            onScopeChange={setScope}
+                          />
+
+                          {/* Risk Snapshot */}
+                          <RiskSnapshotCard 
+                            counts={recordCounts} 
+                            loading={riskSnapshotLoading}
+                            records={riskSnapshotRecords}
+                            onNavigateToSection={(info: NavigationInfo) => {
+                              if (info.scope === 'building' && scope !== 'building') {
+                                setScope('building');
+                              } else if (info.scope === 'unit' && scope !== 'unit') {
+                                setScope('unit');
+                              }
+                              handleTabChange(info.tab);
+                            }}
+                          />
+
+                          {/* Property Profile */}
+                          <PropertyProfileCard 
+                            bbl={effectiveBbl}
+                            unitLabel={currentUnitLabel}
+                            parentAddress={address}
+                            landmarkStatus={landmarkStatus}
+                            lat={latitude}
+                            lon={longitude}
+                            onOwnershipOverrideChange={handleOwnershipOverrideChange}
+                          />
+                          
+                          {/* Taxes */}
+                          <TaxesPanel
+                            context={isUnitLot ? 'unit' : 'building'}
+                            viewBbl={bbl}
+                            buildingBbl={buildingBblParam || billingBbl || undefined}
+                            address={address}
+                            isCondo={isCondoBuilding && !isUnitLot}
+                          />
+                        </div>
+                      </CollapsibleContent>
+                    </Card>
+                  </Collapsible>
+                </>
+              ) : (
+                /* ===== BUILDING MODE LAYOUT ===== */
+                /* Standard layout: Building context cards, then tabs */
+                <>
+                  {/* Context Banner - Primary navigation and scope control */}
+                  <ContextBanner
+                    address={address}
+                    unitLabel={currentUnitLabel}
+                    unitBbl={bbl}
+                    billingBbl={billingBbl || buildingBblParam}
+                    effectiveBbl={effectiveBbl}
+                    bin={bin}
+                    borough={borough}
+                    buildingAddress={buildingAddressParam}
+                    buildingProfile={profile ? {
+                      yearBuilt: profile.yearBuilt,
+                      buildingClass: profile.buildingClass,
+                      totalUnits: profile.totalUnits,
+                      residentialUnits: profile.residentialUnits,
+                      numFloors: profile.numFloors,
+                      grossSqFt: profile.grossSqFt,
+                      propertyTypeLabel: profile.propertyTypeLabel,
+                    } : null}
+                    buildingProfileLoading={profileLoading}
+                    isCondoUnit={isCondoBuilding && isUnitLot && !isCoop}
+                    isCoop={isCoop}
+                    coopUnitContext={coopUnitContext}
+                    onCoopUnitContextChange={isCoop ? handleCoopUnitContextChange : undefined}
+                    scope={scope}
+                    onScopeChange={setScope}
+                  />
+
+                  {/* Risk Snapshot - Building-level risk signals summary */}
+                  <RiskSnapshotCard 
+                    counts={recordCounts} 
+                    loading={riskSnapshotLoading}
+                    records={riskSnapshotRecords}
+                    onNavigateToSection={(info: NavigationInfo) => {
+                      if (info.scope === 'building' && scope !== 'building') {
+                        setScope('building');
+                      } else if (info.scope === 'unit' && scope !== 'unit') {
+                        setScope('unit');
+                      }
+                      handleTabChange(info.tab);
+                    }}
+                  />
+
+                  {/* Property Profile with embedded map */}
+                  <PropertyProfileCard 
+                    bbl={effectiveBbl}
+                    unitLabel={currentUnitLabel}
+                    parentAddress={address}
+                    landmarkStatus={landmarkStatus}
+                    lat={latitude}
+                    lon={longitude}
+                    onOwnershipOverrideChange={handleOwnershipOverrideChange}
+                  />
                   
-                  <TabsContent value="units" className="mt-0" forceMount style={{ display: activeTab === 'units' ? 'block' : 'none' }}>
-                    <UnitsTab
-                      bbl={effectiveBbl}
-                      buildingAddress={address}
-                      borough={borough}
-                      bin={bin}
-                      isCoop={isCoop}
-                      condoRoster={condoRoster}
+                  {/* Taxes - Single integration point via TaxesPanel */}
+                  <TaxesPanel
+                    context={isUnitLot ? 'unit' : 'building'}
+                    viewBbl={bbl}
+                    buildingBbl={buildingBblParam || billingBbl || undefined}
+                    address={address}
+                    isCondo={isCondoBuilding && !isUnitLot}
+                  />
+
+                  {/* Residential Units Card - Co-ops only */}
+                  {isCoop && (
+                    <ResidentialUnitsCard
+                      buildingBbl={effectiveBbl}
+                      selectedUnit={coopUnitContext}
+                      onUnitSelect={handleCoopUnitContextChange}
+                    />
+                  )}
+
+                  {/* Condo Units Preview - Shows above Mentioned Units for condo buildings */}
+                  {!isCoop && !isUnitLot && (
+                    <CondoUnitsPreview
+                      searchBbl={effectiveBbl}
                       rosterQueryBbl={condoRosterQueryBbl}
-                    />
-                  </TabsContent>
-                  
-                  <TabsContent value="records" className="mt-0">
-                    <RecordsTab
-                      bbl={queryBbl}
-                      bin={bin}
-                      lat={latitude}
-                      lon={longitude}
-                      address={address}
-                      scope={scope}
+                      condoData={condoRoster.data}
+                      loading={condoRoster.loading}
+                      error={condoRoster.error}
                       isCoop={isCoop}
-                      coopUnitContext={coopUnitContext}
-                      recordCounts={recordCounts}
-                      recordLoading={riskSnapshotLoading}
-                      onClearUnitContext={handleClearUnitContext}
+                      onViewAllUnits={() => handleTabChange('units')}
+                      onSelectUnit={(unitBbl, unitLabel) => {
+                        const unitParams = new URLSearchParams();
+                        unitParams.set('bbl', unitBbl);
+                        unitParams.set('address', address);
+                        unitParams.set('buildingBbl', effectiveBbl);
+                        unitParams.set('buildingAddress', address);
+                        if (unitLabel) unitParams.set('unitLabel', unitLabel);
+                        if (bin) unitParams.set('bin', bin);
+                        if (latitude) unitParams.set('lat', String(latitude));
+                        if (longitude) unitParams.set('lon', String(longitude));
+                        if (borough) unitParams.set('borough', borough);
+                        navigate(`/results?${unitParams.toString()}`);
+                      }}
                     />
-                  </TabsContent>
-                  
-                  <TabsContent value="finance" className="mt-0">
-                    <FinanceTab bbl={effectiveBbl} address={address} />
-                  </TabsContent>
-                </div>
-              </Tabs>
-              </div>
+                  )}
+
+                  {/* Mentioned Units Card - Shows whenever unit mentions exist */}
+                  <UnitInsightsCard
+                    buildingBbl={effectiveBbl}
+                    bin={bin}
+                    hpdViolations={hpdViolations.items}
+                    hpdComplaints={hpdComplaints.items}
+                    serviceRequests={threeOneOne.items}
+                    salesUnits={coopUnitRoster.units}
+                    dobFilingsUnits={dobJobFilings.units}
+                    dobFilings={dobJobFilings.filings}
+                    dobViolations={dobViolationsHook.items}
+                    ecbViolations={ecbHook.items}
+                    dobPermits={permitsHook.items}
+                    selectedUnit={coopUnitContext}
+                    onUnitSelect={handleUnitInsightSelect}
+                    onClearUnitFilter={() => handleCoopUnitContextChange(null)}
+                    loadingStates={{
+                      filings: dobJobFilings.loading || coopUnitRoster.loading,
+                      permits: permitsHook.loading,
+                      hpd: hpdViolations.loading || hpdComplaints.loading,
+                      threeOneOne: threeOneOne.loading,
+                      violations: dobViolationsHook.loading,
+                      ecb: ecbHook.loading,
+                    }}
+                    rosterError={coopUnitRoster.error}
+                    salesWarning={coopUnitRoster.warning}
+                    dobNowUrl={dobJobFilings.dobNowUrl}
+                    fallbackMode={dobJobFilings.fallbackMode}
+                    hideWhenEmpty={true}
+                  />
+
+                  <div id="results-tabs" className="scroll-mt-24">
+                    <Tabs ref={tabsRef} value={activeTab} onValueChange={handleTabChange} className="w-full">
+                      {/* Mobile: horizontally scrollable tab strip */}
+                      {isMobile ? (
+                        <div className="bg-card border-b border-border">
+                          <MobileTabsList>
+                            <MobileTabsTrigger value="overview">Overview</MobileTabsTrigger>
+                            <MobileTabsTrigger value="units">Units</MobileTabsTrigger>
+                            <MobileTabsTrigger value="records">Records</MobileTabsTrigger>
+                            <MobileTabsTrigger value="finance">Finance</MobileTabsTrigger>
+                          </MobileTabsList>
+                        </div>
+                      ) : (
+                        /* Desktop/Tablet: standard tabs */
+                        <div className="bg-card border-b border-border">
+                          <TabsList className="justify-start bg-transparent rounded-none h-auto p-0">
+                            <TabsTrigger 
+                              value="overview" 
+                              className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent py-3 px-6"
+                            >
+                              Overview
+                            </TabsTrigger>
+                            <TabsTrigger 
+                              value="units" 
+                              className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent py-3 px-6"
+                            >
+                              Units
+                            </TabsTrigger>
+                            <TabsTrigger 
+                              value="records" 
+                              className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent py-3 px-6"
+                            >
+                              Records
+                            </TabsTrigger>
+                            <TabsTrigger 
+                              value="finance" 
+                              className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent py-3 px-6"
+                            >
+                              Finance
+                            </TabsTrigger>
+                          </TabsList>
+                        </div>
+                      )}
+
+                      <div className="mt-4 sm:mt-6">
+                        <TabsContent value="overview" className="mt-0">
+                          <OverviewTab
+                            address={address}
+                            borough={borough}
+                            bbl={effectiveBbl}
+                            bin={bin}
+                            isCondo={isCondoBuilding && !isUnitLot}
+                            isCoop={isCoop}
+                            totalUnits={condoMeta.totalUnits || profile?.totalUnits}
+                            recordCounts={recordCounts}
+                            recordLoading={riskSnapshotLoading}
+                            onTabChange={handleTabChange}
+                          />
+                        </TabsContent>
+                        
+                        <TabsContent value="units" className="mt-0" forceMount style={{ display: activeTab === 'units' ? 'block' : 'none' }}>
+                          <UnitsTab
+                            bbl={effectiveBbl}
+                            buildingAddress={address}
+                            borough={borough}
+                            bin={bin}
+                            isCoop={isCoop}
+                            condoRoster={condoRoster}
+                            rosterQueryBbl={condoRosterQueryBbl}
+                          />
+                        </TabsContent>
+                        
+                        <TabsContent value="records" className="mt-0">
+                          <RecordsTab
+                            bbl={queryBbl}
+                            bin={bin}
+                            lat={latitude}
+                            lon={longitude}
+                            address={address}
+                            scope={scope}
+                            isCoop={isCoop}
+                            coopUnitContext={coopUnitContext}
+                            recordCounts={recordCounts}
+                            recordLoading={riskSnapshotLoading}
+                            onClearUnitContext={handleClearUnitContext}
+                          />
+                        </TabsContent>
+                        
+                        <TabsContent value="finance" className="mt-0">
+                          <FinanceTab bbl={effectiveBbl} address={address} />
+                        </TabsContent>
+                      </div>
+                    </Tabs>
+                  </div>
+                </>
+              )}
             </div>
           )}
         </div>
