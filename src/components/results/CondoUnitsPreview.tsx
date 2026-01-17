@@ -177,62 +177,77 @@ export function CondoUnitsPreview({
   if (!isCondo) return null;
 
   return (
-    <Card className="border-primary/20 bg-primary/5">
-      <CardHeader className="pb-3">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="flex items-center justify-center w-10 h-10 bg-primary/20 rounded-lg">
-              <Building2 className="h-5 w-5 text-primary" />
+    <div 
+      className="relative z-10 pointer-events-auto"
+      onClickCapture={() => console.log("[CondoUnitsPreview] click CAPTURE on wrapper")}
+    >
+      <Card className="border-primary/20 bg-primary/5">
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="flex items-center justify-center w-10 h-10 bg-primary/20 rounded-lg">
+                <Building2 className="h-5 w-5 text-primary" />
+              </div>
+              <div>
+                <CardTitle className="text-lg">Condo Units</CardTitle>
+                <p className="text-sm text-muted-foreground">
+                  {totalUnits} registered units in this building
+                </p>
+              </div>
             </div>
-            <div>
-              <CardTitle className="text-lg">Condo Units</CardTitle>
-              <p className="text-sm text-muted-foreground">
-                {totalUnits} registered units in this building
-              </p>
-            </div>
+            <Button 
+              type="button"
+              onClick={() => {
+                console.log("[CondoUnitsPreview] View All Units clicked");
+                onViewAllUnits();
+              }} 
+              className="gap-2 pointer-events-auto"
+            >
+              View All Units
+              <ChevronRight className="h-4 w-4" />
+            </Button>
           </div>
-          <Button onClick={onViewAllUnits} className="gap-2">
-            View All Units
-            <ChevronRight className="h-4 w-4" />
-          </Button>
-        </div>
-      </CardHeader>
-      
-      {/* Preview of first few units */}
-      {previewUnits.length > 0 && (
-        <CardContent className="pt-0">
-          <div className="flex flex-wrap gap-2">
-            {previewUnits.map((unit) => (
-              <button
-                key={unit.unitBbl}
-                type="button"
-                onClick={() => onSelectUnit?.(unit.unitBbl, unit.unitLabel || `Lot ${unit.lot}`)}
-                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-sm font-medium bg-secondary text-secondary-foreground hover:bg-secondary/80 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 cursor-pointer transition-colors"
-              >
-                <Home className="h-3 w-3" />
-                {unit.unitLabel || `Lot ${unit.lot}`}
-              </button>
-            ))}
-            {totalUnits > 10 && (
-              <Badge variant="outline" className="px-2.5 py-1">
-                +{totalUnits - 10} more
-              </Badge>
+        </CardHeader>
+        
+        {/* Preview of first few units */}
+        {previewUnits.length > 0 && (
+          <CardContent className="pt-0">
+            <div className="flex flex-wrap gap-2 pointer-events-auto">
+              {previewUnits.map((unit) => (
+                <button
+                  key={unit.unitBbl}
+                  type="button"
+                  onClick={() => {
+                    console.log("[CondoUnitsPreview] Unit chip clicked:", unit.unitLabel, unit.unitBbl);
+                    onSelectUnit?.(unit.unitBbl, unit.unitLabel || `Lot ${unit.lot}`);
+                  }}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-sm font-medium bg-secondary text-secondary-foreground hover:bg-secondary/80 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 cursor-pointer transition-colors pointer-events-auto"
+                >
+                  <Home className="h-3 w-3" />
+                  {unit.unitLabel || `Lot ${unit.lot}`}
+                </button>
+              ))}
+              {totalUnits > 10 && (
+                <Badge variant="outline" className="px-2.5 py-1">
+                  +{totalUnits - 10} more
+                </Badge>
+              )}
+            </div>
+            {showDebug && (
+              <DebugPanel
+                searchBbl={searchBbl}
+                rosterQueryBbl={rosterQueryBbl}
+                billingBbl={billingBbl}
+                unitsCount={units.length}
+                totalUnits={totalUnits}
+                error={null}
+                isCondo={isCondo}
+                loading={loading}
+              />
             )}
-          </div>
-          {showDebug && (
-            <DebugPanel
-              searchBbl={searchBbl}
-              rosterQueryBbl={rosterQueryBbl}
-              billingBbl={billingBbl}
-              unitsCount={units.length}
-              totalUnits={totalUnits}
-              error={null}
-              isCondo={isCondo}
-              loading={loading}
-            />
-          )}
-        </CardContent>
-      )}
-    </Card>
+          </CardContent>
+        )}
+      </Card>
+    </div>
   );
 }

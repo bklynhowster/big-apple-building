@@ -433,6 +433,7 @@ export default function Results() {
 
   // Sync tab changes to URL
   const handleTabChange = useCallback((tab: string) => {
+    console.log("[Results] handleTabChange called with:", tab);
     setActiveTab(tab);
     
     // Update URL with new tab (without full navigation)
@@ -603,8 +604,12 @@ export default function Results() {
                   loading={condoRoster.loading}
                   error={condoRoster.error}
                   isCoop={isCoop}
-                  onViewAllUnits={() => handleTabChange('units')}
+                  onViewAllUnits={() => {
+                    console.log("[Results] onViewAllUnits callback triggered");
+                    handleTabChange('units');
+                  }}
                   onSelectUnit={(unitBbl, unitLabel) => {
+                    console.log("[Results] onSelectUnit callback triggered:", unitBbl, unitLabel);
                     // Navigate to the unit's detail page with building context
                     const unitParams = new URLSearchParams();
                     unitParams.set('bbl', unitBbl);
