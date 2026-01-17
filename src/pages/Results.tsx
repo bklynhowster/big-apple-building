@@ -10,6 +10,7 @@ import brooklynBridgeLines from '@/assets/brooklyn-bridge-lines.png';
 
 import { ResidentialUnitsCard } from '@/components/results/ResidentialUnitsCard';
 import { UnitInsightsCard } from '@/components/results/UnitInsightsCard';
+import { CondoUnitsPreview } from '@/components/results/CondoUnitsPreview';
 import { TaxesPanel } from '@/features/taxes';
 import { OverviewTab } from '@/components/results/OverviewTab';
 import { UnitsTab, type CondoMeta } from '@/components/results/UnitsTab';
@@ -547,6 +548,16 @@ export default function Results() {
                   buildingBbl={effectiveBbl}
                   selectedUnit={coopUnitContext}
                   onUnitSelect={handleCoopUnitContextChange}
+                />
+              )}
+
+              {/* Condo Units Preview - Shows above Mentioned Units for condo buildings */}
+              {!isCoop && !isUnitLot && (
+                <CondoUnitsPreview
+                  bbl={effectiveBbl}
+                  isCoop={isCoop}
+                  onViewAllUnits={() => handleTabChange('units')}
+                  onCondoMetaResolved={handleCondoMetaResolved}
                 />
               )}
 
