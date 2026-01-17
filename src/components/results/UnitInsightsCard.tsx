@@ -7,7 +7,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Skeleton } from '@/components/ui/skeleton';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { ScrollArea } from '@/components/ui/scroll-area';
+
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { 
@@ -1058,7 +1058,7 @@ function EvidenceDrawer({
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-2xl max-h-[calc(100vh-48px)] flex flex-col overflow-hidden">
+      <DialogContent className="max-w-2xl max-h-[calc(100vh-48px)] flex flex-col !flex !flex-col overflow-hidden">
         <DialogHeader className="flex-shrink-0">
           <DialogTitle className="flex items-center gap-2">
             <Badge className="bg-primary text-primary-foreground">Mentioned Unit: {unit}</Badge>
@@ -1079,9 +1079,12 @@ function EvidenceDrawer({
           </AlertDescription>
         </Alert>
 
-        {/* Scrollable body - ScrollArea is the only flex-growing region */}
-        <ScrollArea className="flex-1 min-h-0">
-          <div className="pr-4 space-y-4">
+        {/* Scroll container (native) - the ONLY flex-growing region */}
+        <div
+          className="flex-1 min-h-0 overflow-y-auto overscroll-contain pr-4"
+          style={{ WebkitOverflowScrolling: "touch" }}
+        >
+          <div className="space-y-4">
             {/* DOB Filings */}
             {stats.filingRefs.length > 0 && (
               <Collapsible open={filingsOpen} onOpenChange={setFilingsOpen}>
@@ -1118,9 +1121,9 @@ function EvidenceDrawer({
                     </div>
                   ))}
                   {dobNowUrl && (
-                    <a 
-                      href={dobNowUrl} 
-                      target="_blank" 
+                    <a
+                      href={dobNowUrl}
+                      target="_blank"
                       rel="noopener noreferrer"
                       className="flex items-center gap-1 text-xs text-primary hover:underline mt-2"
                     >
@@ -1255,17 +1258,17 @@ function EvidenceDrawer({
             )}
 
             {/* Empty state within drawer */}
-            {stats.filingRefs.length === 0 && 
-             matchingHpdViolations.length === 0 && 
-             matchingHpdComplaints.length === 0 && 
-             matching311.length === 0 && (
-              <div className="text-center py-8 text-muted-foreground">
-                <p>No detailed evidence available for this unit.</p>
-                <p className="text-sm mt-1">This unit was found in sales records only.</p>
-              </div>
-            )}
+            {stats.filingRefs.length === 0 &&
+              matchingHpdViolations.length === 0 &&
+              matchingHpdComplaints.length === 0 &&
+              matching311.length === 0 && (
+                <div className="text-center py-8 text-muted-foreground">
+                  <p>No detailed evidence available for this unit.</p>
+                  <p className="text-sm mt-1">This unit was found in sales records only.</p>
+                </div>
+              )}
           </div>
-        </ScrollArea>
+        </div>
       </DialogContent>
     </Dialog>
   );
