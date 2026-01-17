@@ -302,6 +302,31 @@ export function OverviewTab({
         </CardHeader>
       </Card>
 
+      {/* Condo Units CTA - Prominent for condo buildings */}
+      {isCondo && (
+        <Card className="border-primary/30 bg-primary/5">
+          <CardHeader className="pb-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="flex items-center justify-center w-10 h-10 bg-primary/20 rounded-lg">
+                  <Building2 className="h-5 w-5 text-primary" />
+                </div>
+                <div>
+                  <CardTitle className="text-lg">Condo Units</CardTitle>
+                  <p className="text-sm text-muted-foreground">
+                    {totalUnits ? `${totalUnits} registered units` : 'View the official unit roster'}
+                  </p>
+                </div>
+              </div>
+              <Button onClick={() => onTabChange('units')} className="gap-2">
+                <Building2 className="h-4 w-4" />
+                View All Units
+              </Button>
+            </div>
+          </CardHeader>
+        </Card>
+      )}
+
       {/* Status Strip */}
       <Card>
         <CardHeader className="pb-2">
@@ -338,9 +363,9 @@ export function OverviewTab({
         <Button variant="outline" size="sm" onClick={() => onTabChange('records')}>
           View All Records
         </Button>
-        {isCondo && (
+        {isCoop && (
           <Button variant="outline" size="sm" onClick={() => onTabChange('units')}>
-            View Units
+            View Unit Info
           </Button>
         )}
       </div>

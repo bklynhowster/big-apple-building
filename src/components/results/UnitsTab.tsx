@@ -296,12 +296,23 @@ export function UnitsTab({
     );
   }
 
-  if (!isCondo || units.length === 0) {
+  if (!isCondo) {
     return (
       <Alert>
         <Info className="h-4 w-4" />
         <AlertDescription>
-          This property is not a condominium or has no registered units.
+          This property is not a condominium. Unit rosters are only available for condo buildings.
+        </AlertDescription>
+      </Alert>
+    );
+  }
+
+  if (units.length === 0 && !unitsLoading) {
+    return (
+      <Alert variant="destructive">
+        <AlertCircle className="h-4 w-4" />
+        <AlertDescription>
+          Unable to load the condo unit roster. The roster may be unavailable or still loading. Please try refreshing the page.
         </AlertDescription>
       </Alert>
     );
