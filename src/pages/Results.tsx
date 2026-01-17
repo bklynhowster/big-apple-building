@@ -640,7 +640,7 @@ export default function Results() {
                     />
                   </TabsContent>
                   
-                  <TabsContent value="units" className="mt-0">
+                  <TabsContent value="units" className="mt-0" forceMount style={{ display: activeTab === 'units' ? 'block' : 'none' }}>
                     <UnitsTab
                       bbl={effectiveBbl}
                       buildingAddress={address}
