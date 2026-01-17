@@ -431,9 +431,12 @@ export default function Results() {
     setContextInfo(queryBbl, billingBbl, bin || null);
   }, [queryBbl, billingBbl, bin, setContextInfo]);
 
+  // Ref to track programmatic tab changes (to avoid URL sync effect reverting them)
+  const programmaticTabChangeRef = useRef(false);
+  
   // Sync tab changes to URL
   const handleTabChange = useCallback((tab: string) => {
-    console.log("[Results] handleTabChange called with:", tab);
+    programmaticTabChangeRef.current = true;
     setActiveTab(tab);
     
     // Update URL with new tab (without full navigation)
@@ -445,10 +448,18 @@ export default function Results() {
     }
     const newUrl = `${location.pathname}?${newParams.toString()}`;
     window.history.replaceState(null, '', newUrl);
+    
+    // Reset the ref after a tick (allow React to process state update)
+    setTimeout(() => {
+      programmaticTabChangeRef.current = false;
+    }, 0);
   }, [location.search, location.pathname]);
 
   // Sync from URL when it changes externally (e.g., back/forward navigation)
+  // Skip if we just made a programmatic change
   useEffect(() => {
+    if (programmaticTabChangeRef.current) return;
+    
     const tabParam = params.get('tab');
     const validTab = isValidTab(tabParam) ? tabParam : 'overview';
     if (validTab !== activeTab) {
@@ -604,12 +615,8 @@ export default function Results() {
                   loading={condoRoster.loading}
                   error={condoRoster.error}
                   isCoop={isCoop}
-                  onViewAllUnits={() => {
-                    console.log("[Results] onViewAllUnits callback triggered");
-                    handleTabChange('units');
-                  }}
+                  onViewAllUnits={() => handleTabChange('units')}
                   onSelectUnit={(unitBbl, unitLabel) => {
-                    console.log("[Results] onSelectUnit callback triggered:", unitBbl, unitLabel);
                     // Navigate to the unit's detail page with building context
                     const unitParams = new URLSearchParams();
                     unitParams.set('bbl', unitBbl);
