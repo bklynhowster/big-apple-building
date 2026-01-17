@@ -547,7 +547,7 @@ export default function Results() {
             <div className="space-y-4 sm:space-y-6">
               {/* Unit Context Header - Shown when viewing a specific unit */}
               {isUnitMode && (
-                <Card className="border-primary/30 bg-primary/5">
+                <Card className="border-primary/30 bg-primary/5 animate-fade-in">
                   <CardContent className="p-4 sm:p-6">
                     <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
                       <div className="flex-1 min-w-0">
