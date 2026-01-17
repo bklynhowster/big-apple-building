@@ -308,10 +308,13 @@ export function OverviewTab({
           unitBbl={unitBbl}
           lotNumber={unitLotNumber}
           taxData={unitTaxData ?? null}
-          taxLoading={unitTaxLoading}
+          taxLoading={unitTaxLoading ?? false}
           taxError={unitTaxError ?? null}
-          mentionCount={unitMentionCount}
-          mentionsLoading={unitMentionsLoading}
+          mentionCount={unitMentionCount ?? 0}
+          mentionsLoading={unitMentionsLoading ?? false}
+          recordCounts={recordCounts}
+          recordLoading={recordLoading}
+          onViewRecords={() => onTabChange('records')}
         />
       )}
 
