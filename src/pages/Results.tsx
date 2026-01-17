@@ -431,14 +431,22 @@ export default function Results() {
 
   // Handle tab changes - update URL only, activeTab is derived from URL
   const handleTabChange = useCallback((nextTab: string) => {
-    const next = new URLSearchParams(searchParams);
-    if (nextTab === 'overview') {
-      next.delete('tab'); // Default tab, no need in URL
-    } else {
-      next.set('tab', nextTab);
-    }
-    setSearchParams(next, { replace: true });
-  }, [searchParams, setSearchParams]);
+    setSearchParams(prev => {
+      const p = new URLSearchParams(prev);
+      if (nextTab === 'overview') {
+        p.delete('tab'); // Default tab, no need in URL
+      } else {
+        p.set('tab', nextTab);
+      }
+      return p;
+    }, { replace: true });
+    
+    // Scroll to tabs after React commits the new active tab content
+    requestAnimationFrame(() => {
+      document.getElementById('results-tabs')
+        ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  }, [setSearchParams]);
 
   // Update document title based on context
   useEffect(() => {
@@ -644,6 +652,7 @@ export default function Results() {
                 hideWhenEmpty={true}
               />
 
+              <div id="results-tabs" className="scroll-mt-24">
               <Tabs ref={tabsRef} value={activeTab} onValueChange={handleTabChange} className="w-full">
                 {/* Mobile: horizontally scrollable tab strip */}
                 {isMobile ? (
@@ -736,6 +745,7 @@ export default function Results() {
                   </TabsContent>
                 </div>
               </Tabs>
+              </div>
             </div>
           )}
         </div>
