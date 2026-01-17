@@ -16,7 +16,7 @@ interface BuildingHeaderProps {
   borough?: string;
   bbl: string;
   bin?: string;
-  propertyType?: string | null;
+  isCondo?: boolean;
   totalUnits?: number | null;
   loading?: boolean;
 }
@@ -26,7 +26,7 @@ export function BuildingHeader({
   borough,
   bbl,
   bin,
-  propertyType,
+  isCondo = false,
   totalUnits,
   loading = false,
 }: BuildingHeaderProps) {
@@ -35,15 +35,16 @@ export function BuildingHeader({
     ? `${address} — ${borough}`
     : address;
 
-  // Format subtitle line: Property type • Units
-  const subtitleParts: string[] = [];
-  if (propertyType) {
-    subtitleParts.push(propertyType);
+  // Format subtitle: "Condominium · X individual units" for condos
+  let subtitle = '';
+  if (isCondo) {
+    const unitText = totalUnits && totalUnits > 0 
+      ? `${totalUnits} individual units` 
+      : '';
+    subtitle = unitText ? `Condominium · ${unitText}` : 'Condominium';
+  } else if (totalUnits && totalUnits > 0) {
+    subtitle = `${totalUnits} units`;
   }
-  if (totalUnits && totalUnits > 0) {
-    subtitleParts.push(`${totalUnits} registered units`);
-  }
-  const subtitle = subtitleParts.join(' • ');
 
   return (
     <div className="bg-card border border-border rounded-lg overflow-hidden">
