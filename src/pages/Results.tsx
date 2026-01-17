@@ -33,6 +33,8 @@ import { useECB } from '@/hooks/useECB';
 import { usePermits } from '@/hooks/usePermits';
 import { useLandmarkStatus } from '@/hooks/useLandmarkStatus';
 import { useIsMobileViewport } from '@/hooks/useBreakpoint';
+import { useCondoUnits } from '@/hooks/useCondoUnits';
+
 const VALID_TABS = ['overview', 'units', 'records', 'finance'] as const;
 type ValidTab = typeof VALID_TABS[number];
 
@@ -162,6 +164,10 @@ export default function Results() {
   const ecbHook = useECB(isEffectiveBblValid ? effectiveBbl : null);
   const permitsHook = usePermits(isEffectiveBblValid ? effectiveBbl : null);
   
+  // Condo roster - LIFTED to Results level for single source of truth
+  const condoRoster = useCondoUnits();
+  const [condoRosterQueryBbl, setCondoRosterQueryBbl] = useState<string | null>(null);
+  
   // Landmark status lookup - pass PLUTO histdist if available for quick detection
   const plutoHistDist = profile?.raw?.histdist as string | undefined;
   const landmarkStatus = useLandmarkStatus({ 
@@ -175,6 +181,33 @@ export default function Results() {
   // Track if we've fetched data for insights/risk snapshot
   const dataFetchedRef = useRef(false);
   const lastFetchedBblRef = useRef<string | null>(null);
+  const condoFetchedBblRef = useRef<string | null>(null);
+  const condoBillingRefetchedRef = useRef<string | null>(null);
+  
+  // Fetch condo roster - separate from other fetches to handle billing BBL refetch
+  useEffect(() => {
+    if (!isEffectiveBblValid || isCoop) return;
+    if (condoFetchedBblRef.current === effectiveBbl) return;
+    
+    condoFetchedBblRef.current = effectiveBbl;
+    condoBillingRefetchedRef.current = null; // Reset billing refetch tracker
+    setCondoRosterQueryBbl(effectiveBbl);
+    condoRoster.fetchFirstPage(effectiveBbl);
+  }, [isEffectiveBblValid, effectiveBbl, isCoop, condoRoster.fetchFirstPage]);
+  
+  // Handle billing BBL refetch: if response includes a different billingBbl, refetch with that
+  useEffect(() => {
+    if (!condoRoster.data) return;
+    
+    const { billingBbl, inputBbl, isCondo: isCondoResult } = condoRoster.data;
+    
+    // If it's a condo and billingBbl differs from what we queried, refetch with billingBbl
+    if (isCondoResult && billingBbl && billingBbl !== inputBbl && condoBillingRefetchedRef.current !== billingBbl) {
+      condoBillingRefetchedRef.current = billingBbl;
+      setCondoRosterQueryBbl(billingBbl);
+      condoRoster.fetchFirstPage(billingBbl);
+    }
+  }, [condoRoster.data, condoRoster.fetchFirstPage]);
   
   // Fetch all data for Risk Snapshot and Unit Insights
   // CRITICAL: All fetches use effectiveBbl to match hook initialization
@@ -277,13 +310,30 @@ export default function Results() {
     dobJobFilings.units,
   ]);
 
-  // Condo and scope state - populated by UnitsTab callback
-  const [condoMeta, setCondoMeta] = useState<CondoMeta>({
-    isCondo: false,
-    billingBbl: null,
-    totalUnits: 0,
-    unitLabel: null,
-  });
+  // Condo metadata - derived from condoRoster.data (single source of truth)
+  const condoMeta = useMemo<CondoMeta>(() => {
+    if (isCoop || !condoRoster.data) {
+      return { isCondo: false, billingBbl: null, totalUnits: 0, unitLabel: null };
+    }
+    
+    const { isCondo, billingBbl, totalApprox, units, inputRole, inputBbl } = condoRoster.data;
+    
+    // Find current unit's label when input is a unit BBL
+    let unitLabel: string | null = null;
+    if (inputRole === 'unit' && units.length > 0) {
+      const currentUnit = units.find((u) => u.unitBbl === inputBbl);
+      if (currentUnit) {
+        unitLabel = currentUnit.unitLabel;
+      }
+    }
+    
+    return {
+      isCondo,
+      billingBbl,
+      totalUnits: totalApprox || units.length,
+      unitLabel,
+    };
+  }, [isCoop, condoRoster.data]);
   
   // Derived condo state for convenience
   const billingBbl = condoMeta.billingBbl;
@@ -334,8 +384,6 @@ export default function Results() {
     } else {
       setScope(isUnitLot ? 'unit' : 'building');
     }
-    // Reset condo meta when BBL changes (UnitsTab will repopulate it)
-    setCondoMeta({ isCondo: false, billingBbl: null, totalUnits: 0, unitLabel: null });
     // Only reset co-op unit context if BBL changes (not on initial mount if URL has unitContext)
     if (!unitContextParam) {
       setCoopUnitContext(null);
@@ -382,11 +430,6 @@ export default function Results() {
   useEffect(() => {
     setContextInfo(queryBbl, billingBbl, bin || null);
   }, [queryBbl, billingBbl, bin, setContextInfo]);
-  
-  // Handle condo metadata from UnitsTab
-  const handleCondoMetaResolved = useCallback((meta: CondoMeta) => {
-    setCondoMeta(meta);
-  }, []);
 
   // Sync tab changes to URL
   const handleTabChange = useCallback((tab: string) => {
@@ -554,10 +597,13 @@ export default function Results() {
               {/* Condo Units Preview - Shows above Mentioned Units for condo buildings */}
               {!isCoop && !isUnitLot && (
                 <CondoUnitsPreview
-                  bbl={effectiveBbl}
+                  searchBbl={effectiveBbl}
+                  rosterQueryBbl={condoRosterQueryBbl}
+                  condoData={condoRoster.data}
+                  loading={condoRoster.loading}
+                  error={condoRoster.error}
                   isCoop={isCoop}
                   onViewAllUnits={() => handleTabChange('units')}
-                  onCondoMetaResolved={handleCondoMetaResolved}
                 />
               )}
 
@@ -658,7 +704,8 @@ export default function Results() {
                       borough={borough}
                       bin={bin}
                       isCoop={isCoop}
-                      onCondoMetaResolved={handleCondoMetaResolved}
+                      condoRoster={condoRoster}
+                      rosterQueryBbl={condoRosterQueryBbl}
                     />
                   </TabsContent>
                   

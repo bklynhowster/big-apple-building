@@ -21,7 +21,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
-import { useCondoUnits, type CondoUnit } from '@/hooks/useCondoUnits';
+import { useCondoUnits, type CondoUnit, type CondoUnitsResponse } from '@/hooks/useCondoUnits';
 import { useIsMobileViewport } from '@/hooks/useBreakpoint';
 import { UnitCardMobile } from './UnitCardMobile';
 import { 
@@ -36,6 +36,7 @@ import {
   LOAD_ALL_BATCH_DELAY_MS,
 } from '@/features/taxes';
 import { cn } from '@/lib/utils';
+import type { ApiError } from '@/types/api-error';
 
 export interface CondoMeta {
   isCondo: boolean;
@@ -44,13 +45,23 @@ export interface CondoMeta {
   unitLabel: string | null; // Current unit's label when input is a unit BBL
 }
 
+// Shared roster data from Results page
+interface CondoRosterData {
+  loading: boolean;
+  loadingMore: boolean;
+  error: ApiError | null;
+  data: CondoUnitsResponse | null;
+  fetchNextPage: (pageSize?: number) => Promise<void>;
+}
+
 interface UnitsTabProps {
   bbl: string;
   buildingAddress?: string;
   borough?: string;
   bin?: string;
   isCoop?: boolean;
-  onCondoMetaResolved?: (meta: CondoMeta) => void;
+  condoRoster: CondoRosterData;
+  rosterQueryBbl: string | null;
 }
 
 // Debug panel shown when ?debug=1
@@ -59,6 +70,7 @@ function DebugPanel({
   rosterQueryBbl, 
   billingBbl, 
   unitsCount, 
+  totalUnits,
   error,
   isCondo,
   loading,
@@ -66,7 +78,8 @@ function DebugPanel({
   searchBbl: string; 
   rosterQueryBbl: string | null; 
   billingBbl: string | null; 
-  unitsCount: number; 
+  unitsCount: number;
+  totalUnits: number;
   error: string | null;
   isCondo: boolean;
   loading: boolean;
@@ -88,6 +101,8 @@ function DebugPanel({
         <span className={cn("font-bold", isCondo ? "text-green-700 dark:text-green-400" : "text-red-700 dark:text-red-400")}>{String(isCondo)}</span>
         <span>units.length:</span>
         <span className={cn("font-bold", unitsCount > 0 ? "text-green-700 dark:text-green-400" : "text-red-700 dark:text-red-400")}>{unitsCount}</span>
+        <span>totalUnits:</span>
+        <span className="font-bold">{totalUnits}</span>
         <span>loading:</span>
         <span className="font-bold">{String(loading)}</span>
         <span>error:</span>
@@ -129,7 +144,8 @@ export function UnitsTab({
   borough: buildingBorough, 
   bin: buildingBin,
   isCoop = false,
-  onCondoMetaResolved,
+  condoRoster,
+  rosterQueryBbl,
 }: UnitsTabProps) {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -139,19 +155,9 @@ export function UnitsTab({
   const [visibleUnitCount, setVisibleUnitCount] = useState(UNITS_PAGE_SIZE);
   const [loadingAll, setLoadingAll] = useState(false);
   const loadAllAbortRef = useRef(false);
-  
-  // Track which BBL we're actually querying the roster with
-  const [rosterQueryBbl, setRosterQueryBbl] = useState<string | null>(null);
 
-  // Condo units hook
-  const {
-    loading: unitsLoading,
-    loadingMore,
-    error: unitsError,
-    data: condoData,
-    fetchFirstPage,
-    fetchNextPage,
-  } = useCondoUnits();
+  // Use shared roster data from parent
+  const { loading: unitsLoading, loadingMore, error: unitsError, data: condoData, fetchNextPage } = condoRoster;
 
   // Tax data hook
   const {
@@ -161,85 +167,17 @@ export function UnitsTab({
     reset: resetTaxes,
   } = useCondoUnitTaxes();
 
-  // Fetch condo units on mount - always try, regardless of coop status initially
-  // We need to discover if it's a condo via the API response
-  const lastFetchedBblRef = useRef<string | null>(null);
+  // Reset visible count when BBL changes
   useEffect(() => {
-    if (!bbl || bbl.length !== 10) return;
-    // Don't gate on isCoop - always fetch to discover if it's a condo
-    // The API will tell us if it's not a condo
-    if (lastFetchedBblRef.current === bbl) return;
-    
-    lastFetchedBblRef.current = bbl;
-    setRosterQueryBbl(bbl);
-    fetchFirstPage(bbl);
-    resetTaxes();
     setVisibleUnitCount(UNITS_PAGE_SIZE);
-    loadAllAbortRef.current = true; // Abort any ongoing load-all
-  }, [bbl, fetchFirstPage, resetTaxes]);
-  
-  // Handle billing BBL refetch: if response includes a different billingBbl, refetch with that
-  const billingBblRefetchedRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (!condoData) return;
-    
-    const { billingBbl, inputBbl, isCondo: isCondoResult } = condoData;
-    
-    // If it's a condo and billingBbl differs from what we queried, refetch with billingBbl
-    if (isCondoResult && billingBbl && billingBbl !== inputBbl && billingBblRefetchedRef.current !== billingBbl) {
-      billingBblRefetchedRef.current = billingBbl;
-      setRosterQueryBbl(billingBbl);
-      fetchFirstPage(billingBbl);
-      resetTaxes();
-      setVisibleUnitCount(UNITS_PAGE_SIZE);
-    }
-  }, [condoData, fetchFirstPage, resetTaxes]);
+    resetTaxes();
+    loadAllAbortRef.current = true;
+  }, [bbl, resetTaxes]);
 
   const units = condoData?.units || [];
   const totalUnits = condoData?.totalApprox || 0;
   const isCondo = condoData?.isCondo ?? false;
   const hasMorePages = units.length < totalUnits;
-
-  // Report condo metadata to parent when data loads
-  const lastReportedBblRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (!onCondoMetaResolved) return;
-    if (isCoop) {
-      // For co-ops, report as not a condo
-      if (lastReportedBblRef.current !== bbl) {
-        lastReportedBblRef.current = bbl;
-        onCondoMetaResolved({
-          isCondo: false,
-          billingBbl: null,
-          totalUnits: 0,
-          unitLabel: null,
-        });
-      }
-      return;
-    }
-    
-    // Only report once data is loaded and BBL matches
-    if (!condoData || condoData.inputBbl !== bbl) return;
-    if (lastReportedBblRef.current === bbl) return;
-    
-    lastReportedBblRef.current = bbl;
-    
-    // Find current unit's label when input is a unit BBL
-    let unitLabel: string | null = null;
-    if (condoData.inputRole === 'unit' && condoData.units.length > 0) {
-      const currentUnit = condoData.units.find((u) => u.unitBbl === condoData.inputBbl);
-      if (currentUnit) {
-        unitLabel = currentUnit.unitLabel;
-      }
-    }
-    
-    onCondoMetaResolved({
-      isCondo: condoData.isCondo,
-      billingBbl: condoData.billingBbl,
-      totalUnits: condoData.totalApprox || condoData.units.length,
-      unitLabel,
-    });
-  }, [bbl, isCoop, condoData, onCondoMetaResolved]);
 
   // Filter units by search term
   const filteredUnits = useMemo(() => {
@@ -350,6 +288,7 @@ export function UnitsTab({
     rosterQueryBbl,
     billingBbl: condoData?.billingBbl || null,
     unitsCount: units.length,
+    totalUnits,
     error: unitsError?.userMessage || unitsError?.error || null,
     isCondo,
     loading: unitsLoading,
