@@ -73,9 +73,24 @@ interface SnapshotChip {
   label: string;
   value: number | null;
   loading: boolean;
-  variant: 'warning' | 'success' | 'muted';
   icon: React.ReactNode;
 }
+
+type SeverityLevel = 'success' | 'warning' | 'danger' | 'muted';
+
+function getSeverityFromCount(count: number | null): SeverityLevel {
+  if (count === null) return 'muted';
+  if (count === 0) return 'success';
+  if (count >= 1 && count <= 5) return 'warning';
+  return 'danger'; // 6+
+}
+
+const severityClasses: Record<SeverityLevel, string> = {
+  success: 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400 border-green-300 dark:border-green-700',
+  warning: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400 border-yellow-300 dark:border-yellow-700',
+  danger: 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400 border-red-300 dark:border-red-700',
+  muted: 'bg-muted text-muted-foreground border-border',
+};
 
 function SnapshotRow({ 
   chips, 
@@ -101,22 +116,15 @@ function SnapshotRow({
             );
           }
           
-          const variantClasses = {
-            warning: 'bg-warning/10 text-warning border-warning/30',
-            success: 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400 border-green-200 dark:border-green-800',
-            muted: 'bg-muted text-muted-foreground border-border',
-          };
-          
           const displayValue = chip.value === null ? '—' : chip.value;
-          const effectiveVariant = chip.value === null ? 'muted' : 
-                                   chip.value > 0 ? chip.variant : 'success';
+          const severity = getSeverityFromCount(chip.value);
           
           return (
             <span
               key={chip.key}
               className={cn(
                 "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border",
-                variantClasses[effectiveVariant]
+                severityClasses[severity]
               )}
             >
               {chip.icon}
@@ -167,7 +175,6 @@ export function UnitOverviewCard({
         label: 'HPD Viol.',
         value: recordLoading?.hpdViolations ? null : (recordCounts.hpdViolationsOpen ?? null),
         loading: recordLoading?.hpdViolations ?? false,
-        variant: 'warning' as const,
         icon: <AlertTriangle className="h-3 w-3" />,
       },
       {
@@ -175,7 +182,6 @@ export function UnitOverviewCard({
         label: 'HPD Comp.',
         value: recordLoading?.hpdComplaints ? null : (recordCounts.hpdComplaintsOpen ?? null),
         loading: recordLoading?.hpdComplaints ?? false,
-        variant: 'warning' as const,
         icon: <FileWarning className="h-3 w-3" />,
       },
       {
@@ -183,7 +189,6 @@ export function UnitOverviewCard({
         label: 'DOB Viol.',
         value: recordLoading?.dobViolations ? null : (recordCounts.dobViolationsOpen ?? null),
         loading: recordLoading?.dobViolations ?? false,
-        variant: 'warning' as const,
         icon: <AlertTriangle className="h-3 w-3" />,
       },
       {
@@ -191,7 +196,6 @@ export function UnitOverviewCard({
         label: 'ECB Viol.',
         value: recordLoading?.ecbViolations ? null : (recordCounts.ecbViolationsOpen ?? null),
         loading: recordLoading?.ecbViolations ?? false,
-        variant: 'warning' as const,
         icon: <AlertTriangle className="h-3 w-3" />,
       },
       {
@@ -199,7 +203,6 @@ export function UnitOverviewCard({
         label: '311',
         value: recordLoading?.serviceRequests ? null : (recordCounts.serviceRequestsOpen ?? null),
         loading: recordLoading?.serviceRequests ?? false,
-        variant: 'warning' as const,
         icon: <FileText className="h-3 w-3" />,
       },
     ];
