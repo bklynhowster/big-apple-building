@@ -1079,10 +1079,9 @@ function EvidenceDrawer({
           </AlertDescription>
         </Alert>
 
-        {/* Scrollable body wrapper - min-h-0 is critical for flex containers with overflow */}
-        <div className="flex-1 min-h-0 overflow-hidden">
-          <ScrollArea className="h-full pr-4">
-          <div className="space-y-4">
+        {/* Scrollable body - ScrollArea is the only flex-growing region */}
+        <ScrollArea className="flex-1 min-h-0">
+          <div className="pr-4 space-y-4">
             {/* DOB Filings */}
             {stats.filingRefs.length > 0 && (
               <Collapsible open={filingsOpen} onOpenChange={setFilingsOpen}>
@@ -1266,8 +1265,7 @@ function EvidenceDrawer({
               </div>
             )}
           </div>
-          </ScrollArea>
-        </div>
+        </ScrollArea>
       </DialogContent>
     </Dialog>
   );
