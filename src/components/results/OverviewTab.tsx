@@ -7,6 +7,8 @@ import { Button } from '@/components/ui/button';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { cn } from '@/lib/utils';
 import type { RecordCounts, LoadingStates } from './RiskSnapshotCard';
+import { UnitOverviewCard } from './UnitOverviewCard';
+import type { PropertyTaxResult } from '@/features/taxes/types';
 
 interface OverviewTabProps {
   // Building identity
@@ -30,6 +32,17 @@ interface OverviewTabProps {
   
   // Navigation
   onTabChange: (tab: string) => void;
+  
+  // Unit Mode props (optional)
+  isUnitMode?: boolean;
+  unitLabel?: string | null;
+  unitBbl?: string | null;
+  unitLotNumber?: string | null;
+  unitTaxData?: PropertyTaxResult | null;
+  unitTaxLoading?: boolean;
+  unitTaxError?: string | null;
+  unitMentionCount?: number;
+  unitMentionsLoading?: boolean;
 }
 
 interface StatusItem {
@@ -168,6 +181,16 @@ export function OverviewTab({
   hasTaxArrears,
   taxLoading,
   onTabChange,
+  // Unit Mode props
+  isUnitMode = false,
+  unitLabel,
+  unitBbl,
+  unitLotNumber,
+  unitTaxData,
+  unitTaxLoading = false,
+  unitTaxError,
+  unitMentionCount = 0,
+  unitMentionsLoading = false,
 }: OverviewTabProps) {
   const [showZeroCategories, setShowZeroCategories] = useState(false);
 
@@ -278,6 +301,20 @@ export function OverviewTab({
 
   return (
     <div className="space-y-6">
+      {/* Unit Overview Card - Unit Mode Only */}
+      {isUnitMode && unitBbl && (
+        <UnitOverviewCard
+          unitLabel={unitLabel ?? null}
+          unitBbl={unitBbl}
+          lotNumber={unitLotNumber}
+          taxData={unitTaxData ?? null}
+          taxLoading={unitTaxLoading}
+          taxError={unitTaxError ?? null}
+          mentionCount={unitMentionCount}
+          mentionsLoading={unitMentionsLoading}
+        />
+      )}
+
       {/* Building Header */}
       <Card>
         <CardHeader className="pb-3">

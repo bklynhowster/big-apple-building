@@ -12,7 +12,7 @@ import brooklynBridgeLines from '@/assets/brooklyn-bridge-lines.png';
 import { ResidentialUnitsCard } from '@/components/results/ResidentialUnitsCard';
 import { UnitInsightsCard } from '@/components/results/UnitInsightsCard';
 import { CondoUnitsPreview } from '@/components/results/CondoUnitsPreview';
-import { TaxesPanel } from '@/features/taxes';
+import { TaxesPanel, usePropertyTaxes } from '@/features/taxes';
 import { OverviewTab } from '@/components/results/OverviewTab';
 import { UnitsTab, type CondoMeta } from '@/components/results/UnitsTab';
 import { RecordsTab } from '@/components/results/RecordsTab';
@@ -36,6 +36,7 @@ import { usePermits } from '@/hooks/usePermits';
 import { useLandmarkStatus } from '@/hooks/useLandmarkStatus';
 import { useIsMobileViewport } from '@/hooks/useBreakpoint';
 import { useCondoUnits } from '@/hooks/useCondoUnits';
+import { useUnitMentions } from '@/hooks/useUnitMentions';
 
 const VALID_TABS = ['overview', 'units', 'records', 'finance'] as const;
 type ValidTab = typeof VALID_TABS[number];
@@ -426,6 +427,57 @@ export default function Results() {
     }
   }, [bbl, isUnitLot, isCoop]);
   
+  // ===== UNIT MODE DATA =====
+  // Unit-level taxes (only fetched in unit mode)
+  const unitTaxes = usePropertyTaxes();
+  const unitTaxFetchedRef = useRef<string | null>(null);
+  
+  useEffect(() => {
+    // Only fetch unit taxes in unit mode, for the unit's own BBL
+    const unitBblToFetch = unitBblFromUrl || (isUnitMode ? bbl : null);
+    if (isUnitMode && unitBblToFetch && unitTaxFetchedRef.current !== unitBblToFetch) {
+      unitTaxFetchedRef.current = unitBblToFetch;
+      unitTaxes.fetch(unitBblToFetch, buildingBblParam || undefined);
+    }
+  }, [isUnitMode, unitBblFromUrl, bbl, buildingBblParam, unitTaxes.fetch]);
+  
+  // Unit mentions data - use effectiveBbl (building level) to get all mentions
+  const unitMentionsData = useUnitMentions(
+    effectiveBbl,
+    {
+      dobFilingsUnits: dobJobFilings.units,
+      salesUnits: coopUnitRoster.units,
+      dobPermits: permitsHook.items,
+      hpdViolations: hpdViolations.items,
+      hpdComplaints: hpdComplaints.items,
+      serviceRequests: threeOneOne.items,
+      dobViolations: dobViolationsHook.items,
+      ecbViolations: ecbHook.items,
+    },
+    {
+      filingsLoading: dobJobFilings.loading || coopUnitRoster.loading,
+      permitsLoading: permitsHook.loading,
+      hpdLoading: hpdViolations.loading || hpdComplaints.loading,
+      threeOneOneLoading: threeOneOne.loading,
+      violationsLoading: dobViolationsHook.loading,
+      ecbLoading: ecbHook.loading,
+    }
+  );
+  
+  // Get mention count for current unit
+  const unitMentionCount = useMemo(() => {
+    if (!isUnitMode || !currentUnitLabel) return 0;
+    const unitStats = unitMentionsData.stats.find(
+      s => s.unit.toUpperCase() === currentUnitLabel.toUpperCase()
+    );
+    return unitStats?.totalCount ?? 0;
+  }, [isUnitMode, currentUnitLabel, unitMentionsData.stats]);
+  
+  const unitMentionsLoading = useMemo(() => {
+    return unitMentionsData.progress.stage !== 'complete' && 
+           unitMentionsData.progress.stage !== 'idle';
+  }, [unitMentionsData.progress.stage]);
+  
   // Sync co-op unit context from URL on external navigation (back/forward)
   useEffect(() => {
     if (isCoop && unitContextParam !== coopUnitContext) {
@@ -632,6 +684,16 @@ export default function Results() {
                             recordCounts={recordCounts}
                             recordLoading={riskSnapshotLoading}
                             onTabChange={handleTabChange}
+                            // Unit Mode props
+                            isUnitMode={isUnitMode}
+                            unitLabel={currentUnitLabel}
+                            unitBbl={unitBblFromUrl || (isUnitMode ? bbl : null)}
+                            unitLotNumber={lotNumber > 0 ? String(lotNumber) : null}
+                            unitTaxData={unitTaxes.data}
+                            unitTaxLoading={unitTaxes.loading}
+                            unitTaxError={unitTaxes.error}
+                            unitMentionCount={unitMentionCount}
+                            unitMentionsLoading={unitMentionsLoading}
                           />
                         </TabsContent>
                         
@@ -941,6 +1003,8 @@ export default function Results() {
                             recordCounts={recordCounts}
                             recordLoading={riskSnapshotLoading}
                             onTabChange={handleTabChange}
+                            // Unit Mode props (not in unit mode here, but pass for consistency)
+                            isUnitMode={false}
                           />
                         </TabsContent>
                         
