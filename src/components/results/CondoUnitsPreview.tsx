@@ -18,7 +18,7 @@ interface CondoUnitsPreviewProps {
   error: ApiError | null;
   isCoop: boolean;
   onViewAllUnits: () => void;
-  onSelectUnit?: (unitBbl: string, unitLabel: string) => void;
+  onSelectUnit?: (unitBbl: string, unitLabel?: string | null) => void;
 }
 
 // Debug panel shown when ?debug=1
@@ -211,7 +211,7 @@ export function CondoUnitsPreview({
                 <button
                   key={unit.unitBbl}
                   type="button"
-                  onClick={() => onSelectUnit?.(unit.unitBbl, unit.unitLabel || `Lot ${unit.lot}`)}
+                  onClick={() => onSelectUnit?.(unit.unitBbl, unit.unitLabel)}
                   className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-sm font-medium bg-secondary text-secondary-foreground hover:bg-secondary/80 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 cursor-pointer transition-colors pointer-events-auto"
                 >
                   <Home className="h-3 w-3" />

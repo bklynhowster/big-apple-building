@@ -62,6 +62,7 @@ interface UnitsTabProps {
   isCoop?: boolean;
   condoRoster: CondoRosterData;
   rosterQueryBbl: string | null;
+  onOpenUnit?: (unitBbl: string, unitLabel?: string | null) => void;
 }
 
 // Debug panel shown when ?debug=1
@@ -146,6 +147,7 @@ export function UnitsTab({
   isCoop = false,
   condoRoster,
   rosterQueryBbl,
+  onOpenUnit,
 }: UnitsTabProps) {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -267,9 +269,9 @@ export function UnitsTab({
   }, [unitTaxes]);
 
   // Navigate to unit detail
-  const handleOpenUnit = useCallback((unitBbl: string) => {
+  const handleOpenUnitInternal = useCallback((unitBbl: string, unitLabel?: string | null) => {
     if (!unitBbl) return;
-    
+
     const params = new URLSearchParams({
       bbl: unitBbl,
       borough: buildingBorough || boroughNameFromBbl(unitBbl),
@@ -277,10 +279,16 @@ export function UnitsTab({
       buildingBbl: bbl,
       buildingAddress: buildingAddress || '',
     });
+    if (unitLabel) params.set('unitLabel', unitLabel);
     if (buildingBin) params.set('bin', buildingBin);
-    
+
     navigate(`/results?${params.toString()}`);
   }, [navigate, bbl, buildingAddress, buildingBorough, buildingBin]);
+
+  const handleOpenUnit = useCallback((unitBbl: string, unitLabel?: string | null) => {
+    if (onOpenUnit) return onOpenUnit(unitBbl, unitLabel);
+    return handleOpenUnitInternal(unitBbl, unitLabel);
+  }, [onOpenUnit, handleOpenUnitInternal]);
 
   // Debug panel data
   const debugData = {
@@ -504,7 +512,7 @@ export function UnitsTab({
                           <Button
                             variant="ghost"
                             size="sm"
-                            onClick={() => handleOpenUnit(unit.unitBbl)}
+                            onClick={() => handleOpenUnit(unit.unitBbl, unit.unitLabel)}
                           >
                             Open
                           </Button>
