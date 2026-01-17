@@ -610,6 +610,72 @@ export default function Results() {
                 buildingBbl={buildingBblParam || effectiveBbl}
                 isUnitMode={isUnitMode}
                 onBackToBuilding={handleBackToBuilding}
+                buildingContextContent={isUnitMode ? (
+                  <>
+                    {/* Context Banner */}
+                    <ContextBanner
+                      address={address}
+                      unitLabel={currentUnitLabel}
+                      unitBbl={bbl}
+                      billingBbl={billingBbl || buildingBblParam}
+                      effectiveBbl={effectiveBbl}
+                      bin={bin}
+                      borough={borough}
+                      buildingAddress={buildingAddressParam}
+                      buildingProfile={profile ? {
+                        yearBuilt: profile.yearBuilt,
+                        buildingClass: profile.buildingClass,
+                        totalUnits: profile.totalUnits,
+                        residentialUnits: profile.residentialUnits,
+                        numFloors: profile.numFloors,
+                        grossSqFt: profile.grossSqFt,
+                        propertyTypeLabel: profile.propertyTypeLabel,
+                      } : null}
+                      buildingProfileLoading={profileLoading}
+                      isCondoUnit={isCondoBuilding && isUnitLot && !isCoop}
+                      isCoop={isCoop}
+                      coopUnitContext={coopUnitContext}
+                      onCoopUnitContextChange={isCoop ? handleCoopUnitContextChange : undefined}
+                      scope={scope}
+                      onScopeChange={setScope}
+                    />
+
+                    {/* Risk Snapshot */}
+                    <RiskSnapshotCard 
+                      counts={recordCounts} 
+                      loading={riskSnapshotLoading}
+                      records={riskSnapshotRecords}
+                      onNavigateToSection={(info: NavigationInfo) => {
+                        if (info.scope === 'building' && scope !== 'building') {
+                          setScope('building');
+                        } else if (info.scope === 'unit' && scope !== 'unit') {
+                          setScope('unit');
+                        }
+                        handleTabChange(info.tab);
+                      }}
+                    />
+
+                    {/* Property Profile */}
+                    <PropertyProfileCard 
+                      bbl={effectiveBbl}
+                      unitLabel={currentUnitLabel}
+                      parentAddress={address}
+                      landmarkStatus={landmarkStatus}
+                      lat={latitude}
+                      lon={longitude}
+                      onOwnershipOverrideChange={handleOwnershipOverrideChange}
+                    />
+                    
+                    {/* Taxes */}
+                    <TaxesPanel
+                      context={isUnitLot ? 'unit' : 'building'}
+                      viewBbl={bbl}
+                      buildingBbl={buildingBblParam || billingBbl || undefined}
+                      address={address}
+                      isCondo={isCondoBuilding && !isUnitLot}
+                    />
+                  </>
+                ) : undefined}
               />
               
               {/* Query Debug Panel - visible when ?debug=1 */}
@@ -731,87 +797,6 @@ export default function Results() {
                       </div>
                     </Tabs>
                   </div>
-
-                  {/* Building Context - Collapsible in Unit Mode */}
-                  <Collapsible defaultOpen={false}>
-                    <Card className="border-muted">
-                      <CollapsibleTrigger className="w-full">
-                        <CardContent className="p-4 flex items-center justify-between">
-                          <div className="flex items-center gap-2">
-                            <Building2 className="h-4 w-4 text-muted-foreground" />
-                            <span className="text-sm font-medium text-muted-foreground">Building Context</span>
-                          </div>
-                          <ChevronDown className="h-4 w-4 text-muted-foreground transition-transform duration-200 [[data-state=open]>&]:rotate-180" />
-                        </CardContent>
-                      </CollapsibleTrigger>
-                      <CollapsibleContent>
-                        <div className="px-4 pb-4 space-y-4">
-                          {/* Context Banner */}
-                          <ContextBanner
-                            address={address}
-                            unitLabel={currentUnitLabel}
-                            unitBbl={bbl}
-                            billingBbl={billingBbl || buildingBblParam}
-                            effectiveBbl={effectiveBbl}
-                            bin={bin}
-                            borough={borough}
-                            buildingAddress={buildingAddressParam}
-                            buildingProfile={profile ? {
-                              yearBuilt: profile.yearBuilt,
-                              buildingClass: profile.buildingClass,
-                              totalUnits: profile.totalUnits,
-                              residentialUnits: profile.residentialUnits,
-                              numFloors: profile.numFloors,
-                              grossSqFt: profile.grossSqFt,
-                              propertyTypeLabel: profile.propertyTypeLabel,
-                            } : null}
-                            buildingProfileLoading={profileLoading}
-                            isCondoUnit={isCondoBuilding && isUnitLot && !isCoop}
-                            isCoop={isCoop}
-                            coopUnitContext={coopUnitContext}
-                            onCoopUnitContextChange={isCoop ? handleCoopUnitContextChange : undefined}
-                            scope={scope}
-                            onScopeChange={setScope}
-                          />
-
-                          {/* Risk Snapshot */}
-                          <RiskSnapshotCard 
-                            counts={recordCounts} 
-                            loading={riskSnapshotLoading}
-                            records={riskSnapshotRecords}
-                            onNavigateToSection={(info: NavigationInfo) => {
-                              if (info.scope === 'building' && scope !== 'building') {
-                                setScope('building');
-                              } else if (info.scope === 'unit' && scope !== 'unit') {
-                                setScope('unit');
-                              }
-                              handleTabChange(info.tab);
-                            }}
-                          />
-
-                          {/* Property Profile */}
-                          <PropertyProfileCard 
-                            bbl={effectiveBbl}
-                            unitLabel={currentUnitLabel}
-                            parentAddress={address}
-                            landmarkStatus={landmarkStatus}
-                            lat={latitude}
-                            lon={longitude}
-                            onOwnershipOverrideChange={handleOwnershipOverrideChange}
-                          />
-                          
-                          {/* Taxes */}
-                          <TaxesPanel
-                            context={isUnitLot ? 'unit' : 'building'}
-                            viewBbl={bbl}
-                            buildingBbl={buildingBblParam || billingBbl || undefined}
-                            address={address}
-                            isCondo={isCondoBuilding && !isUnitLot}
-                          />
-                        </div>
-                      </CollapsibleContent>
-                    </Card>
-                  </Collapsible>
                 </>
               ) : (
                 /* ===== BUILDING MODE LAYOUT ===== */
