@@ -330,31 +330,7 @@ export function OverviewTab({
         />
       )}
 
-      {/* Building Header - Hidden in Unit Mode (redundant with Context Rail) */}
-      {!isUnitMode && (
-        <Card>
-          <CardHeader className="pb-3">
-            <div className="flex items-start gap-4">
-              <div className="flex items-center justify-center w-12 h-12 bg-primary/10 rounded-lg shrink-0">
-                <Building2 className="h-6 w-6 text-primary" />
-              </div>
-              <div className="flex-1 min-w-0 space-y-1">
-                <CardTitle className="text-xl">{address || 'Property Details'}</CardTitle>
-                <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-                  <span>{borough}</span>
-                  <span className="font-mono">BBL: {bbl}</span>
-                  {bin && <span className="font-mono">BIN: {bin}</span>}
-                </div>
-                {(isCondo || isCoop) && (
-                  <Badge variant="secondary" className="mt-1">
-                    {isCondo ? 'Condominium' : 'Co-op'}
-                  </Badge>
-                )}
-              </div>
-            </div>
-          </CardHeader>
-        </Card>
-      )}
+      {/* Building Header removed - now consolidated into single BuildingHeader at page top */}
 
       {/* Condo Units CTA - Prominent for condo buildings, but not in unit mode */}
       {isCondo && !isUnitMode && (
