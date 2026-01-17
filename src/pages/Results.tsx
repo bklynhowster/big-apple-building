@@ -809,7 +809,33 @@ export default function Results() {
                     onScopeChange={setScope}
                   />
 
-                  {/* Risk Snapshot - Building-level risk signals summary */}
+                  {/* Condo Units Preview - FIRST after header for immediate orientation */}
+                  {!isCoop && !isUnitLot && (
+                    <CondoUnitsPreview
+                      searchBbl={effectiveBbl}
+                      rosterQueryBbl={condoRosterQueryBbl}
+                      condoData={condoRoster.data}
+                      loading={condoRoster.loading}
+                      error={condoRoster.error}
+                      isCoop={isCoop}
+                      onViewAllUnits={() => handleTabChange('units')}
+                      onSelectUnit={(unitBbl, unitLabel) => {
+                        const unitParams = new URLSearchParams();
+                        unitParams.set('bbl', unitBbl);
+                        unitParams.set('address', address);
+                        unitParams.set('buildingBbl', effectiveBbl);
+                        unitParams.set('buildingAddress', address);
+                        if (unitLabel) unitParams.set('unitLabel', unitLabel);
+                        if (bin) unitParams.set('bin', bin);
+                        if (latitude) unitParams.set('lat', String(latitude));
+                        if (longitude) unitParams.set('lon', String(longitude));
+                        if (borough) unitParams.set('borough', borough);
+                        navigate(`/results?${unitParams.toString()}`);
+                      }}
+                    />
+                  )}
+
+                  {/* Risk Snapshot - Building-level risk signals summary (Status at a Glance) */}
                   <RiskSnapshotCard 
                     counts={recordCounts} 
                     loading={riskSnapshotLoading}
@@ -822,6 +848,37 @@ export default function Results() {
                       }
                       handleTabChange(info.tab);
                     }}
+                  />
+
+                  {/* Units Referenced in Records - contextual signal, muted background for visual distinction */}
+                  <UnitInsightsCard
+                    buildingBbl={effectiveBbl}
+                    bin={bin}
+                    hpdViolations={hpdViolations.items}
+                    hpdComplaints={hpdComplaints.items}
+                    serviceRequests={threeOneOne.items}
+                    salesUnits={coopUnitRoster.units}
+                    dobFilingsUnits={dobJobFilings.units}
+                    dobFilings={dobJobFilings.filings}
+                    dobViolations={dobViolationsHook.items}
+                    ecbViolations={ecbHook.items}
+                    dobPermits={permitsHook.items}
+                    selectedUnit={coopUnitContext}
+                    onUnitSelect={handleUnitInsightSelect}
+                    onClearUnitFilter={() => handleCoopUnitContextChange(null)}
+                    loadingStates={{
+                      filings: dobJobFilings.loading || coopUnitRoster.loading,
+                      permits: permitsHook.loading,
+                      hpd: hpdViolations.loading || hpdComplaints.loading,
+                      threeOneOne: threeOneOne.loading,
+                      violations: dobViolationsHook.loading,
+                      ecb: ecbHook.loading,
+                    }}
+                    rosterError={coopUnitRoster.error}
+                    salesWarning={coopUnitRoster.warning}
+                    dobNowUrl={dobJobFilings.dobNowUrl}
+                    fallbackMode={dobJobFilings.fallbackMode}
+                    hideWhenEmpty={true}
                   />
 
                   {/* Property Profile with embedded map */}
@@ -852,63 +909,6 @@ export default function Results() {
                       onUnitSelect={handleCoopUnitContextChange}
                     />
                   )}
-
-                  {/* Condo Units Preview - Shows above Mentioned Units for condo buildings */}
-                  {!isCoop && !isUnitLot && (
-                    <CondoUnitsPreview
-                      searchBbl={effectiveBbl}
-                      rosterQueryBbl={condoRosterQueryBbl}
-                      condoData={condoRoster.data}
-                      loading={condoRoster.loading}
-                      error={condoRoster.error}
-                      isCoop={isCoop}
-                      onViewAllUnits={() => handleTabChange('units')}
-                      onSelectUnit={(unitBbl, unitLabel) => {
-                        const unitParams = new URLSearchParams();
-                        unitParams.set('bbl', unitBbl);
-                        unitParams.set('address', address);
-                        unitParams.set('buildingBbl', effectiveBbl);
-                        unitParams.set('buildingAddress', address);
-                        if (unitLabel) unitParams.set('unitLabel', unitLabel);
-                        if (bin) unitParams.set('bin', bin);
-                        if (latitude) unitParams.set('lat', String(latitude));
-                        if (longitude) unitParams.set('lon', String(longitude));
-                        if (borough) unitParams.set('borough', borough);
-                        navigate(`/results?${unitParams.toString()}`);
-                      }}
-                    />
-                  )}
-
-                  {/* Mentioned Units Card - Shows whenever unit mentions exist */}
-                  <UnitInsightsCard
-                    buildingBbl={effectiveBbl}
-                    bin={bin}
-                    hpdViolations={hpdViolations.items}
-                    hpdComplaints={hpdComplaints.items}
-                    serviceRequests={threeOneOne.items}
-                    salesUnits={coopUnitRoster.units}
-                    dobFilingsUnits={dobJobFilings.units}
-                    dobFilings={dobJobFilings.filings}
-                    dobViolations={dobViolationsHook.items}
-                    ecbViolations={ecbHook.items}
-                    dobPermits={permitsHook.items}
-                    selectedUnit={coopUnitContext}
-                    onUnitSelect={handleUnitInsightSelect}
-                    onClearUnitFilter={() => handleCoopUnitContextChange(null)}
-                    loadingStates={{
-                      filings: dobJobFilings.loading || coopUnitRoster.loading,
-                      permits: permitsHook.loading,
-                      hpd: hpdViolations.loading || hpdComplaints.loading,
-                      threeOneOne: threeOneOne.loading,
-                      violations: dobViolationsHook.loading,
-                      ecb: ecbHook.loading,
-                    }}
-                    rosterError={coopUnitRoster.error}
-                    salesWarning={coopUnitRoster.warning}
-                    dobNowUrl={dobJobFilings.dobNowUrl}
-                    fallbackMode={dobJobFilings.fallbackMode}
-                    hideWhenEmpty={true}
-                  />
 
                   <div id="results-tabs" className="scroll-mt-24">
                     <Tabs ref={tabsRef} value={activeTab} onValueChange={handleTabChange} className="w-full">
