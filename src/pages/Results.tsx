@@ -1,9 +1,10 @@
 import { useMemo, useState, useCallback, useEffect, useRef } from 'react';
 import { useLocation, Link, useSearchParams, useNavigate } from 'react-router-dom';
-import { AlertCircle, ArrowLeft, Building2, Home, ChevronDown } from 'lucide-react';
+import { AlertCircle, ChevronDown, Building2 } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
 import { Footer } from '@/components/layout/Footer';
 import { ContextBanner, QueryScope } from '@/components/results/ContextBanner';
+import { ResultsContextRail } from '@/components/results/ResultsContextRail';
 import { PropertyProfileCard } from '@/components/results/PropertyProfileCard';
 import { RiskSnapshotCard, type RecordCounts, type LoadingStates, type RecordArrays, type NavigationInfo } from '@/components/results/RiskSnapshotCard';
 import brooklynBridgeLines from '@/assets/brooklyn-bridge-lines.png';
@@ -546,57 +547,18 @@ export default function Results() {
           {/* Results - render tabs only when we have a valid BBL */}
           {isValidBBL && (
             <div className="space-y-4 sm:space-y-6">
-              {/* Unit Context Header - Shown when viewing a specific unit */}
-              {isUnitMode && (
-                <Card className="border-primary/30 bg-primary/5 animate-fade-in">
-                  <CardContent className="p-4 sm:p-6">
-                    <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
-                      <div className="flex-1 min-w-0">
-                        {/* Title line */}
-                        <div className="flex items-center gap-2 mb-1">
-                          <Home className="h-5 w-5 text-primary shrink-0" />
-                          <h2 className="text-lg sm:text-xl font-semibold text-foreground truncate">
-                            Condominium Unit: {unitLabelFromUrl || 'Unknown'}
-                          </h2>
-                        </div>
-                        
-                        {/* Subline */}
-                        <p className="text-muted-foreground text-sm sm:text-base mb-3 truncate">
-                          {buildingAddressParam || address} — {borough || 'New York'}
-                        </p>
-                        
-                        {/* Metadata row */}
-                        <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs sm:text-sm text-muted-foreground">
-                          <span>
-                            <span className="font-medium">Viewing Unit BBL:</span>{' '}
-                            {unitBblFromUrl || bbl || '—'}
-                          </span>
-                          <span>
-                            <span className="font-medium">Records from Building BBL:</span>{' '}
-                            {buildingBblParam || effectiveBbl || '—'}
-                          </span>
-                          <span>
-                            <span className="font-medium">BIN:</span> {bin || '—'}
-                          </span>
-                        </div>
-                      </div>
-                      
-                      {/* Back to building button */}
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={handleBackToBuilding}
-                        className="shrink-0 gap-2"
-                      >
-                        <ArrowLeft className="h-4 w-4" />
-                        <Building2 className="h-4 w-4" />
-                        <span className="hidden sm:inline">Back to building</span>
-                        <span className="sm:hidden">Building</span>
-                      </Button>
-                    </div>
-                  </CardContent>
-                </Card>
-              )}
+              {/* Context Rail - Unified header for address/identifiers */}
+              <ResultsContextRail
+                address={buildingAddressParam || address}
+                borough={borough}
+                bbl={bbl}
+                bin={bin}
+                unitLabel={unitLabelFromUrl}
+                unitBbl={unitBblFromUrl || (isUnitMode ? bbl : null)}
+                buildingBbl={buildingBblParam || effectiveBbl}
+                isUnitMode={isUnitMode}
+                onBackToBuilding={handleBackToBuilding}
+              />
               
               {/* Query Debug Panel - visible when ?debug=1 */}
               <QueryDebugPanel />
