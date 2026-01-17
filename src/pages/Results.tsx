@@ -54,32 +54,26 @@ export default function Results() {
   const [searchParams, setSearchParams] = useSearchParams();
   const isMobile = useIsMobileViewport();
   const { setContextInfo } = useQueryDebug();
+  
+  // Debug mode
+  const showDebug = searchParams.get('debug') === '1';
 
-  // Read all params from URL
-  const params = useMemo(() => {
-    return new URLSearchParams(location.search);
-  }, [location.search]);
+  // Derive active tab directly from URL (single source of truth)
+  const urlTab = searchParams.get('tab');
+  const activeTab = isValidTab(urlTab) ? urlTab : 'overview';
 
-  // Initialize active tab from URL or default to 'overview'
-  const initialTab = useMemo(() => {
-    const tabParam = params.get('tab');
-    return isValidTab(tabParam) ? tabParam : 'overview';
-  }, [params]);
-
-  const [activeTab, setActiveTab] = useState<string>(initialTab);
-
-  const bbl = useMemo(() => normalizeBBL(params.get('bbl')), [params]);
-  const address = params.get('address') || '';
-  const borough = params.get('borough') || '';
-  const bin = params.get('bin') || '';
-  const latitude = params.get('lat') ? parseFloat(params.get('lat')!) : undefined;
-  const longitude = params.get('lon') ? parseFloat(params.get('lon')!) : undefined;
-  const unitContextParam = params.get('unitContext') || null;
-  const unitLabelFromUrl = params.get('unitLabel') || null;
+  const bbl = useMemo(() => normalizeBBL(searchParams.get('bbl')), [searchParams]);
+  const address = searchParams.get('address') || '';
+  const borough = searchParams.get('borough') || '';
+  const bin = searchParams.get('bin') || '';
+  const latitude = searchParams.get('lat') ? parseFloat(searchParams.get('lat')!) : undefined;
+  const longitude = searchParams.get('lon') ? parseFloat(searchParams.get('lon')!) : undefined;
+  const unitContextParam = searchParams.get('unitContext') || null;
+  const unitLabelFromUrl = searchParams.get('unitLabel') || null;
   
   // Building context params (passed when navigating from building to unit)
-  const buildingAddressParam = params.get('buildingAddress') || '';
-  const buildingBblParam = params.get('buildingBbl') || '';
+  const buildingAddressParam = searchParams.get('buildingAddress') || '';
+  const buildingBblParam = searchParams.get('buildingBbl') || '';
 
   const isValidBBL = bbl.length === 10;
   
@@ -435,28 +429,16 @@ export default function Results() {
     setContextInfo(queryBbl, billingBbl, bin || null);
   }, [queryBbl, billingBbl, bin, setContextInfo]);
 
-  // Sync tab changes to URL using React Router's setSearchParams
-  const handleTabChange = useCallback((tab: string) => {
-    setActiveTab(tab);
-    
-    // Update URL with new tab using React Router (causes re-render with new params)
-    const newParams = new URLSearchParams(searchParams);
-    if (tab === 'overview') {
-      newParams.delete('tab'); // Default tab, no need in URL
+  // Handle tab changes - update URL only, activeTab is derived from URL
+  const handleTabChange = useCallback((nextTab: string) => {
+    const next = new URLSearchParams(searchParams);
+    if (nextTab === 'overview') {
+      next.delete('tab'); // Default tab, no need in URL
     } else {
-      newParams.set('tab', tab);
+      next.set('tab', nextTab);
     }
-    setSearchParams(newParams, { replace: true });
+    setSearchParams(next, { replace: true });
   }, [searchParams, setSearchParams]);
-
-  // Sync from URL when it changes externally (e.g., back/forward navigation)
-  useEffect(() => {
-    const tabParam = searchParams.get('tab');
-    const validTab = isValidTab(tabParam) ? tabParam : 'overview';
-    if (validTab !== activeTab) {
-      setActiveTab(validTab);
-    }
-  }, [searchParams]);
 
   // Update document title based on context
   useEffect(() => {
@@ -521,6 +503,13 @@ export default function Results() {
             <div className="space-y-4 sm:space-y-6">
               {/* Query Debug Panel - visible when ?debug=1 */}
               <QueryDebugPanel />
+              
+              {/* Tab state debug - DEV only when ?debug=1 */}
+              {showDebug && (
+                <div className="p-2 bg-amber-100 dark:bg-amber-950 border border-amber-300 dark:border-amber-700 rounded text-xs font-mono text-amber-800 dark:text-amber-200">
+                  activeTab={activeTab} | urlTab={urlTab ?? '(null)'} | location.search={location.search}
+                </div>
+              )}
               
               {/* Context Banner - Primary navigation and scope control */}
               <ContextBanner
