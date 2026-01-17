@@ -88,6 +88,18 @@ export default function Results() {
   // Unit Mode Detection: true when viewing a specific unit (has unitLabel OR unitBbl OR is a unit lot with building context)
   const isUnitMode = Boolean(unitLabelFromUrl || unitBblFromUrl || (buildingBblParam && isUnitLotEarly));
   
+  // Track previous unit mode state for scroll-on-enter behavior
+  const wasUnitModeRef = useRef(false);
+  
+  // Scroll to top only when ENTERING unit mode (not on tab changes, filters, or back-to-building)
+  useEffect(() => {
+    if (isUnitMode && !wasUnitModeRef.current) {
+      // Entering unit mode - scroll to top immediately (auto for Safari compatibility)
+      window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+    }
+    wasUnitModeRef.current = isUnitMode;
+  }, [isUnitMode]);
+  
   // Handler to go back to building view - clears unit params while preserving others
   const handleBackToBuilding = useCallback(() => {
     setSearchParams(prev => {
