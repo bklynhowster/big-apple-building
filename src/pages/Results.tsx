@@ -788,7 +788,7 @@ export default function Results() {
                     borough={borough}
                     bbl={effectiveBbl}
                     bin={bin}
-                    propertyType={profile?.propertyTypeLabel}
+                    isCondo={isCondoBuilding}
                     totalUnits={condoMeta.totalUnits || profile?.totalUnits}
                     loading={profileLoading}
                   />
