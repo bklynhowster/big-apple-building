@@ -207,17 +207,20 @@ export function CondoUnitsPreview({
         {previewUnits.length > 0 && (
           <CardContent className="pt-0">
             <div className="flex flex-wrap gap-2 pointer-events-auto">
-              {previewUnits.map((unit) => (
-                <button
-                  key={unit.unitBbl}
-                  type="button"
-                  onClick={() => onSelectUnit?.(unit.unitBbl, unit.unitLabel)}
-                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-sm font-medium bg-secondary text-secondary-foreground hover:bg-secondary/80 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 cursor-pointer transition-colors pointer-events-auto"
-                >
-                  <Home className="h-3 w-3" />
-                  {unit.unitLabel || `Lot ${unit.lot}`}
-                </button>
-              ))}
+              {previewUnits.map((unit) => {
+                const displayLabel = unit.unitLabel || `Lot ${unit.lot}`;
+                return (
+                  <button
+                    key={unit.unitBbl}
+                    type="button"
+                    onClick={() => onSelectUnit?.(unit.unitBbl, displayLabel)}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-sm font-medium bg-secondary text-secondary-foreground hover:bg-secondary/80 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 cursor-pointer transition-colors pointer-events-auto"
+                  >
+                    <Home className="h-3 w-3" />
+                    {displayLabel}
+                  </button>
+                );
+              })}
               {totalUnits > 10 && (
                 <Badge variant="outline" className="px-2.5 py-1">
                   +{totalUnits - 10} more

@@ -1,5 +1,5 @@
 import { useMemo, useState, useCallback, useEffect, useRef } from 'react';
-import { useLocation, Link, useSearchParams } from 'react-router-dom';
+import { useLocation, Link, useSearchParams, useNavigate } from 'react-router-dom';
 import { AlertCircle } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
 import { Footer } from '@/components/layout/Footer';
@@ -50,6 +50,8 @@ function isValidTab(tab: string | null): tab is ValidTab {
 
 export default function Results() {
   const location = useLocation();
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const isMobile = useIsMobileViewport();
   const { setContextInfo } = useQueryDebug();
 
@@ -73,6 +75,7 @@ export default function Results() {
   const latitude = params.get('lat') ? parseFloat(params.get('lat')!) : undefined;
   const longitude = params.get('lon') ? parseFloat(params.get('lon')!) : undefined;
   const unitContextParam = params.get('unitContext') || null;
+  const unitLabelFromUrl = params.get('unitLabel') || null;
   
   // Building context params (passed when navigating from building to unit)
   const buildingAddressParam = params.get('buildingAddress') || '';
@@ -337,7 +340,8 @@ export default function Results() {
   
   // Derived condo state for convenience
   const billingBbl = condoMeta.billingBbl;
-  const currentUnitLabel = condoMeta.unitLabel;
+  // Prefer unitLabel from URL (navigation), fallback to roster lookup
+  const currentUnitLabel = unitLabelFromUrl || condoMeta.unitLabel;
   const isCondoBuilding = condoMeta.isCondo;
   
   // Co-op unit context (UI-only, no API calls) - initialized from URL
@@ -431,41 +435,28 @@ export default function Results() {
     setContextInfo(queryBbl, billingBbl, bin || null);
   }, [queryBbl, billingBbl, bin, setContextInfo]);
 
-  // Ref to track programmatic tab changes (to avoid URL sync effect reverting them)
-  const programmaticTabChangeRef = useRef(false);
-  
-  // Sync tab changes to URL
+  // Sync tab changes to URL using React Router's setSearchParams
   const handleTabChange = useCallback((tab: string) => {
-    programmaticTabChangeRef.current = true;
     setActiveTab(tab);
     
-    // Update URL with new tab (without full navigation)
-    const newParams = new URLSearchParams(location.search);
+    // Update URL with new tab using React Router (causes re-render with new params)
+    const newParams = new URLSearchParams(searchParams);
     if (tab === 'overview') {
       newParams.delete('tab'); // Default tab, no need in URL
     } else {
       newParams.set('tab', tab);
     }
-    const newUrl = `${location.pathname}?${newParams.toString()}`;
-    window.history.replaceState(null, '', newUrl);
-    
-    // Reset the ref after a tick (allow React to process state update)
-    setTimeout(() => {
-      programmaticTabChangeRef.current = false;
-    }, 0);
-  }, [location.search, location.pathname]);
+    setSearchParams(newParams, { replace: true });
+  }, [searchParams, setSearchParams]);
 
   // Sync from URL when it changes externally (e.g., back/forward navigation)
-  // Skip if we just made a programmatic change
   useEffect(() => {
-    if (programmaticTabChangeRef.current) return;
-    
-    const tabParam = params.get('tab');
+    const tabParam = searchParams.get('tab');
     const validTab = isValidTab(tabParam) ? tabParam : 'overview';
     if (validTab !== activeTab) {
       setActiveTab(validTab);
     }
-  }, [params]);
+  }, [searchParams]);
 
   // Update document title based on context
   useEffect(() => {
@@ -617,17 +608,18 @@ export default function Results() {
                   isCoop={isCoop}
                   onViewAllUnits={() => handleTabChange('units')}
                   onSelectUnit={(unitBbl, unitLabel) => {
-                    // Navigate to the unit's detail page with building context
+                    // Navigate to the unit's detail page with building context using React Router
                     const unitParams = new URLSearchParams();
                     unitParams.set('bbl', unitBbl);
                     unitParams.set('address', address);
                     unitParams.set('buildingBbl', effectiveBbl);
                     unitParams.set('buildingAddress', address);
+                    if (unitLabel) unitParams.set('unitLabel', unitLabel);
                     if (bin) unitParams.set('bin', bin);
                     if (latitude) unitParams.set('lat', String(latitude));
                     if (longitude) unitParams.set('lon', String(longitude));
                     if (borough) unitParams.set('borough', borough);
-                    window.location.href = `/results?${unitParams.toString()}`;
+                    navigate(`/results?${unitParams.toString()}`);
                   }}
                 />
               )}
