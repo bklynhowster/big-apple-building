@@ -22,11 +22,12 @@ const DATASET_LABELS: Record<DatasetType, string> = {
   'hpd': 'HPD',
 };
 
-const SECTION_IDS: Record<DatasetType, string> = {
-  'dob-violation': 'dob-violations',
-  'ecb': 'ecb-violations',
-  'permit': 'dob-permits',
-  'hpd': 'hpd-records',
+// Maps dataset type to the section key used in RecordsTab accordion state
+const SECTION_KEYS: Record<DatasetType, string> = {
+  'dob-violation': 'dob',
+  'ecb': 'ecb',
+  'permit': 'permits',
+  'hpd': 'hpd',
 };
 
 // HPD violation portal link (when available)
@@ -118,14 +119,8 @@ function MentionRow({
   const hasExcerpt = Boolean(snippet || description);
   
   const handleViewInPanel = () => {
-    const sectionId = SECTION_IDS[dataset];
-    onScrollToSection?.(sectionId, recordId);
-    
-    // Scroll to section
-    const element = document.getElementById(sectionId);
-    if (element) {
-      element.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }
+    const sectionKey = SECTION_KEYS[dataset];
+    onScrollToSection?.(sectionKey, recordId);
   };
   
   // Determine portal link

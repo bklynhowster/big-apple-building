@@ -38,6 +38,10 @@ interface RecordsSectionProps {
   defaultOpen?: boolean;
   hidden?: boolean;
   muted?: boolean;
+  /** Controlled open state (optional) */
+  open?: boolean;
+  /** Controlled open change handler (optional) */
+  onOpenChange?: (open: boolean) => void;
   children: React.ReactNode;
 }
 
@@ -51,9 +55,15 @@ function RecordsSection({
   defaultOpen = false,
   hidden = false,
   muted = false,
+  open: controlledOpen,
+  onOpenChange: controlledOnOpenChange,
   children 
 }: RecordsSectionProps) {
-  const [isOpen, setIsOpen] = useState(defaultOpen);
+  const [internalOpen, setInternalOpen] = useState(defaultOpen);
+  
+  // Use controlled state if provided, otherwise use internal state
+  const isOpen = controlledOpen !== undefined ? controlledOpen : internalOpen;
+  const setIsOpen = controlledOnOpenChange || setInternalOpen;
   
   if (hidden) return null;
   
@@ -61,7 +71,7 @@ function RecordsSection({
   
   return (
     <Collapsible open={isOpen} onOpenChange={setIsOpen}>
-      <Card id={id} className={cn(
+      <Card id={`records-section-${id}`} className={cn(
         "transition-colors",
         hasOpen && !muted && "border-warning/50",
         muted && "opacity-60"
@@ -170,6 +180,23 @@ export function RecordsTab({
   const showDebug = searchParams.get('debug') === '1';
 
   // =========================
+  // Accordion state management for sections
+  // =========================
+  type SectionKey = 'dob' | 'ecb' | 'safety' | 'permits' | 'hpd' | '311';
+  const [openSections, setOpenSections] = useState<Record<SectionKey, boolean>>({
+    dob: false,
+    ecb: false,
+    safety: false,
+    permits: false,
+    hpd: false,
+    '311': false,
+  });
+
+  const setSectionOpen = useCallback((key: SectionKey, open: boolean) => {
+    setOpenSections((prev) => ({ ...prev, [key]: open }));
+  }, []);
+
+  // =========================
   // Unit Mentions mode (source-of-truth from useUnitMentions)
   // =========================
 
@@ -180,13 +207,37 @@ export function RecordsTab({
     return unitMentions.violationRefs.length + unitMentions.permitRefs.length + hpdCount;
   }, [unitMentions]);
 
-  // Callback for scrolling to a section
-  const handleScrollToSection = useCallback((sectionId: string, _recordId?: string) => {
-    const element = document.getElementById(sectionId);
-    if (element) {
-      element.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }
-  }, []);
+  // Callback for scrolling to a section (expands section then scrolls)
+  const handleScrollToSection = useCallback((sectionKey: string, _recordId?: string) => {
+    const key = sectionKey as SectionKey;
+    const targetId = `records-section-${key}`;
+    
+    // Check if already open
+    const wasOpen = openSections[key] ?? false;
+    
+    // Expand the section
+    setSectionOpen(key, true);
+    
+    // Wait for DOM update, then scroll
+    requestAnimationFrame(() => {
+      const element = document.getElementById(targetId);
+      const didScroll = Boolean(element);
+      
+      if (element) {
+        element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+      
+      // Debug logging
+      if (showDebug) {
+        console.log('[View in dataset panel]', {
+          datasetKey: key,
+          didOpen: !wasOpen,
+          didScroll,
+          targetId,
+        });
+      }
+    });
+  }, [openSections, setSectionOpen, showDebug]);
 
   // =========================
   // UNIT MENTIONS MODE RENDER
@@ -327,13 +378,14 @@ export function RecordsTab({
       <div className="space-y-3">
         {/* DOB Violations */}
         <RecordsSection
-          id="dob-violations"
+          id="dob"
           title="DOB Violations"
           icon={<FileText className="h-4 w-4" />}
           count={recordCounts.dobViolations}
           openCount={recordCounts.dobViolationsOpen}
           loading={recordLoading.dobViolations}
-          defaultOpen={sectionsWithOpenItems.includes('violations')}
+          open={openSections.dob || sectionsWithOpenItems.includes('violations')}
+          onOpenChange={(o) => setSectionOpen('dob', o)}
         >
           <ViolationsTab 
             bbl={bbl} 
@@ -347,13 +399,14 @@ export function RecordsTab({
 
         {/* ECB Violations */}
         <RecordsSection
-          id="ecb-violations"
+          id="ecb"
           title="ECB Violations"
           icon={<AlertTriangle className="h-4 w-4" />}
           count={recordCounts.ecbViolations}
           openCount={recordCounts.ecbViolationsOpen}
           loading={recordLoading.ecbViolations}
-          defaultOpen={sectionsWithOpenItems.includes('ecb')}
+          open={openSections.ecb || sectionsWithOpenItems.includes('ecb')}
+          onOpenChange={(o) => setSectionOpen('ecb', o)}
         >
           <ECBTab 
             bbl={bbl} 
@@ -367,12 +420,13 @@ export function RecordsTab({
 
         {/* Safety */}
         <RecordsSection
-          id="safety-records"
+          id="safety"
           title="Safety & Compliance"
           icon={<Shield className="h-4 w-4" />}
           count={0}
           loading={false}
-          defaultOpen={false}
+          open={openSections.safety}
+          onOpenChange={(o) => setSectionOpen('safety', o)}
         >
           <SafetyTab 
             bbl={bbl} 
@@ -386,12 +440,13 @@ export function RecordsTab({
 
         {/* Permits */}
         <RecordsSection
-          id="dob-permits"
+          id="permits"
           title="DOB Permits"
           icon={<Hammer className="h-4 w-4" />}
           count={recordCounts.dobPermits}
           loading={recordLoading.dobPermits}
-          defaultOpen={false}
+          open={openSections.permits}
+          onOpenChange={(o) => setSectionOpen('permits', o)}
         >
           <PermitsTab 
             bbl={bbl} 
@@ -405,13 +460,14 @@ export function RecordsTab({
 
         {/* HPD */}
         <RecordsSection
-          id="hpd-records"
+          id="hpd"
           title="HPD Violations & Complaints"
           icon={<Building2 className="h-4 w-4" />}
           count={recordCounts.hpdViolations + recordCounts.hpdComplaints}
           openCount={(recordCounts.hpdViolationsOpen || 0) + (recordCounts.hpdComplaintsOpen || 0)}
           loading={recordLoading.hpdViolations || recordLoading.hpdComplaints}
-          defaultOpen={sectionsWithOpenItems.includes('hpd')}
+          open={openSections.hpd || sectionsWithOpenItems.includes('hpd')}
+          onOpenChange={(o) => setSectionOpen('hpd', o)}
         >
           <div id="hpd-violations" />
           <div id="hpd-complaints" />
@@ -429,13 +485,14 @@ export function RecordsTab({
         {/* 311 */}
         {lat !== undefined && lon !== undefined && (
           <RecordsSection
-            id="service-requests"
+            id="311"
             title="311 Service Requests"
             icon={<Phone className="h-4 w-4" />}
             count={recordCounts.serviceRequests}
             openCount={recordCounts.serviceRequestsOpen}
             loading={recordLoading.serviceRequests}
-            defaultOpen={sectionsWithOpenItems.includes('311')}
+            open={openSections['311'] || sectionsWithOpenItems.includes('311')}
+            onOpenChange={(o) => setSectionOpen('311', o)}
           >
             <ThreeOneOneTab 
               lat={lat} 
