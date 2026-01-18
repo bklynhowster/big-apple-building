@@ -17,8 +17,19 @@ interface BuildingHeaderProps {
   bbl: string;
   bin?: string;
   isCondo?: boolean;
+  isCoop?: boolean;
   totalUnits?: number | null;
   loading?: boolean;
+}
+
+/**
+ * Resolves building type to one of: Condominium, Co-op, or Multifamily
+ * Priority: Condo (explicit) > Co-op (inferred) > Multifamily (fallback)
+ */
+function resolveBuildingType(isCondo: boolean, isCoop: boolean): 'Condominium' | 'Co-op' | 'Multifamily' {
+  if (isCondo) return 'Condominium';
+  if (isCoop) return 'Co-op';
+  return 'Multifamily';
 }
 
 export function BuildingHeader({
@@ -27,6 +38,7 @@ export function BuildingHeader({
   bbl,
   bin,
   isCondo = false,
+  isCoop = false,
   totalUnits,
   loading = false,
 }: BuildingHeaderProps) {
@@ -35,15 +47,15 @@ export function BuildingHeader({
     ? `${address} — ${borough}`
     : address;
 
-  // Format subtitle: "Condominium · X individual units" for condos
+  // Resolve building type and format subtitle
+  const buildingType = resolveBuildingType(isCondo, isCoop);
+  
   let subtitle = '';
-  if (isCondo) {
-    const unitText = totalUnits && totalUnits > 0 
-      ? `${totalUnits} individual units` 
-      : '';
-    subtitle = unitText ? `Condominium · ${unitText}` : 'Condominium';
-  } else if (totalUnits && totalUnits > 0) {
-    subtitle = `${totalUnits} units`;
+  if (totalUnits && totalUnits > 0) {
+    const unitLabel = buildingType === 'Condominium' ? 'individual units' : 'units';
+    subtitle = `${buildingType} · ${totalUnits} ${unitLabel}`;
+  } else {
+    subtitle = buildingType;
   }
 
   return (
