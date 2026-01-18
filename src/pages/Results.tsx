@@ -876,14 +876,7 @@ export default function Results() {
                     isCondo={isCondoBuilding && !isUnitLot}
                   />
 
-                  {/* Residential Units Card - Co-ops only */}
-                  {isCoop && (
-                    <ResidentialUnitsCard
-                      buildingBbl={effectiveBbl}
-                      selectedUnit={coopUnitContext}
-                      onUnitSelect={handleCoopUnitContextChange}
-                    />
-                  )}
+                  {/* Residential Units Card removed for co-ops - low value section */}
 
                   <div id="results-tabs" className="scroll-mt-24">
                     <Tabs ref={tabsRef} value={activeTab} onValueChange={handleTabChange} className="w-full">
