@@ -465,18 +465,25 @@ export default function Results() {
     }
   );
   
-  // Get mention count for current unit
-  const unitMentionCount = useMemo(() => {
-    if (!isUnitMode || !currentUnitLabel) return 0;
-    const unitStats = unitMentionsData.stats.find(
-      s => s.unit.toUpperCase() === currentUnitLabel.toUpperCase()
+  // Get mention count + mention detail for current unit (source-of-truth: useUnitMentions)
+  const currentUnitMentions = useMemo(() => {
+    if (!isUnitMode || !currentUnitLabel) return null;
+    return (
+      unitMentionsData.stats.find((s) => s.unit.toUpperCase() === currentUnitLabel.toUpperCase()) ?? null
     );
-    return unitStats?.totalCount ?? 0;
   }, [isUnitMode, currentUnitLabel, unitMentionsData.stats]);
-  
+
+  // This count must match what the Unit Mentions view renders.
+  // We intentionally count only datasets we can render as "records" (violations, permits, HPD).
+  // 311 is excluded from unit-specific mentions.
+  const unitMentionCount = useMemo(() => {
+    if (!currentUnitMentions) return 0;
+    const hpdCount = currentUnitMentions.sourceRefs.filter((r) => r.type === 'hpd').length;
+    return currentUnitMentions.violationRefs.length + currentUnitMentions.permitRefs.length + hpdCount;
+  }, [currentUnitMentions]);
+
   const unitMentionsLoading = useMemo(() => {
-    return unitMentionsData.progress.stage !== 'complete' && 
-           unitMentionsData.progress.stage !== 'idle';
+    return unitMentionsData.progress.stage !== 'complete' && unitMentionsData.progress.stage !== 'idle';
   }, [unitMentionsData.progress.stage]);
   
   // Sync co-op unit context from URL on external navigation (back/forward)
