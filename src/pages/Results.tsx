@@ -521,13 +521,27 @@ export default function Results() {
   }, [queryBbl, billingBbl, bin, setContextInfo]);
 
   // Handle tab changes - update URL only, activeTab is derived from URL
+  // Supports appending query params like 'records?showUnitMentions=1'
   const handleTabChange = useCallback((nextTab: string) => {
+    // Parse tab and optional query params (e.g., 'records?showUnitMentions=1')
+    const [tabName, queryString] = nextTab.split('?');
+    const extraParams = queryString ? new URLSearchParams(queryString) : null;
+    
     setSearchParams(prev => {
       const p = new URLSearchParams(prev);
-      if (nextTab === 'overview') {
+      if (tabName === 'overview') {
         p.delete('tab'); // Default tab, no need in URL
       } else {
-        p.set('tab', nextTab);
+        p.set('tab', tabName);
+      }
+      // Add any extra params from the tab change
+      if (extraParams) {
+        extraParams.forEach((value, key) => {
+          p.set(key, value);
+        });
+      } else {
+        // Clear unit mention filter when switching tabs without it
+        p.delete('showUnitMentions');
       }
       return p;
     }, { replace: true });
@@ -769,6 +783,9 @@ export default function Results() {
                             recordCounts={recordCounts}
                             recordLoading={riskSnapshotLoading}
                             onClearUnitContext={handleClearUnitContext}
+                            isUnitMode={isUnitMode}
+                            unitLabel={currentUnitLabel}
+                            unitMentionCount={unitMentionCount}
                           />
                         </TabsContent>
                         

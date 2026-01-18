@@ -38,6 +38,8 @@ interface SafetyTabProps {
   isCoop?: boolean;
   coopUnitContext?: string | null;
   address?: string;
+  /** When true, auto-filter to records mentioning the unit context */
+  filterToUnitMentions?: boolean;
 }
 
 interface SafetyViolation {
@@ -91,7 +93,15 @@ function LoadingSkeleton() {
   );
 }
 
-export function SafetyTab({ bbl, bin, scope = 'building', isCoop, coopUnitContext, address }: SafetyTabProps) {
+export function SafetyTab({ 
+  bbl, 
+  bin, 
+  scope = 'building', 
+  isCoop, 
+  coopUnitContext, 
+  address,
+  filterToUnitMentions = false, // Note: Safety tab doesn't have unit mention filtering yet
+}: SafetyTabProps) {
   const [status, setStatus] = useState<'open' | 'closed' | 'all'>('all');
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');

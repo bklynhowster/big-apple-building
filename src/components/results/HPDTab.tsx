@@ -28,6 +28,8 @@ interface HPDTabProps {
   coopUnitContext?: string | null;
   onClearUnitContext?: () => void;
   address?: string;
+  /** When true, auto-filter to records mentioning the unit context */
+  filterToUnitMentions?: boolean;
 }
 
 const VIOLATION_COLUMN_CONFIGS: ColumnConfig[] = [
@@ -103,7 +105,16 @@ const HPD_COLUMNS = [
   { key: 'recordId', header: 'ID' },
 ];
 
-export function HPDTab({ bbl, bin, scope = 'building', isCoop, coopUnitContext, onClearUnitContext, address }: HPDTabProps) {
+export function HPDTab({ 
+  bbl, 
+  bin, 
+  scope = 'building', 
+  isCoop, 
+  coopUnitContext, 
+  onClearUnitContext, 
+  address,
+  filterToUnitMentions = false,
+}: HPDTabProps) {
   const [activeSubTab, setActiveSubTab] = useState<'violations' | 'complaints'>('violations');
   const [fetchedTabs, setFetchedTabs] = useState<Set<string>>(new Set());
   
