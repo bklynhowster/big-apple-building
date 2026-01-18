@@ -600,63 +600,64 @@ export default function Results() {
           {/* Results - render tabs only when we have a valid BBL */}
           {isValidBBL && (
             <div className="space-y-4 sm:space-y-6">
-              {/* Context Rail - Unified header for address/identifiers */}
-              <ResultsContextRail
-                address={buildingAddressParam || address}
-                borough={borough}
-                bbl={bbl}
-                bin={bin}
-                unitLabel={unitLabelFromUrl}
-                unitBbl={unitBblFromUrl || (isUnitMode ? bbl : null)}
-                buildingBbl={buildingBblParam || effectiveBbl}
-                isUnitMode={isUnitMode}
-                onBackToBuilding={handleBackToBuilding}
-                viewScope="unit"
-                onViewScopeChange={(newScope) => {
-                  if (newScope === 'building') {
-                    handleBackToBuilding();
-                  }
-                  // 'unit' scope is default when in unit mode
-                }}
-                buildingContextContent={isUnitMode ? (
-                  <>
-                    {/* Risk Snapshot */}
-                    <RiskSnapshotCard 
-                      counts={recordCounts} 
-                      loading={riskSnapshotLoading}
-                      records={riskSnapshotRecords}
-                      onNavigateToSection={(info: NavigationInfo) => {
-                        if (info.scope === 'building' && scope !== 'building') {
-                          setScope('building');
-                        } else if (info.scope === 'unit' && scope !== 'unit') {
-                          setScope('unit');
-                        }
-                        handleTabChange(info.tab);
-                      }}
-                    />
+              {/* Context Rail - ONLY in Unit Mode (Building Mode uses BuildingHeader) */}
+              {isUnitMode && (
+                <ResultsContextRail
+                  address={buildingAddressParam || address}
+                  borough={borough}
+                  bbl={bbl}
+                  bin={bin}
+                  unitLabel={unitLabelFromUrl}
+                  unitBbl={unitBblFromUrl || bbl}
+                  buildingBbl={buildingBblParam || effectiveBbl}
+                  isUnitMode={isUnitMode}
+                  onBackToBuilding={handleBackToBuilding}
+                  viewScope="unit"
+                  onViewScopeChange={(newScope) => {
+                    if (newScope === 'building') {
+                      handleBackToBuilding();
+                    }
+                  }}
+                  buildingContextContent={(
+                    <>
+                      {/* Risk Snapshot */}
+                      <RiskSnapshotCard 
+                        counts={recordCounts} 
+                        loading={riskSnapshotLoading}
+                        records={riskSnapshotRecords}
+                        onNavigateToSection={(info: NavigationInfo) => {
+                          if (info.scope === 'building' && scope !== 'building') {
+                            setScope('building');
+                          } else if (info.scope === 'unit' && scope !== 'unit') {
+                            setScope('unit');
+                          }
+                          handleTabChange(info.tab);
+                        }}
+                      />
 
-                    {/* Property Profile */}
-                    <PropertyProfileCard 
-                      bbl={effectiveBbl}
-                      unitLabel={currentUnitLabel}
-                      parentAddress={address}
-                      landmarkStatus={landmarkStatus}
-                      lat={latitude}
-                      lon={longitude}
-                      onOwnershipOverrideChange={handleOwnershipOverrideChange}
-                    />
-                    
-                    {/* Taxes */}
-                    <TaxesPanel
-                      context={isUnitLot ? 'unit' : 'building'}
-                      viewBbl={bbl}
-                      buildingBbl={buildingBblParam || billingBbl || undefined}
-                      address={address}
-                      isCondo={isCondoBuilding && !isUnitLot}
-                    />
-                  </>
-                ) : undefined}
-              />
+                      {/* Property Profile */}
+                      <PropertyProfileCard 
+                        bbl={effectiveBbl}
+                        unitLabel={currentUnitLabel}
+                        parentAddress={address}
+                        landmarkStatus={landmarkStatus}
+                        lat={latitude}
+                        lon={longitude}
+                        onOwnershipOverrideChange={handleOwnershipOverrideChange}
+                      />
+                      
+                      {/* Taxes */}
+                      <TaxesPanel
+                        context={isUnitLot ? 'unit' : 'building'}
+                        viewBbl={bbl}
+                        buildingBbl={buildingBblParam || billingBbl || undefined}
+                        address={address}
+                        isCondo={isCondoBuilding && !isUnitLot}
+                      />
+                    </>
+                  )}
+                />
+              )}
               
               {/* Query Debug Panel - visible when ?debug=1 */}
               <QueryDebugPanel />
