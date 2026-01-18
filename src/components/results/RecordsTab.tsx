@@ -20,6 +20,7 @@ import { SafetyTab } from './SafetyTab';
 import { PermitsTab } from './PermitsTab';
 import { HPDTab } from './HPDTab';
 import { ThreeOneOneTab } from './ThreeOneOneTab';
+import { RecordsDebugStrip } from './RecordsDebugStrip';
 import type { RecordCounts, LoadingStates } from './RiskSnapshotCard';
 
 interface RecordsSectionProps {
@@ -97,11 +98,17 @@ interface RecordsTabProps {
   lon?: number;
   address?: string;
   scope: 'unit' | 'building';
+  isCondo?: boolean;
   isCoop?: boolean;
   coopUnitContext?: string | null;
   recordCounts: RecordCounts;
   recordLoading: LoadingStates;
   onClearUnitContext?: () => void;
+  // Additional props for debug strip
+  billingBbl?: string | null;
+  unitBbl?: string | null;
+  unitsCount?: number | null;
+  activeTab?: string;
 }
 
 export function RecordsTab({
@@ -111,11 +118,16 @@ export function RecordsTab({
   lon,
   address,
   scope,
+  isCondo = false,
   isCoop = false,
   coopUnitContext,
   recordCounts,
   recordLoading,
   onClearUnitContext,
+  billingBbl,
+  unitBbl,
+  unitsCount,
+  activeTab = 'records',
 }: RecordsTabProps) {
   // Calculate which sections to show expanded by default
   // Show sections with open items expanded
@@ -139,6 +151,24 @@ export function RecordsTab({
 
   return (
     <div className="space-y-4">
+      {/* Debug strip - only visible when ?debug=1 */}
+      <RecordsDebugStrip
+        viewMode={scope}
+        activeTab={activeTab}
+        buildingBbl={bbl}
+        billingBbl={billingBbl}
+        unitBbl={unitBbl}
+        bin={bin}
+        isCondo={isCondo}
+        isCoop={isCoop}
+        unitsCount={unitsCount}
+        lat={lat}
+        lon={lon}
+        recordCounts={recordCounts}
+        recordLoading={recordLoading}
+      />
+      
+      {/* Summary header */}
       {/* Summary header */}
       <div className="flex items-center justify-between">
         <div>

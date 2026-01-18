@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { logRecordFetch } from '@/utils/recordStatus';
 
 interface SummaryData {
   violations: {
@@ -127,11 +128,17 @@ export function useSummary(bbl?: string | null): UseSummaryResult {
         fetchEndpoint(baseUrl, 'dob-safety', bbl, apiKey, signal),
       ]);
 
-      // Calculate counts and dates for each type
+      // Calculate counts and dates for each type using canonical helpers
       const violationsOpen = violationsRes.items.filter(i => i.status === 'open').length;
       const ecbOpen = ecbRes.items.filter(i => i.status === 'open').length;
       const permitsOpen = permitsRes.items.filter(i => i.status === 'open').length;
       const safetyOpen = safetyRes.items.filter(i => i.status === 'open').length;
+      
+      // Debug logging
+      logRecordFetch('DOB Violations', `bbl=${bbl}`, { open: violationsOpen, total: violationsRes.items.length });
+      logRecordFetch('ECB Violations', `bbl=${bbl}`, { open: ecbOpen, total: ecbRes.items.length });
+      logRecordFetch('DOB Permits', `bbl=${bbl}`, { open: permitsOpen, total: permitsRes.items.length });
+      logRecordFetch('DOB Safety', `bbl=${bbl}`, { open: safetyOpen, total: safetyRes.items.length });
 
       const summaryData: SummaryData = {
         violations: {
