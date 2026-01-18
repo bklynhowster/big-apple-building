@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { countOpenRecords, logRecordFetch } from '@/utils/recordStatus';
 
 interface ScopeSummary {
   violations: { totalCount: number; openCount: number; lastActivityDate: string | null };
@@ -112,6 +113,11 @@ async function fetchScopeSummary(
   const permitsOpen = permitsRes.items.filter(i => i.status === 'open').length;
   const safetyOpen = safetyRes.items.filter(i => i.status === 'open').length;
   const hpdOpen = hpdViolationsRes.items.filter(i => i.status === 'open').length;
+  
+  // Debug logging
+  logRecordFetch('DOB Violations (scope)', `bbl=${bbl}`, { open: violationsOpen, total: violationsRes.items.length });
+  logRecordFetch('ECB Violations (scope)', `bbl=${bbl}`, { open: ecbOpen, total: ecbRes.items.length });
+  logRecordFetch('HPD Violations (scope)', `bbl=${bbl}`, { open: hpdOpen, total: hpdViolationsRes.items.length });
 
   return {
     violations: {
