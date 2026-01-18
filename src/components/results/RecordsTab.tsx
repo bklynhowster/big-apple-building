@@ -7,10 +7,8 @@ import {
   Phone, 
   Building2,
   ChevronDown,
-  Eye
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { cn } from '@/lib/utils';
@@ -46,7 +44,6 @@ function RecordsSection({
 }: RecordsSectionProps) {
   const [isOpen, setIsOpen] = useState(defaultOpen);
   
-  const hasRecords = count > 0;
   const hasOpen = (openCount || 0) > 0;
   
   return (

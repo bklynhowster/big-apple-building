@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { countOpenRecords, logRecordFetch } from '@/utils/recordStatus';
+import { logRecordFetch } from '@/utils/recordStatus';
 
 interface ScopeSummary {
   violations: { totalCount: number; openCount: number; lastActivityDate: string | null };
@@ -227,7 +227,7 @@ export function useDualScopeSummary(
       let unitData: ScopeSummary | null = null;
       let buildingData: ScopeSummary | null = null;
 
-      results.forEach((result, index) => {
+      results.forEach((result) => {
         if (result.status === 'fulfilled') {
           if (result.value.scope === 'unit') {
             unitData = result.value.data;
