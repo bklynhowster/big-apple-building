@@ -28,6 +28,8 @@ interface ThreeOneOneTabProps {
   coopUnitContext?: string | null;
   onClearUnitContext?: () => void;
   address?: string;
+  /** When true, auto-filter to records mentioning the unit context */
+  filterToUnitMentions?: boolean;
 }
 
 const COLUMN_CONFIGS: ColumnConfig[] = [
@@ -80,7 +82,16 @@ const COLUMNS = [
   { key: 'recordId', header: 'ID' },
 ];
 
-export function ThreeOneOneTab({ lat, lon, scope = 'building', isCoop, coopUnitContext, onClearUnitContext, address }: ThreeOneOneTabProps) {
+export function ThreeOneOneTab({ 
+  lat, 
+  lon, 
+  scope = 'building', 
+  isCoop, 
+  coopUnitContext, 
+  onClearUnitContext, 
+  address,
+  filterToUnitMentions = false,
+}: ThreeOneOneTabProps) {
   const { loading, error, data, items, fetch, filters, setFilters, applyFilters, retry } = use311(lat, lon);
   const [localFilters, setLocalFilters] = useState<ServiceRequestFilters>({
     status: 'all',
@@ -97,13 +108,15 @@ export function ThreeOneOneTab({ lat, lon, scope = 'building', isCoop, coopUnitC
   const { visibleColumns, toggle, reset, isVisible } = useColumnVisibility(COLUMN_CONFIGS);
 
   // Filter by unit context for co-ops (client-side filtering)
+  // When filterToUnitMentions is true, always apply the filter
   const filteredItems = useMemo(() => {
-    if (!isCoop || !coopUnitContext) return items;
+    const shouldFilter = (isCoop || filterToUnitMentions) && coopUnitContext;
+    if (!shouldFilter) return items;
     return filterRecordsByUnit(
       items.map(item => ({ ...item, ...item.raw })),
       coopUnitContext
     ) as unknown as ServiceRequestRecord[];
-  }, [items, isCoop, coopUnitContext]);
+  }, [items, isCoop, coopUnitContext, filterToUnitMentions]);
 
   useEffect(() => {
     if (lat !== undefined && lon !== undefined && !isNaN(lat) && !isNaN(lon)) {

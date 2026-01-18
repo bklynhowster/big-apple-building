@@ -305,6 +305,11 @@ export function OverviewTab({
     onTabChange('records');
   };
 
+  // For unit mode: navigate to records tab filtered to unit mentions
+  const handleViewUnitMentions = () => {
+    onTabChange('records?showUnitMentions=1');
+  };
+
   return (
     <div className="space-y-6">
       {/* Unit Overview Card - Unit Mode Only */}
@@ -327,6 +332,7 @@ export function OverviewTab({
           recordCounts={recordCounts}
           recordLoading={recordLoading}
           onViewBuildingRecords={handleViewBuildingRecords}
+          onViewUnitMentions={handleViewUnitMentions}
         />
       )}
 

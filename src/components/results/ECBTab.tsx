@@ -46,6 +46,8 @@ interface ECBTabProps {
   isCoop?: boolean;
   coopUnitContext?: string | null;
   address?: string;
+  /** When true, auto-filter to records mentioning the unit context */
+  filterToUnitMentions?: boolean;
 }
 
 const COLUMN_CONFIGS: ColumnConfig[] = [
@@ -120,14 +122,29 @@ function formatCurrency(amount: number | null): string {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(amount);
 }
 
-export function ECBTab({ bbl, bin, scope = 'building', isCoop, coopUnitContext, address }: ECBTabProps) {
+export function ECBTab({ 
+  bbl, 
+  bin, 
+  scope = 'building', 
+  isCoop, 
+  coopUnitContext, 
+  address,
+  filterToUnitMentions = false,
+}: ECBTabProps) {
   const { loading, error, data, filters, offset, fetchECB, setFilters, applyFilters, goToNextPage, goToPrevPage, retry } = useECB(bbl);
   const [localFilters, setLocalFilters] = useState<ECBFilters>({ status: 'all', keyword: '' });
   
-  // Unit mention filter state
+  // Unit mention filter state - auto-enable context filter when filterToUnitMentions is true
   const [showMentionsOnly, setShowMentionsOnly] = useState(false);
   const [selectedMentionUnit, setSelectedMentionUnit] = useState<string | null>(null);
-  const [showContextOnly, setShowContextOnly] = useState(false);
+  const [showContextOnly, setShowContextOnly] = useState(filterToUnitMentions);
+  
+  // Sync showContextOnly when filterToUnitMentions changes
+  useEffect(() => {
+    if (filterToUnitMentions && coopUnitContext) {
+      setShowContextOnly(true);
+    }
+  }, [filterToUnitMentions, coopUnitContext]);
   
   // Drawer state
   const [selectedRecord, setSelectedRecord] = useState<ECBRecord | null>(null);

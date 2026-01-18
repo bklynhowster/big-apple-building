@@ -123,11 +123,14 @@ export function UnitRecordsSummary({
       loading: true,
     });
   } else if (unitMentionCount > 0) {
+    const mentionLabel = unitMentionCount === 1 
+      ? '1 record mentions this unit' 
+      : `${unitMentionCount} records mention this unit`;
     rows.push({
       key: 'mentions',
       icon: <FileSearch className="h-4 w-4" />,
-      primary: `${unitMentionCount} record${unitMentionCount !== 1 ? 's' : ''} mention${unitMentionCount === 1 ? 's' : ''} this unit`,
-      secondary: 'Direct references found in building records',
+      primary: mentionLabel,
+      secondary: 'Click to view filtered records',
       variant: 'highlight',
       onClick: onViewUnitMentions,
     });

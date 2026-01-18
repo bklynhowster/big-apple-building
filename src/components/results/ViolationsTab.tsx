@@ -46,6 +46,8 @@ interface ViolationsTabProps {
   isCoop?: boolean;
   coopUnitContext?: string | null;
   address?: string;
+  /** When true, auto-filter to records mentioning the unit context */
+  filterToUnitMentions?: boolean;
 }
 
 const COLUMN_CONFIGS: ColumnConfig[] = [
@@ -103,7 +105,15 @@ function LoadingSkeleton() {
   );
 }
 
-export function ViolationsTab({ bbl, bin, scope = 'building', isCoop = false, coopUnitContext, address }: ViolationsTabProps) {
+export function ViolationsTab({ 
+  bbl, 
+  bin, 
+  scope = 'building', 
+  isCoop = false, 
+  coopUnitContext, 
+  address,
+  filterToUnitMentions = false,
+}: ViolationsTabProps) {
   const {
     loading,
     error,
@@ -123,10 +133,17 @@ export function ViolationsTab({ bbl, bin, scope = 'building', isCoop = false, co
     keyword: '',
   });
   
-  // Unit mention filter state
+  // Unit mention filter state - auto-enable context filter when filterToUnitMentions is true
   const [showMentionsOnly, setShowMentionsOnly] = useState(false);
   const [selectedMentionUnit, setSelectedMentionUnit] = useState<string | null>(null);
-  const [showContextOnly, setShowContextOnly] = useState(false);
+  const [showContextOnly, setShowContextOnly] = useState(filterToUnitMentions);
+  
+  // Sync showContextOnly when filterToUnitMentions changes
+  useEffect(() => {
+    if (filterToUnitMentions && coopUnitContext) {
+      setShowContextOnly(true);
+    }
+  }, [filterToUnitMentions, coopUnitContext]);
   
   // Drawer state
   const [selectedRecord, setSelectedRecord] = useState<ViolationRecord | null>(null);

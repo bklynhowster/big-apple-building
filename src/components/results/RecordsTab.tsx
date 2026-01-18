@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { 
   FileText, 
   AlertTriangle, 
@@ -19,6 +20,7 @@ import { PermitsTab } from './PermitsTab';
 import { HPDTab } from './HPDTab';
 import { ThreeOneOneTab } from './ThreeOneOneTab';
 import { RecordsDebugStrip } from './RecordsDebugStrip';
+import { UnitMentionsHeader } from './UnitMentionsHeader';
 import type { RecordCounts, LoadingStates } from './RiskSnapshotCard';
 
 interface RecordsSectionProps {
@@ -106,6 +108,10 @@ interface RecordsTabProps {
   unitBbl?: string | null;
   unitsCount?: number | null;
   activeTab?: string;
+  // Unit mode props for mention filtering
+  isUnitMode?: boolean;
+  unitLabel?: string | null;
+  unitMentionCount?: number;
 }
 
 export function RecordsTab({
@@ -125,7 +131,23 @@ export function RecordsTab({
   unitBbl,
   unitsCount,
   activeTab = 'records',
+  isUnitMode = false,
+  unitLabel,
+  unitMentionCount = 0,
 }: RecordsTabProps) {
+  const [searchParams, setSearchParams] = useSearchParams();
+  
+  // Check if we're in unit mention filter mode
+  const showUnitMentions = searchParams.get('showUnitMentions') === '1';
+  
+  // Handler to clear the unit mention filter
+  const handleClearUnitMentionFilter = () => {
+    setSearchParams(prev => {
+      const p = new URLSearchParams(prev);
+      p.delete('showUnitMentions');
+      return p;
+    }, { replace: true });
+  };
   // Calculate which sections to show expanded by default
   // Show sections with open items expanded
   const sectionsWithOpenItems = useMemo(() => {
@@ -165,25 +187,35 @@ export function RecordsTab({
         recordLoading={recordLoading}
       />
       
-      {/* Summary header */}
-      {/* Summary header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-lg font-semibold">Building Records</h2>
-          <p className="text-sm text-muted-foreground">
-            {totalOpen > 0 ? (
-              <span className="text-warning">
-                {totalOpen} open issue{totalOpen !== 1 ? 's' : ''} across all categories
-              </span>
-            ) : (
-              'All record categories'
-            )}
-          </p>
+      {/* Unit Mentions Header - shown when filtered to unit mentions */}
+      {showUnitMentions && isUnitMode && unitLabel && (
+        <UnitMentionsHeader
+          unitLabel={unitLabel}
+          mentionCount={unitMentionCount}
+          onViewAllRecords={handleClearUnitMentionFilter}
+        />
+      )}
+      
+      {/* Standard Summary header - hidden when in unit mention filter mode */}
+      {!showUnitMentions && (
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-lg font-semibold">Building Records</h2>
+            <p className="text-sm text-muted-foreground">
+              {totalOpen > 0 ? (
+                <span className="text-warning">
+                  {totalOpen} open issue{totalOpen !== 1 ? 's' : ''} across all categories
+                </span>
+              ) : (
+                'All record categories'
+              )}
+            </p>
+          </div>
+          <Badge variant="outline" className="text-xs">
+            BBL: {bbl}
+          </Badge>
         </div>
-        <Badge variant="outline" className="text-xs">
-          BBL: {bbl}
-        </Badge>
-      </div>
+      )}
 
       {/* Record sections */}
       <div className="space-y-3">
@@ -202,8 +234,9 @@ export function RecordsTab({
             bin={bin} 
             scope={scope} 
             isCoop={isCoop} 
-            coopUnitContext={coopUnitContext}
+            coopUnitContext={showUnitMentions && isUnitMode ? unitLabel : coopUnitContext}
             address={address}
+            filterToUnitMentions={showUnitMentions && isUnitMode}
           />
         </RecordsSection>
 
@@ -222,8 +255,9 @@ export function RecordsTab({
             bin={bin} 
             scope={scope} 
             isCoop={isCoop} 
-            coopUnitContext={coopUnitContext}
+            coopUnitContext={showUnitMentions && isUnitMode ? unitLabel : coopUnitContext}
             address={address}
+            filterToUnitMentions={showUnitMentions && isUnitMode}
           />
         </RecordsSection>
 
@@ -241,8 +275,9 @@ export function RecordsTab({
             bin={bin} 
             scope={scope} 
             isCoop={isCoop} 
-            coopUnitContext={coopUnitContext}
+            coopUnitContext={showUnitMentions && isUnitMode ? unitLabel : coopUnitContext}
             address={address}
+            filterToUnitMentions={showUnitMentions && isUnitMode}
           />
         </RecordsSection>
 
@@ -260,8 +295,9 @@ export function RecordsTab({
             bin={bin} 
             scope={scope} 
             isCoop={isCoop} 
-            coopUnitContext={coopUnitContext}
+            coopUnitContext={showUnitMentions && isUnitMode ? unitLabel : coopUnitContext}
             address={address}
+            filterToUnitMentions={showUnitMentions && isUnitMode}
           />
         </RecordsSection>
 
@@ -282,9 +318,10 @@ export function RecordsTab({
             bin={bin} 
             scope={scope} 
             isCoop={isCoop} 
-            coopUnitContext={coopUnitContext}
+            coopUnitContext={showUnitMentions && isUnitMode ? unitLabel : coopUnitContext}
             onClearUnitContext={onClearUnitContext}
             address={address}
+            filterToUnitMentions={showUnitMentions && isUnitMode}
           />
         </RecordsSection>
 
@@ -304,9 +341,10 @@ export function RecordsTab({
               lon={lon} 
               scope={scope}
               isCoop={isCoop}
-              coopUnitContext={coopUnitContext}
+              coopUnitContext={showUnitMentions && isUnitMode ? unitLabel : coopUnitContext}
               onClearUnitContext={onClearUnitContext}
               address={address}
+              filterToUnitMentions={showUnitMentions && isUnitMode}
             />
           </RecordsSection>
         )}

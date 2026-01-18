@@ -46,6 +46,8 @@ interface PermitsTabProps {
   isCoop?: boolean;
   coopUnitContext?: string | null;
   address?: string;
+  /** When true, auto-filter to records mentioning the unit context */
+  filterToUnitMentions?: boolean;
 }
 
 const COLUMN_CONFIGS: ColumnConfig[] = [
@@ -97,14 +99,29 @@ function LoadingSkeleton() {
   );
 }
 
-export function PermitsTab({ bbl, bin, scope = 'building', isCoop, coopUnitContext, address }: PermitsTabProps) {
+export function PermitsTab({ 
+  bbl, 
+  bin, 
+  scope = 'building', 
+  isCoop, 
+  coopUnitContext, 
+  address,
+  filterToUnitMentions = false,
+}: PermitsTabProps) {
   const { loading, error, data, filters, offset, fetchPermits, setFilters, applyFilters, goToNextPage, goToPrevPage, retry } = usePermits(bbl);
   const [localFilters, setLocalFilters] = useState<PermitsFilters>({ status: 'all', keyword: '' });
   
-  // Unit mention filter state
+  // Unit mention filter state - auto-enable context filter when filterToUnitMentions is true
   const [showMentionsOnly, setShowMentionsOnly] = useState(false);
   const [selectedUnit, setSelectedUnit] = useState<string | null>(null);
-  const [showContextOnly, setShowContextOnly] = useState(false);
+  const [showContextOnly, setShowContextOnly] = useState(filterToUnitMentions);
+  
+  // Sync showContextOnly when filterToUnitMentions changes
+  useEffect(() => {
+    if (filterToUnitMentions && coopUnitContext) {
+      setShowContextOnly(true);
+    }
+  }, [filterToUnitMentions, coopUnitContext]);
   
   // Drawer state
   const [selectedRecord, setSelectedRecord] = useState<PermitRecord | null>(null);
