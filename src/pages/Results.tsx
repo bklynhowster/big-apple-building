@@ -792,7 +792,7 @@ export default function Results() {
                             onClearUnitContext={handleClearUnitContext}
                             isUnitMode={isUnitMode}
                             unitLabel={currentUnitLabel}
-                            unitMentionCount={unitMentionCount}
+                            unitMentions={currentUnitMentions}
                           />
                         </TabsContent>
                         

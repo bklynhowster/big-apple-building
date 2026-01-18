@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   FileText,
@@ -25,12 +25,6 @@ import { RecordsDebugStrip } from './RecordsDebugStrip';
 import { UnitMentionsHeader } from './UnitMentionsHeader';
 import type { RecordCounts, LoadingStates } from './RiskSnapshotCard';
 import type { CombinedUnitStats, PermitMentionRef, ViolationMentionRef } from '@/hooks/useUnitMentions';
-
-// Hooks for fetching records
-import { useViolations } from '@/hooks/useViolations';
-import { useECB } from '@/hooks/useECB';
-import { usePermits } from '@/hooks/usePermits';
-import { useHPDViolations, useHPDComplaints } from '@/hooks/useHPD';
 
 interface RecordsSectionProps {
   id: string;
@@ -158,29 +152,6 @@ export function RecordsTab({
   const showUnitMentions = searchParams.get('showUnitMentions') === '1';
   const isUnitMentionsMode = showUnitMentions && isUnitMode && !!unitLabel;
 
-  // Fetch records (standard Records tab behavior)
-  // NOTE: Hooks must not be conditional; even in unit-mentions mode we just don't render the building-level views.
-  const dobViolations = useViolations(bbl);
-  const ecbViolations = useECB(bbl);
-  const permits = usePermits(bbl);
-  const hpdViolations = useHPDViolations(bbl);
-  const hpdComplaints = useHPDComplaints(bbl);
-
-  // Trigger fetches if not already loaded
-  useEffect(() => {
-    if (bbl && bbl.length === 10) {
-      if (!dobViolations.data && !dobViolations.loading) {
-        dobViolations.fetchViolations(bbl);
-      }
-      if (!ecbViolations.data && !ecbViolations.loading) {
-        ecbViolations.fetchECB(bbl);
-      }
-      if (!permits.data && !permits.loading) {
-        permits.fetchPermits(bbl);
-      }
-    }
-  }, [bbl]);
-
   // Handler to clear the unit mention filter
   const handleClearUnitMentionFilter = () => {
     setSearchParams(
@@ -194,7 +165,7 @@ export function RecordsTab({
   };
 
   // =========================
-  // Unit Mentions mode (source-of-truth)
+  // Unit Mentions mode (source-of-truth from useUnitMentions)
   // =========================
 
   const unitMentionGroups = useMemo(() => {
@@ -204,19 +175,17 @@ export function RecordsTab({
     const ecb = unitMentions.violationRefs.filter((r) => r.type === 'ecb');
     const permit = unitMentions.permitRefs;
 
-    // HPD refs are not currently stored with excerpts; we only have labels in sourceRefs.
-    // Keep them visible for parity with the inferred count, but do not attempt to re-match raw fields.
+    // HPD refs are stored in sourceRefs (they lack excerpts in the current extraction)
     const hpd = unitMentions.sourceRefs.filter((r) => r.type === 'hpd');
 
     // 311 is nearby/location-based; keep it out of unit-specific mentions UI.
-    const threeOneOne = unitMentions.sourceRefs.filter((r) => r.type === '311');
+    // const threeOneOne = unitMentions.sourceRefs.filter((r) => r.type === '311');
 
     return {
       dob,
       ecb,
       permit,
       hpd,
-      threeOneOne,
       totalShown: dob.length + ecb.length + permit.length + hpd.length,
     };
   }, [isUnitMentionsMode, unitMentions]);
@@ -245,6 +214,9 @@ export function RecordsTab({
     );
   };
 
+  // =========================
+  // UNIT MENTIONS MODE RENDER
+  // =========================
   if (isUnitMentionsMode) {
     const groups = unitMentionGroups;
 
@@ -283,6 +255,9 @@ export function RecordsTab({
           >
             <div className="space-y-2">
               {(groups?.dob ?? []).map(renderMentionCard)}
+              {(groups?.dob.length ?? 0) === 0 && (
+                <p className="text-sm text-muted-foreground py-2">No DOB violations mention this unit.</p>
+              )}
             </div>
           </RecordsSection>
 
@@ -294,7 +269,12 @@ export function RecordsTab({
             openCount={groups?.ecb.filter((r) => r.status === 'open').length ?? 0}
             defaultOpen={(groups?.ecb.length ?? 0) > 0}
           >
-            <div className="space-y-2">{(groups?.ecb ?? []).map(renderMentionCard)}</div>
+            <div className="space-y-2">
+              {(groups?.ecb ?? []).map(renderMentionCard)}
+              {(groups?.ecb.length ?? 0) === 0 && (
+                <p className="text-sm text-muted-foreground py-2">No ECB violations mention this unit.</p>
+              )}
+            </div>
           </RecordsSection>
 
           <RecordsSection
@@ -304,7 +284,12 @@ export function RecordsTab({
             count={groups?.permit.length ?? 0}
             defaultOpen={(groups?.permit.length ?? 0) > 0}
           >
-            <div className="space-y-2">{(groups?.permit ?? []).map(renderMentionCard)}</div>
+            <div className="space-y-2">
+              {(groups?.permit ?? []).map(renderMentionCard)}
+              {(groups?.permit.length ?? 0) === 0 && (
+                <p className="text-sm text-muted-foreground py-2">No permits mention this unit.</p>
+              )}
+            </div>
           </RecordsSection>
 
           <RecordsSection
@@ -329,6 +314,9 @@ export function RecordsTab({
                   </p>
                 </div>
               ))}
+              {(groups?.hpd.length ?? 0) === 0 && (
+                <p className="text-sm text-muted-foreground py-2">No HPD records mention this unit.</p>
+              )}
             </div>
           </RecordsSection>
 
@@ -394,35 +382,24 @@ export function RecordsTab({
         recordLoading={recordLoading}
       />
       
-      {/* Unit Mentions Header - shown when filtered to unit mentions */}
-      {showUnitMentions && isUnitMode && unitLabel && (
-        <UnitMentionsHeader
-          unitLabel={unitLabel}
-          mentionCount={isLoadingFiltered ? -1 : totalFilteredCount}
-          onViewAllRecords={handleClearUnitMentionFilter}
-        />
-      )}
-      
-      {/* Standard Summary header - hidden when in unit mention filter mode */}
-      {!showUnitMentions && (
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-lg font-semibold">Building Records</h2>
-            <p className="text-sm text-muted-foreground">
-              {totalOpen > 0 ? (
-                <span className="text-warning">
-                  {totalOpen} open issue{totalOpen !== 1 ? 's' : ''} across all categories
-                </span>
-              ) : (
-                'All record categories'
-              )}
-            </p>
-          </div>
-          <Badge variant="outline" className="text-xs">
-            BBL: {bbl}
-          </Badge>
+      {/* Standard Summary header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-lg font-semibold">Building Records</h2>
+          <p className="text-sm text-muted-foreground">
+            {totalOpen > 0 ? (
+              <span className="text-warning">
+                {totalOpen} open issue{totalOpen !== 1 ? 's' : ''} across all categories
+              </span>
+            ) : (
+              'All record categories'
+            )}
+          </p>
         </div>
-      )}
+        <Badge variant="outline" className="text-xs">
+          BBL: {bbl}
+        </Badge>
+      </div>
 
       {/* Record sections */}
       <div className="space-y-3">
@@ -431,19 +408,18 @@ export function RecordsTab({
           id="dob-violations"
           title="DOB Violations"
           icon={<FileText className="h-4 w-4" />}
-          count={isFilteredMode ? displayCounts.dobViolations : recordCounts.dobViolations}
-          openCount={isFilteredMode ? displayCounts.dobViolationsOpen : recordCounts.dobViolationsOpen}
-          loading={isFilteredMode ? dobViolations.loading : recordLoading.dobViolations}
-          defaultOpen={sectionsWithOpenItems.includes('violations') || (isFilteredMode && displayCounts.dobViolations > 0)}
+          count={recordCounts.dobViolations}
+          openCount={recordCounts.dobViolationsOpen}
+          loading={recordLoading.dobViolations}
+          defaultOpen={sectionsWithOpenItems.includes('violations')}
         >
           <ViolationsTab 
             bbl={bbl} 
             bin={bin} 
             scope={scope} 
             isCoop={isCoop} 
-            coopUnitContext={effectiveUnitLabel || coopUnitContext}
+            coopUnitContext={coopUnitContext}
             address={address}
-            filterToUnitMentions={!!effectiveUnitLabel}
           />
         </RecordsSection>
 
@@ -452,23 +428,22 @@ export function RecordsTab({
           id="ecb-violations"
           title="ECB Violations"
           icon={<AlertTriangle className="h-4 w-4" />}
-          count={isFilteredMode ? displayCounts.ecbViolations : recordCounts.ecbViolations}
-          openCount={isFilteredMode ? displayCounts.ecbViolationsOpen : recordCounts.ecbViolationsOpen}
-          loading={isFilteredMode ? ecbViolations.loading : recordLoading.ecbViolations}
-          defaultOpen={sectionsWithOpenItems.includes('ecb') || (isFilteredMode && displayCounts.ecbViolations > 0)}
+          count={recordCounts.ecbViolations}
+          openCount={recordCounts.ecbViolationsOpen}
+          loading={recordLoading.ecbViolations}
+          defaultOpen={sectionsWithOpenItems.includes('ecb')}
         >
           <ECBTab 
             bbl={bbl} 
             bin={bin} 
             scope={scope} 
             isCoop={isCoop} 
-            coopUnitContext={effectiveUnitLabel || coopUnitContext}
+            coopUnitContext={coopUnitContext}
             address={address}
-            filterToUnitMentions={!!effectiveUnitLabel}
           />
         </RecordsSection>
 
-        {/* Safety - typically no unit-specific data */}
+        {/* Safety */}
         <RecordsSection
           id="safety-records"
           title="Safety & Compliance"
@@ -476,16 +451,14 @@ export function RecordsTab({
           count={0}
           loading={false}
           defaultOpen={false}
-          hidden={isFilteredMode} // Hide in unit mention mode - rarely has unit-specific data
         >
           <SafetyTab 
             bbl={bbl} 
             bin={bin} 
             scope={scope} 
             isCoop={isCoop} 
-            coopUnitContext={effectiveUnitLabel || coopUnitContext}
+            coopUnitContext={coopUnitContext}
             address={address}
-            filterToUnitMentions={!!effectiveUnitLabel}
           />
         </RecordsSection>
 
@@ -494,18 +467,17 @@ export function RecordsTab({
           id="dob-permits"
           title="DOB Permits"
           icon={<Hammer className="h-4 w-4" />}
-          count={isFilteredMode ? displayCounts.dobPermits : recordCounts.dobPermits}
-          loading={isFilteredMode ? permits.loading : recordLoading.dobPermits}
-          defaultOpen={isFilteredMode && displayCounts.dobPermits > 0}
+          count={recordCounts.dobPermits}
+          loading={recordLoading.dobPermits}
+          defaultOpen={false}
         >
           <PermitsTab 
             bbl={bbl} 
             bin={bin} 
             scope={scope} 
             isCoop={isCoop} 
-            coopUnitContext={effectiveUnitLabel || coopUnitContext}
+            coopUnitContext={coopUnitContext}
             address={address}
-            filterToUnitMentions={!!effectiveUnitLabel}
           />
         </RecordsSection>
 
@@ -514,16 +486,10 @@ export function RecordsTab({
           id="hpd-records"
           title="HPD Violations & Complaints"
           icon={<Building2 className="h-4 w-4" />}
-          count={isFilteredMode 
-            ? displayCounts.hpdViolations + displayCounts.hpdComplaints 
-            : recordCounts.hpdViolations + recordCounts.hpdComplaints}
-          openCount={isFilteredMode
-            ? (displayCounts.hpdViolationsOpen || 0) + (displayCounts.hpdComplaintsOpen || 0)
-            : (recordCounts.hpdViolationsOpen || 0) + (recordCounts.hpdComplaintsOpen || 0)}
-          loading={isFilteredMode 
-            ? hpdViolations.loading || hpdComplaints.loading 
-            : recordLoading.hpdViolations || recordLoading.hpdComplaints}
-          defaultOpen={sectionsWithOpenItems.includes('hpd') || (isFilteredMode && (displayCounts.hpdViolations + displayCounts.hpdComplaints) > 0)}
+          count={recordCounts.hpdViolations + recordCounts.hpdComplaints}
+          openCount={(recordCounts.hpdViolationsOpen || 0) + (recordCounts.hpdComplaintsOpen || 0)}
+          loading={recordLoading.hpdViolations || recordLoading.hpdComplaints}
+          defaultOpen={sectionsWithOpenItems.includes('hpd')}
         >
           <div id="hpd-violations" />
           <div id="hpd-complaints" />
@@ -532,15 +498,14 @@ export function RecordsTab({
             bin={bin} 
             scope={scope} 
             isCoop={isCoop} 
-            coopUnitContext={effectiveUnitLabel || coopUnitContext}
+            coopUnitContext={coopUnitContext}
             onClearUnitContext={onClearUnitContext}
             address={address}
-            filterToUnitMentions={!!effectiveUnitLabel}
           />
         </RecordsSection>
 
-        {/* 311 - Hidden in unit mention mode (geographic, not unit-specific) */}
-        {lat !== undefined && lon !== undefined && !isFilteredMode && (
+        {/* 311 */}
+        {lat !== undefined && lon !== undefined && (
           <RecordsSection
             id="service-requests"
             title="311 Service Requests"
@@ -560,23 +525,6 @@ export function RecordsTab({
               address={address}
             />
           </RecordsSection>
-        )}
-        
-        {/* 311 Nearby notice - shown in unit mention mode */}
-        {lat !== undefined && lon !== undefined && isFilteredMode && (
-          <Alert className="border-muted bg-muted/30">
-            <MapPin className="h-4 w-4" />
-            <AlertDescription className="text-sm text-muted-foreground">
-              <strong>311 Service Requests</strong> are location-based and not filtered by unit. 
-              <button 
-                onClick={handleClearUnitMentionFilter}
-                className="ml-1 text-primary hover:underline"
-              >
-                View all building records
-              </button>
-              {' '}to see nearby 311 requests.
-            </AlertDescription>
-          </Alert>
         )}
       </div>
     </div>
