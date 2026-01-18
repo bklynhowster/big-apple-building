@@ -1,5 +1,5 @@
 import React from 'react';
-import { FileSearch, ArrowLeft, Building2 } from 'lucide-react';
+import { FileSearch, Building2, Loader2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -7,7 +7,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 interface UnitMentionsHeaderProps {
   /** The unit label (e.g., "1A", "2C") */
   unitLabel: string;
-  /** Number of records mentioning this unit */
+  /** Number of records mentioning this unit (-1 for loading) */
   mentionCount: number;
   /** Handler to clear filter and view all building records */
   onViewAllRecords: () => void;
@@ -22,6 +22,8 @@ export function UnitMentionsHeader({
   mentionCount,
   onViewAllRecords,
 }: UnitMentionsHeaderProps) {
+  const isLoading = mentionCount === -1;
+  
   return (
     <div className="space-y-3">
       {/* Main header */}
@@ -31,9 +33,13 @@ export function UnitMentionsHeader({
           <div>
             <h2 className="text-lg font-semibold flex items-center gap-2">
               Records mentioning Unit {unitLabel}
-              <Badge variant="secondary" className="font-mono">
-                {mentionCount}
-              </Badge>
+              {isLoading ? (
+                <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+              ) : (
+                <Badge variant="secondary" className="font-mono">
+                  {mentionCount}
+                </Badge>
+              )}
             </h2>
             <p className="text-sm text-muted-foreground">
               Filtered to records that explicitly reference this unit
