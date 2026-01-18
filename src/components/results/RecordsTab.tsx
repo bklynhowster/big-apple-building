@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   FileText,
@@ -23,8 +23,10 @@ import { HPDTab } from './HPDTab';
 import { ThreeOneOneTab } from './ThreeOneOneTab';
 import { RecordsDebugStrip } from './RecordsDebugStrip';
 import { UnitMentionsHeader } from './UnitMentionsHeader';
+import { MentionedRecordsList } from './MentionedRecordsList';
+import { UnitMentionsDiagnosticMatrix } from './UnitMentionsDiagnosticMatrix';
 import type { RecordCounts, LoadingStates } from './RiskSnapshotCard';
-import type { CombinedUnitStats, PermitMentionRef, ViolationMentionRef } from '@/hooks/useUnitMentions';
+import type { CombinedUnitStats } from '@/hooks/useUnitMentions';
 
 interface RecordsSectionProps {
   id: string;
@@ -164,62 +166,32 @@ export function RecordsTab({
     );
   };
 
+  // Debug mode
+  const showDebug = searchParams.get('debug') === '1';
+
   // =========================
   // Unit Mentions mode (source-of-truth from useUnitMentions)
   // =========================
 
-  const unitMentionGroups = useMemo(() => {
-    if (!isUnitMentionsMode || !unitMentions) return null;
+  // Compute total count directly from unitMentions (matches Results.tsx calculation)
+  const totalMentioned = useMemo(() => {
+    if (!unitMentions) return 0;
+    const hpdCount = unitMentions.sourceRefs.filter((r) => r.type === 'hpd').length;
+    return unitMentions.violationRefs.length + unitMentions.permitRefs.length + hpdCount;
+  }, [unitMentions]);
 
-    const dob = unitMentions.violationRefs.filter((r) => r.type === 'dob-violation');
-    const ecb = unitMentions.violationRefs.filter((r) => r.type === 'ecb');
-    const permit = unitMentions.permitRefs;
-
-    // HPD refs are stored in sourceRefs (they lack excerpts in the current extraction)
-    const hpd = unitMentions.sourceRefs.filter((r) => r.type === 'hpd');
-
-    // 311 is nearby/location-based; keep it out of unit-specific mentions UI.
-    // const threeOneOne = unitMentions.sourceRefs.filter((r) => r.type === '311');
-
-    return {
-      dob,
-      ecb,
-      permit,
-      hpd,
-      totalShown: dob.length + ecb.length + permit.length + hpd.length,
-    };
-  }, [isUnitMentionsMode, unitMentions]);
-
-  const totalMentioned = unitMentionGroups?.totalShown ?? 0;
-
-  const renderMentionCard = (ref: ViolationMentionRef | PermitMentionRef) => {
-    return (
-      <div key={`${ref.type}-${ref.id}`} className="rounded-md border border-border bg-card p-3">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-sm font-medium">{ref.label}</span>
-          <Badge variant="outline" className="text-xs">
-            {ref.status}
-          </Badge>
-          {ref.issueDate && (
-            <Badge variant="secondary" className="text-xs">
-              {new Date(ref.issueDate).toLocaleDateString('en-US')}
-            </Badge>
-          )}
-        </div>
-        {ref.snippet && <p className="mt-2 text-sm text-muted-foreground">{ref.snippet}</p>}
-        {!ref.snippet && ref.description && (
-          <p className="mt-2 text-sm text-muted-foreground">{ref.description}</p>
-        )}
-      </div>
-    );
-  };
+  // Callback for scrolling to a section
+  const handleScrollToSection = useCallback((sectionId: string, _recordId?: string) => {
+    const element = document.getElementById(sectionId);
+    if (element) {
+      element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }, []);
 
   // =========================
   // UNIT MENTIONS MODE RENDER
   // =========================
   if (isUnitMentionsMode) {
-    const groups = unitMentionGroups;
-
     return (
       <div className="space-y-4">
         <RecordsDebugStrip
@@ -244,96 +216,46 @@ export function RecordsTab({
           onViewAllRecords={handleClearUnitMentionFilter}
         />
 
-        <div className="space-y-3">
-          <RecordsSection
-            id="dob-violations"
-            title="DOB Violations"
-            icon={<FileText className="h-4 w-4" />}
-            count={groups?.dob.length ?? 0}
-            openCount={groups?.dob.filter((r) => r.status === 'open').length ?? 0}
-            defaultOpen={(groups?.dob.length ?? 0) > 0}
-          >
-            <div className="space-y-2">
-              {(groups?.dob ?? []).map(renderMentionCard)}
-              {(groups?.dob.length ?? 0) === 0 && (
-                <p className="text-sm text-muted-foreground py-2">No DOB violations mention this unit.</p>
-              )}
-            </div>
-          </RecordsSection>
+        {/* Debug: Diagnostic Matrix (only when ?debug=1) */}
+        {showDebug && (
+          <UnitMentionsDiagnosticMatrix
+            unitBbl={unitBbl}
+            buildingBbl={bbl}
+            bin={bin}
+            recordCounts={recordCounts}
+          />
+        )}
 
-          <RecordsSection
-            id="ecb-violations"
-            title="ECB Violations"
-            icon={<AlertTriangle className="h-4 w-4" />}
-            count={groups?.ecb.length ?? 0}
-            openCount={groups?.ecb.filter((r) => r.status === 'open').length ?? 0}
-            defaultOpen={(groups?.ecb.length ?? 0) > 0}
-          >
-            <div className="space-y-2">
-              {(groups?.ecb ?? []).map(renderMentionCard)}
-              {(groups?.ecb.length ?? 0) === 0 && (
-                <p className="text-sm text-muted-foreground py-2">No ECB violations mention this unit.</p>
-              )}
-            </div>
-          </RecordsSection>
+        {/* Mentioned Records List - the primary drill-down view */}
+        {unitMentions ? (
+          <MentionedRecordsList
+            unitLabel={unitLabel!}
+            unitMentions={unitMentions}
+            onScrollToSection={handleScrollToSection}
+          />
+        ) : (
+          <Card className="border-dashed">
+            <CardContent className="py-8 text-center">
+              <p className="text-sm text-muted-foreground">
+                Loading unit mentions...
+              </p>
+            </CardContent>
+          </Card>
+        )}
 
-          <RecordsSection
-            id="dob-permits"
-            title="DOB Permits"
-            icon={<Hammer className="h-4 w-4" />}
-            count={groups?.permit.length ?? 0}
-            defaultOpen={(groups?.permit.length ?? 0) > 0}
-          >
-            <div className="space-y-2">
-              {(groups?.permit ?? []).map(renderMentionCard)}
-              {(groups?.permit.length ?? 0) === 0 && (
-                <p className="text-sm text-muted-foreground py-2">No permits mention this unit.</p>
-              )}
-            </div>
-          </RecordsSection>
-
-          <RecordsSection
-            id="hpd-records"
-            title="HPD"
-            icon={<Building2 className="h-4 w-4" />}
-            count={groups?.hpd.length ?? 0}
-            defaultOpen={(groups?.hpd.length ?? 0) > 0}
-            muted={(groups?.hpd.length ?? 0) === 0}
-          >
-            <div className="space-y-2">
-              {(groups?.hpd ?? []).map((r) => (
-                <div key={`hpd-${r.id}`} className="rounded-md border border-border bg-card p-3">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium">{r.label}</span>
-                    <Badge variant="outline" className="text-xs">
-                      HPD
-                    </Badge>
-                  </div>
-                  <p className="mt-2 text-sm text-muted-foreground">
-                    Mention inferred by unit extraction (no excerpt available for this dataset).
-                  </p>
-                </div>
-              ))}
-              {(groups?.hpd.length ?? 0) === 0 && (
-                <p className="text-sm text-muted-foreground py-2">No HPD records mention this unit.</p>
-              )}
-            </div>
-          </RecordsSection>
-
-          {/* 311 is intentionally excluded from Unit Mentions mode */}
-          {lat !== undefined && lon !== undefined && (
-            <Alert className="border-muted bg-muted/30">
-              <MapPin className="h-4 w-4" />
-              <AlertDescription className="text-sm text-muted-foreground">
-                <strong>311 Service Requests</strong> are location-based and not shown in unit mentions.
-                <button onClick={handleClearUnitMentionFilter} className="ml-1 text-primary hover:underline">
-                  View all building records
-                </button>
-                {' '}to see nearby 311 requests.
-              </AlertDescription>
-            </Alert>
-          )}
-        </div>
+        {/* 311 is intentionally excluded from Unit Mentions mode */}
+        {lat !== undefined && lon !== undefined && (
+          <Alert className="border-muted bg-muted/30">
+            <MapPin className="h-4 w-4" />
+            <AlertDescription className="text-sm text-muted-foreground">
+              <strong>311 Service Requests</strong> are location-based and not shown in unit mentions.
+              <button onClick={handleClearUnitMentionFilter} className="ml-1 text-primary hover:underline">
+                View all building records
+              </button>
+              {' '}to see nearby 311 requests.
+            </AlertDescription>
+          </Alert>
+        )}
       </div>
     );
   }

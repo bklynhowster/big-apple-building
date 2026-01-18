@@ -989,6 +989,9 @@ export default function Results() {
                             recordCounts={recordCounts}
                             recordLoading={riskSnapshotLoading}
                             onClearUnitContext={handleClearUnitContext}
+                            isUnitMode={isUnitMode}
+                            unitLabel={currentUnitLabel}
+                            unitMentions={currentUnitMentions}
                           />
                         </TabsContent>
                         
