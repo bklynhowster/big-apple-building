@@ -19,6 +19,7 @@ import { QueriedIdentifier, DatasetCapability } from './QueriedIdentifier';
 import { QueryScope } from './ScopeSelector';
 import { BuildingLevelBanner } from './BuildingLevelBanner';
 import { filterRecordsByUnit } from '@/utils/unit';
+import { filterRecordsByUnitMention } from '@/utils/unitMentionMatcher';
 
 interface HPDTabProps {
   bbl: string;
@@ -133,22 +134,32 @@ export function HPDTab({
   const violationColumns = useColumnVisibility(VIOLATION_COLUMN_CONFIGS);
   const complaintColumns = useColumnVisibility(COMPLAINT_COLUMN_CONFIGS);
 
-  // Filter by unit context for co-ops (client-side filtering)
+  // Filter by unit - either via filterToUnitMentions or co-op context
   const filteredViolations = useMemo(() => {
+    // If filterToUnitMentions is active, use the new matcher
+    if (filterToUnitMentions && coopUnitContext) {
+      return filterRecordsByUnitMention(violations.items, coopUnitContext, 'hpd-violation');
+    }
+    // Fallback to co-op unit filtering
     if (!isCoop || !coopUnitContext) return violations.items;
     return filterRecordsByUnit(
       violations.items.map(item => ({ ...item, ...item.raw })),
       coopUnitContext
     ) as unknown as HPDViolationRecord[];
-  }, [violations.items, isCoop, coopUnitContext]);
+  }, [violations.items, isCoop, coopUnitContext, filterToUnitMentions]);
 
   const filteredComplaints = useMemo(() => {
+    // If filterToUnitMentions is active, use the new matcher
+    if (filterToUnitMentions && coopUnitContext) {
+      return filterRecordsByUnitMention(complaints.items, coopUnitContext, 'hpd-complaint');
+    }
+    // Fallback to co-op unit filtering
     if (!isCoop || !coopUnitContext) return complaints.items;
     return filterRecordsByUnit(
       complaints.items.map(item => ({ ...item, ...item.raw })),
       coopUnitContext
     ) as unknown as HPDComplaintRecord[];
-  }, [complaints.items, isCoop, coopUnitContext]);
+  }, [complaints.items, isCoop, coopUnitContext, filterToUnitMentions]);
 
   // Lazy-load: only fetch when subtab is first viewed
   useEffect(() => {

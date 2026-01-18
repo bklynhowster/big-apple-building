@@ -38,6 +38,7 @@ import { BuildingLevelBanner } from './BuildingLevelBanner';
 import { UnitMentionBadges } from './UnitMentionBadges';
 import { UnitMentionFilter } from './UnitMentionFilter';
 import { normalizeUnit } from '@/utils/unit';
+import { filterRecordsByUnitMention } from '@/utils/unitMentionMatcher';
 
 interface ViolationsTabProps {
   bbl: string;
@@ -154,17 +155,30 @@ export function ViolationsTab({
 
   const items = data?.items || [];
   
-  // Extract unit mentions from records
+  // Apply direct unit mention filter when filterToUnitMentions is enabled
+  const itemsAfterUnitFilter = useMemo(() => {
+    if (filterToUnitMentions && coopUnitContext) {
+      return filterRecordsByUnitMention(items, coopUnitContext, 'dob-violation');
+    }
+    return items;
+  }, [items, filterToUnitMentions, coopUnitContext]);
+  
+  // Extract unit mentions from records (after direct filter)
   const {
     recordsWithMentions,
     allMentionedUnits,
     recordsWithMentionsCount,
     filterByUnit,
     filterToMentionsOnly,
-  } = useRecordUnitMentions(items, coopUnitContext);
+  } = useRecordUnitMentions(itemsAfterUnitFilter, coopUnitContext);
 
-  // Apply unit mention filters
+  // Apply additional unit mention filters (when not in filterToUnitMentions mode)
   const filteredRecordsWithMentions = useMemo(() => {
+    // If filterToUnitMentions is active, we've already filtered - just return all
+    if (filterToUnitMentions) {
+      return recordsWithMentions;
+    }
+    
     let result = recordsWithMentions;
     
     if (showMentionsOnly) {
@@ -181,7 +195,7 @@ export function ViolationsTab({
     }
     
     return result;
-  }, [recordsWithMentions, showMentionsOnly, selectedMentionUnit, showContextOnly, coopUnitContext, filterByUnit, filterToMentionsOnly]);
+  }, [recordsWithMentions, showMentionsOnly, selectedMentionUnit, showContextOnly, coopUnitContext, filterByUnit, filterToMentionsOnly, filterToUnitMentions]);
 
   useEffect(() => {
     if (bbl && bbl.length === 10) {

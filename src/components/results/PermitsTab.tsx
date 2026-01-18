@@ -38,6 +38,7 @@ import { BuildingLevelBanner } from './BuildingLevelBanner';
 import { useRecordUnitMentions } from '@/hooks/useRecordUnitMentions';
 import { UnitMentionBadges } from './UnitMentionBadges';
 import { UnitMentionFilter } from './UnitMentionFilter';
+import { filterRecordsByUnitMention } from '@/utils/unitMentionMatcher';
 
 interface PermitsTabProps {
   bbl: string;
@@ -135,13 +136,21 @@ export function PermitsTab({
   }, [bbl, fetchPermits]);
 
   // Transform items for unit mention extraction
-  const recordsForMentions = useMemo(() => {
+  const baseItems = useMemo(() => {
     const items = data?.items || [];
     return items.map(item => ({
       ...item,
       raw: item.raw || item as unknown as Record<string, unknown>,
     }));
   }, [data?.items]);
+  
+  // Apply direct unit mention filter when filterToUnitMentions is enabled
+  const recordsForMentions = useMemo(() => {
+    if (filterToUnitMentions && coopUnitContext) {
+      return filterRecordsByUnitMention(baseItems, coopUnitContext, 'permit');
+    }
+    return baseItems;
+  }, [baseItems, filterToUnitMentions, coopUnitContext]);
 
   // Extract unit mentions using the shared hook
   const {
@@ -152,8 +161,13 @@ export function PermitsTab({
     filterToMentionsOnly,
   } = useRecordUnitMentions(recordsForMentions, coopUnitContext);
 
-  // Apply unit mention filters
+  // Apply additional unit mention filters (when not in filterToUnitMentions mode)
   const filteredRecordsWithMentions = useMemo(() => {
+    // If filterToUnitMentions is active, we've already filtered - just return all
+    if (filterToUnitMentions) {
+      return recordsWithMentions;
+    }
+    
     let result = recordsWithMentions;
     
     if (showContextOnly && coopUnitContext) {
@@ -165,7 +179,7 @@ export function PermitsTab({
     }
     
     return result;
-  }, [recordsWithMentions, showMentionsOnly, selectedUnit, showContextOnly, coopUnitContext, filterByUnit, filterToMentionsOnly]);
+  }, [recordsWithMentions, showMentionsOnly, selectedUnit, showContextOnly, coopUnitContext, filterByUnit, filterToMentionsOnly, filterToUnitMentions]);
 
   const handleFilterChange = (updates: Partial<PermitsFilters>) => {
     const newFilters = { ...localFilters, ...updates };
