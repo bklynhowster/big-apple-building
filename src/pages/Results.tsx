@@ -790,6 +790,7 @@ export default function Results() {
                     bbl={effectiveBbl}
                     bin={bin}
                     isCondo={isCondoBuilding}
+                    isCoop={isCoopEffective}
                     totalUnits={condoMeta.totalUnits || profile?.totalUnits}
                     loading={profileLoading}
                   />
