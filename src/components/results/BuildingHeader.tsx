@@ -112,6 +112,18 @@ export function BuildingHeader({
               <span className="text-muted-foreground mr-1.5">BBL</span>
               {bbl}
             </Badge>
+            {bbl && bbl.length === 10 && (
+              <>
+                <Badge variant="secondary" className="font-mono text-xs px-2.5 py-1">
+                  <span className="text-muted-foreground mr-1.5">Block</span>
+                  {String(parseInt(bbl.slice(1, 6), 10) || 0)}
+                </Badge>
+                <Badge variant="secondary" className="font-mono text-xs px-2.5 py-1">
+                  <span className="text-muted-foreground mr-1.5">Lot</span>
+                  {String(parseInt(bbl.slice(6, 10), 10) || 0)}
+                </Badge>
+              </>
+            )}
             {bin && (
               <Badge variant="secondary" className="font-mono text-xs px-2.5 py-1">
                 <span className="text-muted-foreground mr-1.5">BIN</span>

@@ -690,8 +690,10 @@ export function CondoUnitDetailV2({
     return match?.transactions || [];
   }, [unitLabel, acrisUnits]);
 
-  // Lot number from BBL
+  // Block + Lot numbers from BBL (trim leading zeros for display)
   const lot = lotNumber || (unitBbl.length === 10 ? unitBbl.slice(6) : null);
+  const block = unitBbl.length === 10 ? String(parseInt(unitBbl.slice(1, 6), 10) || 0) : null;
+  const lotDisplay = lot ? String(parseInt(lot, 10) || 0) : null;
 
   return (
     <div className="space-y-6">
@@ -715,8 +717,9 @@ export function CondoUnitDetailV2({
             Condo
           </Badge>
           <Badge variant="outline" className="font-mono text-xs">BBL {unitBbl}</Badge>
+          {block && <Badge variant="outline" className="font-mono text-xs">Block {block}</Badge>}
+          {lotDisplay && <Badge variant="outline" className="font-mono text-xs">Lot {lotDisplay}</Badge>}
           {bin && <Badge variant="outline" className="font-mono text-xs">BIN {bin}</Badge>}
-          {lot && <Badge variant="outline" className="font-mono text-xs">Lot {lot}</Badge>}
         </div>
       </div>
 

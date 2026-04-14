@@ -20,6 +20,7 @@ import { RiskSnapshotCard, type RecordCounts, type LoadingStates, type RecordArr
 import { UnitInsightsCard } from './UnitInsightsCard';
 import { PropertyProfileCard } from './PropertyProfileCard';
 import { CondoUnitsPreview } from './CondoUnitsPreview';
+import { HpdOnlineCard } from './HpdOnlineCard';
 
 import { ViolationsTab } from './ViolationsTab';
 import { ECBTab } from './ECBTab';
@@ -508,6 +509,9 @@ export function SingleScrollLayout(props: SingleScrollLayoutProps) {
             </CardContent>
           </Card>
         </ScrollSection>
+
+        {/* HPD Online — registration, contacts, archival deep-links */}
+        <HpdOnlineCard bbl={queryBbl} address={address} borough={borough} />
 
         {/* DOB Permits */}
         <ScrollSection
