@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { parseApiError, type ApiError } from '@/types/api-error';
+import { fetchPropertyProfile } from '@/utils/propertyClassification';
+import { type ApiError } from '@/types/api-error';
 
 export type PropertyTypeLabel = 'Condo' | 'Co-op' | '1-2 Family' | '3+ Family' | 'Mixed-Use' | 'Commercial' | 'Other' | 'Unknown';
 export type PropertyTenure = 'CONDO' | 'COOP' | 'RENTAL_OR_OTHER' | 'UNKNOWN';
@@ -108,28 +109,8 @@ export function usePropertyProfile(bbl?: string | null): UsePropertyProfileResul
     setError(null);
 
     try {
-      const baseUrl = import.meta.env.VITE_SUPABASE_URL;
-      const apiKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
-      
-      const response = await fetch(
-        `${baseUrl}/functions/v1/property-profile?bbl=${bbl}`,
-        {
-          headers: {
-            'Content-Type': 'application/json',
-            'apikey': apiKey,
-          },
-          signal: abortControllerRef.current.signal,
-        }
-      );
-
-      if (!response.ok) {
-        const apiError = await parseApiError(response);
-        setError(apiError);
-        setProfile(null);
-        return;
-      }
-
-      const data: PropertyProfile = await response.json();
+      // Client-side: hit PLUTO directly and classify locally
+      const data = await fetchPropertyProfile(bbl, abortControllerRef.current.signal);
       setProfile(data);
       setError(null);
       fetchedBblRef.current = bbl;
@@ -142,7 +123,7 @@ export function usePropertyProfile(bbl?: string | null): UsePropertyProfileResul
       }
       console.error('Error fetching property profile:', err);
       setError({
-        error: 'Network error',
+        error: 'Fetch error',
         details: err instanceof Error ? err.message : 'Unknown error',
         userMessage: 'Unable to load property profile. Please try again.',
         requestId: 'unknown',

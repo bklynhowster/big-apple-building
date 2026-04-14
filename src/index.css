@@ -321,13 +321,32 @@
   /* iOS safe scrolling utilities */
   .ios-scroll {
     -webkit-overflow-scrolling: touch;
-    overscroll-behavior: contain;
+    overscroll-behavior: auto;
   }
 
   /* Large tap target for mobile - min 44px as per Apple HIG */
   .tap-target {
     min-height: 44px;
     min-width: 44px;
+  }
+}
+
+/* Mapbox cooperative gestures overlay styling */
+.mapboxgl-cooperative-gesture-screen {
+  font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+  font-size: 14px;
+}
+
+/* Ensure smooth scrolling on mobile for the main page */
+@media (max-width: 768px) {
+  html, body {
+    -webkit-overflow-scrolling: touch;
+    overflow-x: hidden;
+  }
+
+  /* Prevent horizontal scroll from wide tables */
+  .overflow-x-auto {
+    -webkit-overflow-scrolling: touch;
   }
 }
 

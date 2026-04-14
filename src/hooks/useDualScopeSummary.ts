@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { logRecordFetch } from '@/utils/recordStatus';
+import { fetchDobViolationsDirect } from '@/utils/dobViolationsDirect';
 
 interface ScopeSummary {
   violations: { totalCount: number; openCount: number; lastActivityDate: string | null };
@@ -101,7 +102,7 @@ async function fetchScopeSummary(
   const apiKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 
   const [violationsRes, ecbRes, permitsRes, safetyRes, hpdViolationsRes] = await Promise.all([
-    fetchEndpoint(baseUrl, 'dob-violations', bbl, apiKey, signal),
+    fetchDobViolationsDirect(bbl, { limit: 200, signal }),
     fetchEndpoint(baseUrl, 'dob-ecb', bbl, apiKey, signal),
     fetchEndpoint(baseUrl, 'dob-permits', bbl, apiKey, signal),
     fetchEndpoint(baseUrl, 'dob-safety', bbl, apiKey, signal),

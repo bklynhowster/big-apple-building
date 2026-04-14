@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { Search, X, ChevronLeft, ChevronRight, Loader2, FileX, Download, Info, Home, Building2 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -118,7 +118,16 @@ export function HPDTab({
 }: HPDTabProps) {
   const [activeSubTab, setActiveSubTab] = useState<'violations' | 'complaints'>('violations');
   const [fetchedTabs, setFetchedTabs] = useState<Set<string>>(new Set());
-  
+
+  // Reset fetchedTabs when BBL changes so sub-tabs re-fetch with new BBL
+  const prevBblRef = useRef(bbl);
+  useEffect(() => {
+    if (bbl && bbl !== prevBblRef.current) {
+      prevBblRef.current = bbl;
+      setFetchedTabs(new Set());
+    }
+  }, [bbl]);
+
   // Drawer state
   const [selectedRecord, setSelectedRecord] = useState<HPDViolationRecord | HPDComplaintRecord | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);

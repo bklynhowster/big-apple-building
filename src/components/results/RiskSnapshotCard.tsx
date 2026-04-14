@@ -1,4 +1,4 @@
-import { AlertTriangle, FileText, Shield, Building2, Phone, Hammer, DollarSign, ClipboardList, Loader2, ChevronRight, Circle, TrendingUp, Minus } from 'lucide-react';
+import { AlertTriangle, FileText, Shield, Building2, Phone, Hammer, DollarSign, ClipboardList, Loader2, ChevronRight, Circle, TrendingUp, Minus, Siren } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 import { useCallback, useMemo, useState } from 'react';
@@ -8,14 +8,15 @@ export type DatasetScope = 'building' | 'unit';
 
 // Mapping of chip keys to their anchor IDs, tab names, and data scope
 const CHIP_CONFIG = {
-  dobViolations: { anchorId: 'dob-violations', tab: 'violations', label: 'DOB Violations', scope: 'building' as DatasetScope },
-  ecbViolations: { anchorId: 'ecb-violations', tab: 'ecb', label: 'ECB Violations', scope: 'building' as DatasetScope },
-  hpdViolations: { anchorId: 'hpd-violations', tab: 'hpd', label: 'HPD Violations', scope: 'building' as DatasetScope },
-  hpdComplaints: { anchorId: 'hpd-complaints', tab: 'hpd', label: 'HPD Complaints', scope: 'building' as DatasetScope },
-  serviceRequests: { anchorId: 'service-requests', tab: '311', label: '311 Requests', scope: 'building' as DatasetScope },
-  dobPermits: { anchorId: 'dob-permits', tab: 'permits', label: 'DOB Permits', scope: 'building' as DatasetScope },
-  salesRecords: { anchorId: 'sales-records', tab: 'all', label: 'Sales Records', scope: 'building' as DatasetScope },
-  dobFilingsUnits: { anchorId: 'dob-filings', tab: 'all', label: 'DOB Filings Units', scope: 'building' as DatasetScope },
+  unsafeBuilding: { anchorId: 'dob', tab: 'records', label: 'Unsafe Building', scope: 'building' as DatasetScope },
+  dobViolations: { anchorId: 'dob', tab: 'records', label: 'DOB Violations', scope: 'building' as DatasetScope },
+  ecbViolations: { anchorId: 'ecb', tab: 'records', label: 'ECB Violations', scope: 'building' as DatasetScope },
+  hpdViolations: { anchorId: 'hpd', tab: 'records', label: 'HPD Violations', scope: 'building' as DatasetScope },
+  hpdComplaints: { anchorId: 'hpd', tab: 'records', label: 'HPD Complaints', scope: 'building' as DatasetScope },
+  serviceRequests: { anchorId: '311', tab: 'records', label: '311 Requests', scope: 'building' as DatasetScope },
+  dobPermits: { anchorId: 'permits', tab: 'records', label: 'DOB Permits', scope: 'building' as DatasetScope },
+  salesRecords: { anchorId: 'sales', tab: 'records', label: 'Sales Records', scope: 'building' as DatasetScope },
+  dobFilingsUnits: { anchorId: 'units-insights', tab: 'records', label: 'DOB Filings Units', scope: 'building' as DatasetScope },
 } as const;
 
 type ChipKey = keyof typeof CHIP_CONFIG;
@@ -208,8 +209,13 @@ function RiskChip({ label, count, loading, isViolation, icon, openCount, anchorI
               {count}
             </span>
             {openCount !== undefined && openCount > 0 && (
-              <span className="text-xs text-muted-foreground ml-1">
+              <span className="text-xs text-red-500 dark:text-red-400 ml-1">
                 ({openCount} open)
+              </span>
+            )}
+            {openCount !== undefined && openCount === 0 && count > 0 && (
+              <span className="text-xs text-emerald-600 dark:text-emerald-400 ml-1">
+                (all resolved)
               </span>
             )}
           </>
@@ -245,6 +251,9 @@ function RiskChip({ label, count, loading, isViolation, icon, openCount, anchorI
 }
 
 export interface RecordCounts {
+  unsafeBuilding?: number;       // total UB-type records
+  unsafeBuildingActive?: number; // active UB (not rescinded)
+  unsafeBuildingOpen?: number;   // UB still open in DOB system
   dobViolations: number;
   dobViolationsOpen?: number;
   ecbViolations: number;
@@ -335,26 +344,15 @@ export function RiskSnapshotCard({ counts, loading = {}, records = {}, onNavigat
   }, [records, counts]);
 
   const scrollToSection = useCallback((info: NavigationInfo) => {
-    // Update URL hash
-    const newUrl = `${window.location.pathname}${window.location.search}#${info.anchorId}`;
-    window.history.pushState(null, '', newUrl);
-    
     // Notify parent to switch tab and scope
+    // The tab value includes anchor as a query param so RecordsTab can auto-scroll
     if (onNavigateToSection) {
-      onNavigateToSection(info);
+      onNavigateToSection({
+        ...info,
+        tab: `${info.tab}?section=${info.anchorId}`,
+      });
     }
-    
-    // Scroll after a short delay to allow tab switch
-    setTimeout(() => {
-      const element = document.getElementById(info.anchorId);
-      if (element) {
-        element.scrollIntoView({ 
-          behavior: prefersReducedMotion ? 'auto' : 'smooth', 
-          block: 'start' 
-        });
-      }
-    }, 100);
-  }, [onNavigateToSection, prefersReducedMotion]);
+  }, [onNavigateToSection]);
 
   const handleChipClick = useCallback((key: ChipKey) => {
     const config = CHIP_CONFIG[key];
@@ -377,6 +375,19 @@ export function RiskSnapshotCard({ counts, loading = {}, records = {}, onNavigat
       </CardHeader>
       <CardContent>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          {/* Unsafe Building — only shown when UB records exist on this BBL */}
+          {(counts.unsafeBuilding ?? 0) > 0 && (
+            <RiskChip
+              label="Unsafe Building"
+              count={counts.unsafeBuilding ?? 0}
+              openCount={counts.unsafeBuildingActive ?? counts.unsafeBuildingOpen ?? 0}
+              loading={loading.dobViolations}
+              isViolation
+              icon={<Siren className="h-4 w-4" />}
+              anchorId={CHIP_CONFIG.unsafeBuilding.anchorId}
+              onClick={() => handleChipClick('dobViolations')}
+            />
+          )}
           <RiskChip
             label="DOB Violations"
             count={counts.dobViolations}
@@ -402,26 +413,15 @@ export function RiskSnapshotCard({ counts, loading = {}, records = {}, onNavigat
           />
           
           <RiskChip
-            label="HPD Violations"
-            count={counts.hpdViolations}
-            openCount={counts.hpdViolationsOpen}
-            loading={loading.hpdViolations}
+            label="HPD Records"
+            count={counts.hpdViolations + counts.hpdComplaints}
+            openCount={(counts.hpdViolationsOpen ?? 0) + (counts.hpdComplaintsOpen ?? 0)}
+            loading={loading.hpdViolations || loading.hpdComplaints}
             isViolation
             icon={<Building2 className="h-4 w-4" />}
             anchorId={CHIP_CONFIG.hpdViolations.anchorId}
             onClick={() => handleChipClick('hpdViolations')}
             trend={trends.hpdViolations}
-          />
-          
-          <RiskChip
-            label="HPD Complaints"
-            count={counts.hpdComplaints}
-            openCount={counts.hpdComplaintsOpen}
-            loading={loading.hpdComplaints}
-            icon={<ClipboardList className="h-4 w-4" />}
-            anchorId={CHIP_CONFIG.hpdComplaints.anchorId}
-            onClick={() => handleChipClick('hpdComplaints')}
-            trend={trends.hpdComplaints}
           />
           
           <RiskChip

@@ -70,10 +70,26 @@ export function TaxesCard({ viewBbl, buildingBbl, address, isUnitPage = false }:
   const latestDueDate = data?.latest_due_date;
   const billingCycle = data?.billing_cycle;
   const paymentStatus = data?.payment_status;
-  const arrears = data?.arrears;
+  const rawArrears = data?.arrears;
   const arrearsAvailable = data?.arrears_available;
   const arrearsNote = data?.arrears_note;
-  
+
+  // Client-side arrears correction:
+  // Edge function excludes the latest period from arrears calculation.
+  // But if payment_status is 'unpaid' and the due date is past, that IS arrears.
+  const effectiveArrears = (() => {
+    if (rawArrears != null && rawArrears > 0) return rawArrears;
+    if (paymentStatus === 'unpaid' && latestDueDate) {
+      const due = new Date(latestDueDate);
+      const now = new Date();
+      if (due < now && data?.latest_period_balance != null && data.latest_period_balance > 0) {
+        return data.latest_period_balance;
+      }
+    }
+    return rawArrears;
+  })();
+  const arrears = effectiveArrears;
+
   const statusBadge = paymentStatus ? getPaymentStatusBadgeInfo(paymentStatus) : null;
 
   return (

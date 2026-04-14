@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
-import { Search, X, ChevronLeft, ChevronRight, Loader2, FileX, Download } from 'lucide-react';
+import { Search, X, ChevronLeft, ChevronRight, Loader2, FileX, Download, Siren } from 'lucide-react';
+import { classifyUb, isUbCategory, ubSeverityLabel, computeUbCounts } from '@/utils/ubViolations';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -138,6 +139,8 @@ export function ViolationsTab({
   const [showMentionsOnly, setShowMentionsOnly] = useState(false);
   const [selectedMentionUnit, setSelectedMentionUnit] = useState<string | null>(null);
   const [showContextOnly, setShowContextOnly] = useState(filterToUnitMentions);
+  // UB (Unsafe Building) filter - show only UB-type violations
+  const [showUbOnly, setShowUbOnly] = useState(false);
   
   // Sync showContextOnly when filterToUnitMentions changes
   useEffect(() => {
@@ -189,13 +192,20 @@ export function ViolationsTab({
     
     if (showContextOnly && coopUnitContext) {
       const normalizedContext = normalizeUnit(coopUnitContext);
-      result = result.filter(rwm => 
+      result = result.filter(rwm =>
         rwm.mentions.some(m => m.unit === normalizedContext)
       );
     }
-    
+
+    if (showUbOnly) {
+      result = result.filter(rwm => isUbCategory(rwm.record?.category));
+    }
+
     return result;
-  }, [recordsWithMentions, showMentionsOnly, selectedMentionUnit, showContextOnly, coopUnitContext, filterByUnit, filterToMentionsOnly, filterToUnitMentions]);
+  }, [recordsWithMentions, showMentionsOnly, selectedMentionUnit, showContextOnly, coopUnitContext, filterByUnit, filterToMentionsOnly, filterToUnitMentions, showUbOnly]);
+
+  // UB counts (across current items)
+  const ubCounts = useMemo(() => computeUbCounts(items), [items]);
 
   useEffect(() => {
     if (bbl && bbl.length === 10) {
@@ -222,6 +232,7 @@ export function ViolationsTab({
     setShowMentionsOnly(false);
     setSelectedMentionUnit(null);
     setShowContextOnly(false);
+    setShowUbOnly(false);
   };
 
   const handleApply = () => {
@@ -240,7 +251,8 @@ export function ViolationsTab({
     localFilters.toDate ||
     showMentionsOnly ||
     selectedMentionUnit ||
-    showContextOnly;
+    showContextOnly ||
+    showUbOnly;
 
   // Dataset capability for DOB Violations - it's BBL-based but building-level
   const datasetCapability: DatasetCapability = 'building-bbl';
@@ -311,6 +323,38 @@ export function ViolationsTab({
         />
       )}
       
+      {/* Unsafe Building alert + filter toggle */}
+      {ubCounts.total > 0 && (
+        <div className={`flex flex-wrap items-center gap-3 p-3 rounded-lg border ${
+          (ubCounts.active + ubCounts.precept) > 0
+            ? 'bg-red-50 dark:bg-red-950/20 border-red-200 dark:border-red-900'
+            : 'bg-amber-50 dark:bg-amber-950/20 border-amber-200 dark:border-amber-900'
+        }`}>
+          <Siren className={`h-5 w-5 ${
+            (ubCounts.active + ubCounts.precept) > 0
+              ? 'text-red-600 dark:text-red-400'
+              : 'text-amber-600 dark:text-amber-400'
+          }`} />
+          <div className="flex-1 min-w-0 text-sm">
+            <span className="font-semibold">
+              {ubCounts.total} Unsafe Building record{ubCounts.total === 1 ? '' : 's'}
+            </span>
+            <span className="text-muted-foreground ml-2">
+              {ubCounts.active > 0 && <>{ubCounts.active} active · </>}
+              {ubCounts.precept > 0 && <>{ubCounts.precept} precept · </>}
+              {ubCounts.dismissed > 0 && <>{ubCounts.dismissed} rescinded</>}
+            </span>
+          </div>
+          <Button
+            size="sm"
+            variant={showUbOnly ? 'default' : 'outline'}
+            onClick={() => setShowUbOnly(!showUbOnly)}
+          >
+            {showUbOnly ? 'Showing UB only' : 'Show UB only'}
+          </Button>
+        </div>
+      )}
+
       <div className="flex flex-col md:flex-row gap-4 p-4 bg-muted/50 rounded-lg">
         <div className="flex-1">
           <div className="relative">
@@ -475,7 +519,33 @@ export function ViolationsTab({
                   )}
                   {isVisible('category') && (
                     <TableCell className="text-sm">
-                      {item.category || '-'}
+                      {(() => {
+                        const sev = classifyUb(item.category);
+                        if (sev) {
+                          const color =
+                            sev === 'active' ? 'bg-red-100 text-red-800 border-red-300 dark:bg-red-950 dark:text-red-300 dark:border-red-800' :
+                            sev === 'precept' ? 'bg-red-100 text-red-800 border-red-300 dark:bg-red-950 dark:text-red-300 dark:border-red-800' :
+                            sev === 'dismissed' ? 'bg-gray-100 text-gray-700 border-gray-300 dark:bg-gray-800 dark:text-gray-300 dark:border-gray-700' :
+                            'bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-950 dark:text-amber-300 dark:border-amber-800';
+                          return (
+                            <TooltipProvider>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded border text-xs font-medium cursor-help ${color}`}>
+                                    <Siren className="h-3 w-3" />
+                                    {item.category}
+                                  </span>
+                                </TooltipTrigger>
+                                <TooltipContent className="max-w-xs">
+                                  <p className="font-semibold">{ubSeverityLabel(sev)}</p>
+                                  <p className="text-xs mt-1">UB = Unsafe Building. UB% = precept/court case. UB* = rescinded.</p>
+                                </TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
+                          );
+                        }
+                        return item.category || '-';
+                      })()}
                     </TableCell>
                   )}
                   {isVisible('description') && (

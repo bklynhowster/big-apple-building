@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef } from 'react';
 import { parseApiError, type ApiError } from '@/types/api-error';
 import { useTrackedFetch } from '@/hooks/useTrackedFetch';
+import { fetchDobViolationsDirect } from '@/utils/dobViolationsDirect';
 
 export interface ViolationRecord {
   recordType: string;
@@ -76,37 +77,16 @@ export function useViolations(bbl?: string | null): UseViolationsReturn {
     const filtersToUse = targetFilters || appliedFilters;
 
     try {
-      const queryParams: Record<string, string> = {
-        bbl: targetBBL,
-        limit: String(DEFAULT_LIMIT),
-        offset: String(targetOffset),
-      };
-
-      if (filtersToUse.status !== 'all') queryParams.status = filtersToUse.status;
-      if (filtersToUse.fromDate) queryParams.fromDate = filtersToUse.fromDate;
-      if (filtersToUse.toDate) queryParams.toDate = filtersToUse.toDate;
-      if (filtersToUse.keyword) queryParams.q = filtersToUse.keyword;
-
-      const baseUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/dob-violations`;
-      const urlParams = new URLSearchParams(queryParams);
-      const fullUrl = `${baseUrl}?${urlParams.toString()}`;
-
-      const response = await trackedFetch(fullUrl, queryParams, {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-          'apikey': import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
-        },
+      // Use direct NYC Open Data query (bypasses edge function which has
+      // a zero-padding bug that causes missing DOB violation results)
+      const result = await fetchDobViolationsDirect(targetBBL, {
+        limit: DEFAULT_LIMIT,
+        offset: targetOffset,
+        status: filtersToUse.status,
+        fromDate: filtersToUse.fromDate,
+        toDate: filtersToUse.toDate,
+        keyword: filtersToUse.keyword,
       });
-
-      if (!response.ok) {
-        const apiError = await parseApiError(response);
-        setError(apiError);
-        setData(null);
-        return;
-      }
-
-      const result: ViolationsApiResponse = await response.json();
       setData(result);
       setOffset(targetOffset);
     } catch (err) {

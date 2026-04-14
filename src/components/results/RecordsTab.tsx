@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   FileText,
@@ -240,6 +240,31 @@ export function RecordsTab({
   }, [openSections, setSectionOpen, showDebug]);
 
   // =========================
+  // Auto-expand + scroll when navigating from Risk Snapshot chips
+  // Reads ?section= param (e.g., ?section=ecb) and opens that accordion section
+  // =========================
+  const sectionParam = searchParams.get('section');
+  const lastScrolledSection = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!sectionParam || sectionParam === lastScrolledSection.current) return;
+    const validSections: SectionKey[] = ['dob', 'ecb', 'safety', 'permits', 'hpd', '311'];
+    if (validSections.includes(sectionParam as SectionKey)) {
+      lastScrolledSection.current = sectionParam;
+      // Small delay to let the lazy TabsContent render its children
+      setTimeout(() => {
+        handleScrollToSection(sectionParam);
+        // Clean up the section param from URL after scrolling
+        setSearchParams((prev) => {
+          const p = new URLSearchParams(prev);
+          p.delete('section');
+          return p;
+        }, { replace: true });
+      }, 200);
+    }
+  }, [sectionParam, handleScrollToSection, setSearchParams]);
+
+  // =========================
   // UNIT MENTIONS MODE RENDER
   // =========================
   if (isUnitMentionsMode) {
@@ -356,7 +381,7 @@ export function RecordsTab({
       />
       
       {/* Standard Summary header */}
-      <div className="flex items-center justify-between">
+      <div id="records-top" className="flex items-center justify-between">
         <div>
           <h2 className="text-lg font-semibold">Building Records</h2>
           <p className="text-sm text-muted-foreground">

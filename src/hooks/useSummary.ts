@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { logRecordFetch } from '@/utils/recordStatus';
+import { fetchDobViolationsDirect } from '@/utils/dobViolationsDirect';
 
 interface SummaryData {
   violations: {
@@ -121,8 +122,10 @@ export function useSummary(bbl?: string | null): UseSummaryResult {
       const signal = abortControllerRef.current.signal;
 
       // Fetch all endpoints in parallel
+      // NOTE: DOB violations uses direct NYC Open Data query (bypasses edge function
+      // which has a zero-padding bug that causes missing results)
       const [violationsRes, ecbRes, permitsRes, safetyRes] = await Promise.all([
-        fetchEndpoint(baseUrl, 'dob-violations', bbl, apiKey, signal),
+        fetchDobViolationsDirect(bbl, { limit: 200, signal }),
         fetchEndpoint(baseUrl, 'dob-ecb', bbl, apiKey, signal),
         fetchEndpoint(baseUrl, 'dob-permits', bbl, apiKey, signal),
         fetchEndpoint(baseUrl, 'dob-safety', bbl, apiKey, signal),

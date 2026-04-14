@@ -8,6 +8,7 @@ import { ResultsContextRail } from '@/components/results/ResultsContextRail';
 import { BuildingHeader } from '@/components/results/BuildingHeader';
 import { PropertyProfileCard } from '@/components/results/PropertyProfileCard';
 import { RiskSnapshotCard, type RecordCounts, type LoadingStates, type RecordArrays, type NavigationInfo } from '@/components/results/RiskSnapshotCard';
+import { computeUbCounts } from '@/utils/ubViolations';
 import brooklynBridgeLines from '@/assets/brooklyn-bridge-lines.png';
 
 import { ResidentialUnitsCard } from '@/components/results/ResidentialUnitsCard';
@@ -18,6 +19,8 @@ import { OverviewTab } from '@/components/results/OverviewTab';
 import { UnitsTab, type CondoMeta } from '@/components/results/UnitsTab';
 import { RecordsTab } from '@/components/results/RecordsTab';
 import { FinanceTab } from '@/components/results/FinanceTab';
+import { SingleScrollLayout } from '@/components/results/SingleScrollLayout';
+import { CondoUnitDetailV2 } from '@/components/results/CondoUnitDetailV2';
 import { QueryDebugPanel } from '@/components/results/QueryDebugPanel';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
@@ -30,6 +33,7 @@ import { usePropertyProfile } from '@/hooks/usePropertyProfile';
 import { useHPDViolations, useHPDComplaints } from '@/hooks/useHPD';
 import { use311 } from '@/hooks/use311';
 import { useCoopUnitRoster } from '@/hooks/useCoopUnitRoster';
+import { useAcrisUnitRoster } from '@/hooks/useAcrisUnitRoster';
 import { useDobJobFilings } from '@/hooks/useDobJobFilings';
 import { useViolations } from '@/hooks/useViolations';
 import { useECB } from '@/hooks/useECB';
@@ -62,6 +66,10 @@ export default function Results() {
   // Debug mode
   const showDebug = searchParams.get('debug') === '1';
 
+  // V2 single-scroll layout flag
+  // V2 layout is now the default — opt OUT with ?v=1
+  const isV2Layout = searchParams.get('v') !== '1';
+
   // Derive active tab directly from URL (single source of truth)
   const urlTab = searchParams.get('tab');
   const activeTab = isValidTab(urlTab) ? urlTab : 'overview';
@@ -70,8 +78,8 @@ export default function Results() {
   const address = searchParams.get('address') || '';
   const borough = searchParams.get('borough') || '';
   const bin = searchParams.get('bin') || '';
-  const latitude = searchParams.get('lat') ? parseFloat(searchParams.get('lat')!) : undefined;
-  const longitude = searchParams.get('lon') ? parseFloat(searchParams.get('lon')!) : undefined;
+  const latitudeFromUrl = searchParams.get('lat') ? parseFloat(searchParams.get('lat')!) : undefined;
+  const longitudeFromUrl = searchParams.get('lon') ? parseFloat(searchParams.get('lon')!) : undefined;
   const unitContextParam = searchParams.get('unitContext') || null;
   const unitLabelFromUrl = searchParams.get('unitLabel') || null;
   const unitBblFromUrl = searchParams.get('unitBbl') || null;
@@ -152,7 +160,20 @@ export default function Results() {
 
   // Get property profile using the effective BBL (building for units, current for buildings)
   const { profile, loading: profileLoading } = usePropertyProfile(isEffectiveBblValid ? effectiveBbl : null);
-  
+
+  // Lat/lon: prefer URL params, fall back to PLUTO data from property profile
+  const latitude = useMemo(() => {
+    if (latitudeFromUrl !== undefined && !isNaN(latitudeFromUrl)) return latitudeFromUrl;
+    const plutoLat = profile?.raw?.latitude ?? profile?.raw?.lat;
+    return plutoLat ? parseFloat(String(plutoLat)) : undefined;
+  }, [latitudeFromUrl, profile?.raw]);
+
+  const longitude = useMemo(() => {
+    if (longitudeFromUrl !== undefined && !isNaN(longitudeFromUrl)) return longitudeFromUrl;
+    const plutoLon = profile?.raw?.longitude ?? profile?.raw?.lon;
+    return plutoLon ? parseFloat(String(plutoLon)) : undefined;
+  }, [longitudeFromUrl, profile?.raw]);
+
   // Derive isCoopInferred from new two-layer ownership system:
   // Show as co-op if ownership.type === 'Cooperative' AND score >= 8
   const isCoopInferred = profile?.ownership?.type === 'Cooperative' && 
@@ -196,6 +217,7 @@ export default function Results() {
   const hpdComplaints = useHPDComplaints(isEffectiveBblValid ? effectiveBbl : null);
   const threeOneOne = use311(latitude, longitude);
   const coopUnitRoster = useCoopUnitRoster();
+  const acrisUnitRoster = useAcrisUnitRoster();
   const dobJobFilings = useDobJobFilings();
   const dobViolationsHook = useViolations(isEffectiveBblValid ? effectiveBbl : null);
   const ecbHook = useECB(isEffectiveBblValid ? effectiveBbl : null);
@@ -263,6 +285,15 @@ export default function Results() {
     if (isCoop) {
       coopUnitRoster.fetch(effectiveBbl);
     }
+
+    // ACRIS transactions — fetch for BOTH condos and co-ops
+    // Co-ops have building-level transactions (share transfers, mortgages, assignments)
+    // Condos have unit-level transactions via individual lot BBLs
+    {
+      const addrMatch = address.match(/^(\d+\S*)\s+(.+)/);
+      const addrHint = addrMatch ? { streetNumber: addrMatch[1], streetName: addrMatch[2].replace(/,.*/, '').trim() } : null;
+      acrisUnitRoster.fetch(effectiveBbl, addrHint);
+    }
     
     if (bin) {
       dobJobFilings.fetch(bin);
@@ -272,37 +303,52 @@ export default function Results() {
     }
     dataFetchedRef.current = true;
     lastFetchedBblRef.current = effectiveBbl;
-  }, [isEffectiveBblValid, effectiveBbl, bin, latitude, longitude, isCoop]);
-  
+  }, [isEffectiveBblValid, effectiveBbl, bin, latitude, longitude, isCoop, address]);
+
+  // Re-fetch 311 when lat/lon becomes available from PLUTO (delayed resolution)
+  const threeOneOneFetchedRef = useRef(false);
+  useEffect(() => {
+    if (latitudeFromUrl !== undefined) return; // Already had coords from URL, skip
+    if (latitude === undefined || longitude === undefined) return;
+    if (threeOneOneFetchedRef.current) return;
+    threeOneOneFetchedRef.current = true;
+    threeOneOne.fetch(latitude, longitude);
+  }, [latitude, longitude, latitudeFromUrl]);
+
   // Compute record counts for Risk Snapshot
   const recordCounts: RecordCounts = useMemo(() => {
     const countOpen = <T extends { status?: string }>(items: T[]) => 
       items.filter(item => item.status === 'open').length;
     
+    // Use totalApprox (real server count) when available, fall back to items.length (page-capped)
+    const ub = computeUbCounts(dobViolationsHook.items);
     return {
-      dobViolations: dobViolationsHook.items.length,
+      unsafeBuilding: ub.total,
+      unsafeBuildingActive: ub.active + ub.precept,
+      unsafeBuildingOpen: ub.open,
+      dobViolations: dobViolationsHook.data?.totalApprox ?? dobViolationsHook.items.length,
       dobViolationsOpen: countOpen(dobViolationsHook.items),
-      ecbViolations: ecbHook.items.length,
+      ecbViolations: ecbHook.data?.totalApprox ?? ecbHook.items.length,
       ecbViolationsOpen: countOpen(ecbHook.items),
-      hpdViolations: hpdViolations.items.length,
+      hpdViolations: hpdViolations.data?.totalApprox ?? hpdViolations.items.length,
       hpdViolationsOpen: hpdViolations.items.filter(item => item.status === 'open').length,
-      hpdComplaints: hpdComplaints.items.length,
+      hpdComplaints: hpdComplaints.data?.totalApprox ?? hpdComplaints.items.length,
       hpdComplaintsOpen: hpdComplaints.items.filter(item => item.status === 'open').length,
-      serviceRequests: threeOneOne.items.length,
+      serviceRequests: threeOneOne.data?.totalApprox ?? threeOneOne.items.length,
       serviceRequestsOpen: threeOneOne.items.filter(item => item.status === 'open').length,
-      dobPermits: permitsHook.items.length,
-      salesRecords: coopUnitRoster.units.length,
+      dobPermits: permitsHook.data?.totalApprox ?? permitsHook.items.length,
+      salesRecords: acrisUnitRoster.units.length,
       dobFilingsUnits: dobJobFilings.units.length,
     };
   }, [
-    dobViolationsHook.items,
-    ecbHook.items,
-    hpdViolations.items,
-    hpdComplaints.items,
-    threeOneOne.items,
-    permitsHook.items,
-    coopUnitRoster.units,
-    dobJobFilings.units,
+    dobViolationsHook.items, dobViolationsHook.data,
+    ecbHook.items, ecbHook.data,
+    hpdViolations.items, hpdViolations.data,
+    hpdComplaints.items, hpdComplaints.data,
+    threeOneOne.items, threeOneOne.data,
+    permitsHook.items, permitsHook.data,
+    coopUnitRoster.units, acrisUnitRoster.units,
+    dobJobFilings.units, isCoop,
   ]);
   
   const riskSnapshotLoading: LoadingStates = useMemo(() => ({
@@ -312,7 +358,7 @@ export default function Results() {
     hpdComplaints: hpdComplaints.loading,
     serviceRequests: threeOneOne.loading,
     dobPermits: permitsHook.loading,
-    salesRecords: coopUnitRoster.loading,
+    salesRecords: acrisUnitRoster.loading,
     dobFilingsUnits: dobJobFilings.loading,
   }), [
     dobViolationsHook.loading,
@@ -321,8 +367,8 @@ export default function Results() {
     hpdComplaints.loading,
     threeOneOne.loading,
     permitsHook.loading,
-    coopUnitRoster.loading,
-    dobJobFilings.loading,
+    coopUnitRoster.loading, acrisUnitRoster.loading,
+    dobJobFilings.loading, isCoop,
   ]);
   
   // Record arrays for trend analysis
@@ -333,8 +379,8 @@ export default function Results() {
     hpdComplaints: hpdComplaints.items,
     serviceRequests: threeOneOne.items,
     dobPermits: permitsHook.items,
-    // Sales and filings use lastSeen as proxy for trend analysis
-    salesRecords: coopUnitRoster.units.map(u => ({ issueDate: u.lastSeen })),
+    // Sales and filings use lastTransactionDate as proxy for trend analysis
+    salesRecords: acrisUnitRoster.units.map(u => ({ issueDate: u.lastTransactionDate })),
     dobFilingsUnits: dobJobFilings.units.map(u => ({ issueDate: u.lastSeen })),
   }), [
     dobViolationsHook.items,
@@ -377,7 +423,22 @@ export default function Results() {
   // Prefer unitLabel from URL (navigation), fallback to roster lookup
   const currentUnitLabel = unitLabelFromUrl || condoMeta.unitLabel;
   const isCondoBuilding = condoMeta.isCondo;
-  
+
+  // Re-fetch record hooks with billingBbl when condo roster resolves a different building BBL
+  // This ensures Risk Snapshot counts match what the sub-tabs display
+  const billingBblRefetchedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!billingBbl || billingBbl === effectiveBbl) return;
+    if (billingBblRefetchedRef.current === billingBbl) return;
+    billingBblRefetchedRef.current = billingBbl;
+
+    hpdViolations.fetch(billingBbl);
+    hpdComplaints.fetch(billingBbl);
+    dobViolationsHook.fetchViolations(billingBbl);
+    ecbHook.fetchECB(billingBbl);
+    permitsHook.fetchPermits(billingBbl);
+  }, [billingBbl, effectiveBbl]);
+
   // Co-op unit context (UI-only, no API calls) - initialized from URL
   const [coopUnitContext, setCoopUnitContext] = useState<string | null>(unitContextParam);
   
@@ -428,6 +489,17 @@ export default function Results() {
     }
   }, [bbl, isUnitLot, isCoop]);
   
+  // ===== BUILDING-LEVEL TAX DATA (for v2 layout health strip) =====
+  const buildingTaxes = usePropertyTaxes();
+  const buildingTaxFetchedRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!isV2Layout || !isEffectiveBblValid) return;
+    if (buildingTaxFetchedRef.current === effectiveBbl) return;
+    buildingTaxFetchedRef.current = effectiveBbl;
+    buildingTaxes.fetch(effectiveBbl);
+  }, [isV2Layout, isEffectiveBblValid, effectiveBbl, buildingTaxes.fetch]);
+
   // ===== UNIT MODE DATA =====
   // Unit-level taxes (only fetched in unit mode)
   const unitTaxes = usePropertyTaxes();
@@ -621,8 +693,8 @@ export default function Results() {
           {/* Results - render tabs only when we have a valid BBL */}
           {isValidBBL && (
             <div className="space-y-4 sm:space-y-6">
-              {/* Context Rail - ONLY in Unit Mode (Building Mode uses BuildingHeader) */}
-              {isUnitMode && (
+              {/* Context Rail - ONLY in Unit Mode V1 (V2 uses CondoUnitDetailV2 which has its own header) */}
+              {isUnitMode && !(isV2Layout && (isCondoBuilding || isUnitLot || Boolean(buildingBblParam))) && (
                 <ResultsContextRail
                   address={buildingAddressParam || address}
                   borough={borough}
@@ -691,10 +763,32 @@ export default function Results() {
               )}
               
               {/* ===== UNIT MODE LAYOUT ===== */}
-              {/* In Unit Mode: Tabs first, then Building Context in collapsible */}
-              {isUnitMode ? (
+              {/* V2 Condo Unit Detail — single-scroll redesign */}
+              {/* Activate V2 if: condo roster says condo, OR unit lot is in 1001-6999 range (condo unit), OR buildingBbl param present */}
+              {isUnitMode && isV2Layout && (isCondoBuilding || isUnitLot || Boolean(buildingBblParam)) ? (
+                <CondoUnitDetailV2
+                  unitLabel={currentUnitLabel}
+                  unitBbl={unitBblFromUrl || bbl}
+                  buildingBbl={buildingBblParam || effectiveBbl}
+                  address={address}
+                  borough={borough}
+                  bin={bin}
+                  lotNumber={lotNumber > 0 ? String(lotNumber) : null}
+                  taxData={unitTaxes.data}
+                  taxLoading={unitTaxes.loading}
+                  acrisUnits={acrisUnitRoster.units}
+                  acrisLoading={acrisUnitRoster.loading}
+                  unitMentions={currentUnitMentions}
+                  mentionsScanning={unitMentionsLoading}
+                  recordCounts={recordCounts}
+                  isCondo={true}
+                  lat={latitude}
+                  lon={longitude}
+                  onBackToBuilding={handleBackToBuilding}
+                />
+              ) : isUnitMode ? (
                 <>
-                  {/* Tabs - Primary content in Unit Mode */}
+                  {/* Tabs - Primary content in Unit Mode (v1 tabbed layout) */}
                   <div id="results-tabs" className="scroll-mt-24">
                     <Tabs ref={tabsRef} value={activeTab} onValueChange={handleTabChange} className="w-full">
                       {/* Mobile: horizontally scrollable tab strip */}
@@ -772,6 +866,7 @@ export default function Results() {
                             borough={borough}
                             bin={bin}
                             isCoop={isCoop}
+                            totalUnits={profile?.totalUnits}
                             condoRoster={condoRoster}
                             rosterQueryBbl={condoRosterQueryBbl}
                           />
@@ -803,8 +898,65 @@ export default function Results() {
                     </Tabs>
                   </div>
                 </>
+              ) : isV2Layout ? (
+                /* ===== V2 SINGLE-SCROLL LAYOUT ===== */
+                <SingleScrollLayout
+                  address={address}
+                  borough={borough}
+                  bbl={bbl}
+                  effectiveBbl={effectiveBbl}
+                  bin={bin}
+                  latitude={latitude}
+                  longitude={longitude}
+                  isCoop={isCoop}
+                  isCondoBuilding={isCondoBuilding}
+                  isUnitLot={isUnitLot}
+                  profileLoading={profileLoading}
+                  totalUnits={profile?.totalUnits}
+                  condoMeta={condoMeta}
+                  landmarkStatus={landmarkStatus}
+                  onOwnershipOverrideChange={handleOwnershipOverrideChange}
+                  recordCounts={recordCounts}
+                  riskSnapshotLoading={riskSnapshotLoading}
+                  riskSnapshotRecords={riskSnapshotRecords}
+                  hpdViolations={hpdViolations.items}
+                  hpdComplaints={hpdComplaints.items}
+                  serviceRequests={threeOneOne.items}
+                  salesUnits={coopUnitRoster.units}
+                  dobFilingsUnits={dobJobFilings.units}
+                  dobFilings={dobJobFilings.filings}
+                  dobViolations={dobViolationsHook.items}
+                  ecbViolations={ecbHook.items}
+                  dobPermits={permitsHook.items}
+                  loadingStates={{
+                    filings: dobJobFilings.loading || coopUnitRoster.loading,
+                    permits: permitsHook.loading,
+                    hpd: hpdViolations.loading || hpdComplaints.loading,
+                    threeOneOne: threeOneOne.loading,
+                    violations: dobViolationsHook.loading,
+                    ecb: ecbHook.loading,
+                  }}
+                  coopUnitContext={coopUnitContext}
+                  onCoopUnitContextChange={handleCoopUnitContextChange}
+                  rosterError={coopUnitRoster.error}
+                  salesWarning={coopUnitRoster.warning}
+                  dobNowUrl={dobJobFilings.dobNowUrl}
+                  fallbackMode={dobJobFilings.fallbackMode}
+                  condoRoster={condoRoster}
+                  condoRosterQueryBbl={condoRosterQueryBbl}
+                  taxData={buildingTaxes.data}
+                  taxLoading={buildingTaxes.loading}
+                  acrisUnits={acrisUnitRoster.units}
+                  acrisLoading={acrisUnitRoster.loading}
+                  navigate={navigate}
+                  queryBbl={queryBbl}
+                  billingBbl={billingBbl}
+                  buildingBblParam={buildingBblParam}
+                  buildingAddressParam={buildingAddressParam}
+                  scope={scope}
+                />
               ) : (
-                /* ===== BUILDING MODE LAYOUT ===== */
+                /* ===== BUILDING MODE LAYOUT (v1 tabs) ===== */
                 /* Standard layout: Single authoritative header, then content cards, then tabs */
                 <>
                   {/* Building Header - Single authoritative introduction */}
@@ -889,8 +1041,9 @@ export default function Results() {
                     dobNowUrl={dobJobFilings.dobNowUrl}
                     fallbackMode={dobJobFilings.fallbackMode}
                     hideWhenEmpty={true}
+                    onNavigateToRecord={(sectionKey) => handleTabChange(`records?section=${sectionKey}`)}
                   />
-                  
+
                   {/* Taxes - Single integration point via TaxesPanel */}
                   <TaxesPanel
                     context={isUnitLot ? 'unit' : 'building'}
@@ -971,6 +1124,7 @@ export default function Results() {
                             borough={borough}
                             bin={bin}
                             isCoop={isCoop}
+                            totalUnits={profile?.totalUnits}
                             condoRoster={condoRoster}
                             rosterQueryBbl={condoRosterQueryBbl}
                           />

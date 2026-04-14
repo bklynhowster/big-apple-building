@@ -36,7 +36,7 @@ const DrawerContent = React.forwardRef<
       )}
       style={{
         WebkitOverflowScrolling: 'touch',
-        overscrollBehavior: 'contain',
+        overscrollBehavior: 'auto',
       }}
       {...props}
     >

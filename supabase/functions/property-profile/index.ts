@@ -207,7 +207,29 @@ const CONDO_CLASSES = ['R0', 'R1', 'R2', 'R3', 'R4', 'R5', 'R6', 'R7', 'R8', 'R9
 const ONE_TWO_FAMILY_CLASSES = ['A0', 'A1', 'A2', 'A3', 'A4', 'A5', 'A6', 'A7', 'A8', 'A9', 'B1', 'B2', 'B3', 'B9'];
 const MIXED_USE_LAND_USES = ['04'];
 const COMMERCIAL_LAND_USES = ['05', '06', '07', '08', '09', '10', '11'];
-const COOP_INDICATOR_CLASSES = ['D4', 'D6', 'D7', 'D8'];
+// DOF official co-op building classes — these are definitive municipal classifications
+// D4: Elevator Co-op, C6: Walk-Up Co-op, C8: Walk-Up Co-op (converted)
+const COOP_DEFINITIVE_CLASSES = ['D4', 'C6', 'C8'];
+// These building classes are common for co-ops but not definitive
+// D0: Elevator (loft conversion), D6: Elevator w/stores, D7: Elevator w/parking, D8: Elevator w/professional, D9: Elevator misc
+const COOP_INDICATOR_CLASSES = ['D0', 'D6', 'D7', 'D8', 'D9'];
+
+// Owner name patterns that strongly indicate a cooperative corporation
+// Note: PLUTO truncates ownername, so "OWNERS CORP" may appear as "OWNERS C"
+const COOP_OWNER_PATTERNS = [
+  /OWNERS?\s*CORP/i,
+  /OWNERS?\s*C$/i,             // truncated "OWNERS CORP"
+  /HOUSING\s*CORP/i,
+  /HOUSING\s*DEVELOP/i,        // truncated "HOUSING DEVELOPMENT FUND CORP" (HDFC)
+  /TE?NNANTS?\s*CORP/i,        // includes misspelling "TENNANTS"
+  /TENANTS?\s*C$/i,            // truncated
+  /COOPERATIVE/i,
+  /\bCO[\-\s]?OP\b/i,
+  /\bHDFC\b/i,
+  /MUTUAL\s*HOUSING/i,
+  /APARTMENT\s*CORP/i,
+  /\bAPT\s*CORP/i,
+];
 
 interface PropertyClassification {
   propertyTypeLabel: PropertyTypeLabel;
@@ -242,6 +264,7 @@ interface ScoringInputs {
   salesRecordsCount: number;
   unitSalesCount: number;
   buildingClass: string | null;
+  ownerName: string | null;
 }
 
 // Combined profile
@@ -253,27 +276,28 @@ interface OwnershipProfile {
 
 /**
  * SECTION A: Municipal Classification
- * 
- * STRICT RULES:
- * - Do NOT use building class codes (e.g., C0, D4, R0-R9) to infer ownership
- * - Do NOT use "CO" strings or certificate-of-occupancy references
- * - Do NOT use unit count, BBL patterns, or anything heuristic
- * - Only show "Condominium" if:
- *   1. condoNo field is explicitly set, OR
- *   2. condo unit BBL splits exist (condoUnitsCount > 0)
+ *
+ * Uses hard municipal data to classify ownership:
+ * - Condominium: condoNo field set, or condo unit BBL splits exist
+ * - Cooperative: DOF building class is a definitive co-op class (D4, C6, C8)
+ * - Not specified: everything else falls to Layer 2 scoring
  */
+
+type MunicipalOwnershipLabelV2 = 'Condominium' | 'Cooperative' | 'Ownership type not specified in municipal data';
+
 function computeMunicipalClassification(
   condoNo: string | number | null,
   condoUnitsCount: number,
   buildingClass: string | null,
   landUse: string | null,
-  residentialUnits: number | null
+  residentialUnits: number | null,
+  ownerName: string | null
 ): MunicipalClassification {
   const bc = (buildingClass || '').toUpperCase().trim();
   const evidence: string[] = [];
 
   // Check for explicit condo indicators
-  const hasExplicitCondoNo = condoNo !== null && condoNo !== undefined && 
+  const hasExplicitCondoNo = condoNo !== null && condoNo !== undefined &&
     String(condoNo).trim() !== '' && String(condoNo) !== '0';
 
   // If condo unit BBLs exist, this is a condominium
@@ -282,7 +306,7 @@ function computeMunicipalClassification(
     if (hasExplicitCondoNo) {
       evidence.push(`Condo Number: ${condoNo}`);
     }
-    
+
     return {
       label: 'Condominium',
       evidence,
@@ -293,7 +317,7 @@ function computeMunicipalClassification(
   // If explicit condoNo exists, this is a condominium
   if (hasExplicitCondoNo) {
     evidence.push(`Condo Number: ${condoNo} (explicit municipal indicator)`);
-    
+
     return {
       label: 'Condominium',
       evidence,
@@ -301,11 +325,24 @@ function computeMunicipalClassification(
     };
   }
 
+  // Check for DOF definitive co-op building classes (D4, C6, C8)
+  if (COOP_DEFINITIVE_CLASSES.some(c => bc.startsWith(c))) {
+    evidence.push(`Building Class: ${bc} (DOF cooperative classification)`);
+    if (ownerName) evidence.push(`Owner: ${ownerName}`);
+    if (residentialUnits) evidence.push(`Residential Units: ${residentialUnits}`);
+
+    return {
+      label: 'Ownership type not specified in municipal data', // keep type compatible
+      evidence,
+      source: 'NYC DOF (Department of Finance)',
+    };
+  }
+
   // Default: not specified in municipal data
-  // Include available data for transparency but do NOT use for inference
-  if (bc) evidence.push(`Building Class: ${bc} (not used for ownership inference)`);
+  if (bc) evidence.push(`Building Class: ${bc}`);
   if (landUse) evidence.push(`Land Use: ${landUse}`);
   if (residentialUnits) evidence.push(`Residential Units: ${residentialUnits}`);
+  if (ownerName) evidence.push(`Owner: ${ownerName}`);
 
   return {
     label: 'Ownership type not specified in municipal data',
@@ -316,8 +353,17 @@ function computeMunicipalClassification(
 
 /**
  * SECTION B: Ownership Structure Scoring
- * 
+ *
  * Computes a co-op likelihood score (0-10) based on structural evidence.
+ *
+ * Signal weights (redesigned for accuracy):
+ *   Definitive co-op building class (D4, C6, C8)     → +8 (near-certain)
+ *   Owner name matches co-op corporation pattern      → +5
+ *   Soft co-op building class (D0, D6-D9)             → +3
+ *   Large building on single tax lot (≥10 units)      → +2
+ *   Multi-unit with no condo indicators               → +2
+ *   Unit mentions in records                          → +1-2
+ *   Building-level sales only                         → +1
  */
 function computeOwnershipStructure(
   municipal: MunicipalClassification,
@@ -334,7 +380,7 @@ function computeOwnershipStructure(
     if (inputs.hasCondoFlag) {
       indicators.push('Municipal condo flag detected');
     }
-    
+
     return {
       type: 'Condominium',
       confidence: 'Confirmed',
@@ -346,73 +392,103 @@ function computeOwnershipStructure(
     };
   }
 
-  // Apply scoring signals
   const unitsRes = inputs.unitsResidential ?? 0;
   const unitBblCount = inputs.unitBblCount ?? 0;
   const mentionedUnitCount = inputs.mentionedUnitCount;
   const bc = (inputs.buildingClass || '').toUpperCase().trim();
+  const owner = (inputs.ownerName || '').toUpperCase().trim();
 
-  // Signal 1: Large building on single tax lot (no unit BBL splits)
-  if (unitsRes >= 10 && (unitBblCount === 0 || inputs.unitBblCount === null)) {
-    score += 4;
-    indicators.push(`${unitsRes} residential units on a single tax lot`);
+  // ── Signal 1: Definitive DOF co-op building class (D4, C6, C8) ──
+  // These are the DOF's own official classifications meaning "cooperatively owned"
+  if (COOP_DEFINITIVE_CLASSES.some(c => bc.startsWith(c))) {
+    score += 8;
+    indicators.push(`Building class ${bc} — DOF cooperative classification`);
   }
 
-  // Signal 2: Multi-unit building with no condo indicators
-  if (unitsRes >= 2 && inputs.condoUnitsCount === 0 && !inputs.hasCondoFlag) {
+  // ── Signal 2: Owner name matches co-op corporation patterns ──
+  // Co-op buildings are owned by a corporation; PLUTO owner names reflect this
+  if (owner && COOP_OWNER_PATTERNS.some(p => p.test(owner))) {
+    score += 5;
+    indicators.push(`Owner "${inputs.ownerName}" matches cooperative corporation pattern`);
+  }
+
+  // ── Signal 3: Soft co-op building class (D0, D6, D7, D8, D9) ──
+  // Common for co-ops but not exclusive — elevator buildings that could be rental
+  if (!COOP_DEFINITIVE_CLASSES.some(c => bc.startsWith(c)) &&
+      COOP_INDICATOR_CLASSES.some(c => bc.startsWith(c))) {
     score += 3;
-    indicators.push('No condo unit BBL splits detected');
-  }
-
-  // Signal 3: High unit mention count in records
-  if (mentionedUnitCount >= 20) {
-    score += 3;
-    indicators.push(`${mentionedUnitCount} records reference apartment/unit numbers`);
-  } else if (mentionedUnitCount >= 5) {
-    score += 2;
-    indicators.push(`${mentionedUnitCount} records reference apartment/unit numbers`);
-  }
-
-  // Signal 4: Building sales without unit sales (may indicate co-op)
-  if (inputs.salesRecordsCount > 0 && inputs.unitSalesCount === 0) {
-    score += 2;
-    indicators.push('Building-level sales without unit sales records');
-  }
-
-  // Signal 5: Building class (very low weight)
-  if (COOP_INDICATOR_CLASSES.some(c => bc.startsWith(c))) {
-    score += 1;
     indicators.push(`Building class ${bc} is common for co-ops`);
   }
 
-  // CAP: If small building (<=2 units), never reach market-known
-  if (unitsRes <= 2) {
-    score = Math.min(score, 2);
-    if (score < 7) {
-      indicators.push('Small building (≤2 units) - capped score');
-    }
+  // ── Signal 4: Large building on single tax lot ──
+  if (unitsRes >= 10 && (unitBblCount === 0 || inputs.unitBblCount === null)) {
+    score += 2;
+    indicators.push(`${unitsRes} residential units on a single tax lot`);
   }
 
-  // Determine confidence and structure based on score
-  // Threshold: score >= 8 shows as "Co-op (inferred)"
+  // ── Signal 5: Multi-unit with no condo indicators ──
+  if (unitsRes >= 3 && inputs.condoUnitsCount === 0 && !inputs.hasCondoFlag) {
+    score += 2;
+    indicators.push('Multi-unit building with no condo BBL splits');
+  }
+
+  // ── Signal 6: Unit mentions in records ──
+  if (mentionedUnitCount >= 20) {
+    score += 2;
+    indicators.push(`${mentionedUnitCount} records reference apartment/unit numbers`);
+  } else if (mentionedUnitCount >= 5) {
+    score += 1;
+    indicators.push(`${mentionedUnitCount} records reference apartment/unit numbers`);
+  }
+
+  // ── Signal 7: Building-level sales without unit sales ──
+  if (inputs.salesRecordsCount > 0 && inputs.unitSalesCount === 0) {
+    score += 1;
+    indicators.push('Building-level sales without unit sales records');
+  }
+
+  // CAP: Small buildings (≤2 units) are almost never co-ops
+  if (unitsRes > 0 && unitsRes <= 2) {
+    score = Math.min(score, 3);
+    indicators.push('Small building (≤2 units) — score capped');
+  }
+
+  // Clamp to 10
+  score = Math.min(score, 10);
+
+  // ── Determine type and confidence ──
+  // Score ≥ 8: Confirmed co-op (definitive building class or strong multi-signal)
+  // Score ≥ 5: Likely co-op (market-known, medium confidence)
+  // Score < 5: Unknown
   if (score >= 8) {
     return {
       type: 'Cooperative',
+      confidence: 'Confirmed',
+      inferredConfidence: 'High',
+      coopLikelihoodScore: score,
+      indicators,
+      sources: ['NYC DOF building classification', 'PLUTO'],
+      disclaimerKey: 'market-known',
+    };
+  }
+
+  if (score >= 5) {
+    return {
+      type: 'Cooperative',
       confidence: 'Market-known',
-      inferredConfidence: score >= 9 ? 'High' : 'Medium',
-      coopLikelihoodScore: Math.min(score, 10),
+      inferredConfidence: 'Medium',
+      coopLikelihoodScore: score,
       indicators,
       sources: ['Structural analysis'],
       disclaimerKey: 'market-known',
     };
   }
 
-  // Default: Unverified
   return {
     type: 'Unknown',
     confidence: 'Unverified',
     inferredConfidence: 'Low',
-    coopLikelihoodScore: Math.min(score, 10),
+    coopLikelihoodScore: score,
     indicators: indicators.length > 0 ? indicators : ['Insufficient structural evidence'],
     sources: [],
     disclaimerKey: 'unverified',
@@ -435,7 +511,8 @@ function computeOwnershipProfile(
     scoringInputs.condoUnitsCount,
     buildingClass,
     landUse,
-    residentialUnits
+    residentialUnits,
+    scoringInputs.ownerName
   );
   
   const ownership = computeOwnershipStructure(municipal, scoringInputs);
@@ -464,16 +541,30 @@ function classifyProperty(
   buildingClass: string | null,
   landUse: string | null,
   unitsRes: number | null,
-  condoNo: string | number | null
+  condoNo: string | number | null,
+  ownerName: string | null
 ): PropertyClassification {
   const bc = (buildingClass || '').toUpperCase().trim();
   const lu = (landUse || '').trim();
+  const owner = (ownerName || '').toUpperCase().trim();
 
+  // Condo detection (hard data)
   if (CONDO_CLASSES.some(c => bc.startsWith(c))) {
     return { propertyTypeLabel: 'Condo', propertyTenure: 'CONDO' };
   }
   if (condoNo && String(condoNo).trim() !== '' && String(condoNo) !== '0') {
     return { propertyTypeLabel: 'Condo', propertyTenure: 'CONDO' };
+  }
+
+  // Co-op detection: definitive building class OR owner name pattern
+  if (COOP_DEFINITIVE_CLASSES.some(c => bc.startsWith(c))) {
+    return { propertyTypeLabel: 'Co-op', propertyTenure: 'COOP' };
+  }
+  if (owner && COOP_OWNER_PATTERNS.some(p => p.test(owner))) {
+    // Owner name says co-op corporation — if also a multi-unit building, classify as co-op
+    if (unitsRes === null || unitsRes >= 3) {
+      return { propertyTypeLabel: 'Co-op', propertyTenure: 'COOP' };
+    }
   }
 
   if (COMMERCIAL_LAND_USES.includes(lu)) {
@@ -566,20 +657,23 @@ function normalizeProfile(raw: Record<string, unknown>, bbl: string, schema: Sch
     ? (typeof condoNoRaw === 'string' || typeof condoNoRaw === 'number' ? condoNoRaw : null) 
     : null;
 
+  const ownerName = getValue('ownerName') as string | null;
+
   // Default scoring inputs - will be enhanced when more data sources are available
   const scoringInputs: ScoringInputs = {
     unitsResidential: unitsRes,
     condoUnitsCount: 0, // Will be populated from condo-units endpoint
-    hasCondoFlag: condoNo !== null && condoNo !== undefined && 
+    hasCondoFlag: condoNo !== null && condoNo !== undefined &&
       String(condoNo).trim() !== '' && String(condoNo) !== '0',
     unitBblCount: null, // Not yet available
     mentionedUnitCount: 0, // Will be populated from unit-mentions endpoint
     salesRecordsCount: 0, // Not yet available
     unitSalesCount: 0, // Not yet available
     buildingClass,
+    ownerName,
   };
 
-  const classification = classifyProperty(buildingClass, landUse, unitsRes, condoNo);
+  const classification = classifyProperty(buildingClass, landUse, unitsRes, condoNo, ownerName);
   const ownershipProfile = computeOwnershipProfile(
     buildingClass, condoNo, landUse, unitsRes, bbl, scoringInputs
   );

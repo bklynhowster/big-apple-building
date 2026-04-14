@@ -35,13 +35,24 @@ const ADMINISTRATIVE_RECORD_TYPES = new Set([
 // Minimum character threshold for meaningful narrative
 const MIN_NARRATIVE_LENGTH = 50;
 
-// Fields that contain meaningful narrative text
+// Fields that contain meaningful narrative text (primary — longer descriptions)
 const NARRATIVE_FIELDS = [
   'description', 'full_description', 'job_description', 'jobdescription',
-  'violation_description', 'ecb_violation_description', 
+  'violation_description', 'ecb_violation_description',
+  'violation_category', 'violation_type',
   'complaint_type', 'problem_description', 'descriptor',
   'resolution_description', 'comments', 'narrative',
   'novdescription', 'infraction_code1', 'section_of_law',
+];
+
+// Structured fields that, when combined, can still give AI enough context
+// (permits, filings, etc. with short codes but meaningful structured data)
+const STRUCTURED_FIELDS = [
+  'category', 'work_type', 'permit_type', 'permit_subtype', 'filing_status',
+  'applicant_s_first_name', 'applicant_s_last_name',
+  'owner_s_first_name', 'owner_s_last_name',
+  'applicant', 'owner', 'applicant_name', 'owner_name',
+  'status', 'type', 'job_type',
 ];
 
 interface EligibilityResult {
@@ -53,12 +64,12 @@ interface EligibilityResult {
 function checkAIEligibility(record: Record<string, unknown>, recordType: RecordType): EligibilityResult {
   const raw = record.raw as Record<string, unknown> | undefined;
   const data = raw || record;
-  
+
   // Check for job type that's typically administrative
   const jobType = (data.job_type || data.jobType || data.type || '') as string;
   const jobTypeUpper = String(jobType).toUpperCase().trim();
-  
-  // Collect all narrative text from the record
+
+  // Collect all narrative text from the record (primary fields with >10 char values)
   let narrativeText = '';
   for (const field of NARRATIVE_FIELDS) {
     const value = data[field] || data[field.toLowerCase()] || data[field.replace(/_/g, '')];
@@ -67,29 +78,58 @@ function checkAIEligibility(record: Record<string, unknown>, recordType: RecordT
     }
   }
   narrativeText = narrativeText.trim();
-  
-  // Check if record has meaningful narrative
-  if (narrativeText.length < MIN_NARRATIVE_LENGTH) {
-    // Check if it's an administrative filing type
-    if (ADMINISTRATIVE_RECORD_TYPES.has(jobTypeUpper)) {
-      return {
-        isEligible: false,
-        reason: `AI summary not available: this ${jobTypeUpper} filing is an administrative record and does not include descriptive text to summarize.`,
-        narrativeText: null,
-      };
+
+  // If primary narrative fields meet threshold, we're good
+  if (narrativeText.length >= MIN_NARRATIVE_LENGTH) {
+    return {
+      isEligible: true,
+      reason: '',
+      narrativeText,
+    };
+  }
+
+  // Fallback: for structured records (permits, filings, violations), combine
+  // shorter structured fields. A plumbing permit with applicant + dates + category
+  // IS meaningful enough for AI to explain — even without a long description.
+  let structuredText = narrativeText; // start with whatever narrative we found
+  for (const field of STRUCTURED_FIELDS) {
+    const value = data[field] || data[field.toLowerCase()] || data[field.replace(/_/g, '')];
+    if (value && typeof value === 'string' && value.trim().length > 1) {
+      structuredText += ` ${field}: ${value.trim()}`;
     }
-    
+  }
+  // Also grab the short description/category even under 10 chars
+  for (const field of NARRATIVE_FIELDS) {
+    const value = data[field] || data[field.toLowerCase()] || data[field.replace(/_/g, '')];
+    if (value && typeof value === 'string' && value.trim().length > 1 && value.trim().length <= 10) {
+      structuredText += ` ${field}: ${value.trim()}`;
+    }
+  }
+  structuredText = structuredText.trim();
+
+  // If combined structured fields give us at least 20 chars, allow it —
+  // the AI will get the full record via buildRawText() anyway
+  if (structuredText.length >= 20) {
+    return {
+      isEligible: true,
+      reason: '',
+      narrativeText: structuredText,
+    };
+  }
+
+  // Check if it's an administrative filing type
+  if (ADMINISTRATIVE_RECORD_TYPES.has(jobTypeUpper)) {
     return {
       isEligible: false,
-      reason: 'AI summary not available: this record does not contain sufficient narrative text to summarize. Only status fields and identifiers are present.',
+      reason: `AI summary not available: this ${jobTypeUpper} filing is an administrative record and does not include descriptive text to summarize.`,
       narrativeText: null,
     };
   }
-  
+
   return {
-    isEligible: true,
-    reason: '',
-    narrativeText,
+    isEligible: false,
+    reason: 'AI summary not available: this record does not contain sufficient narrative text to summarize. Only status fields and identifiers are present.',
+    narrativeText: null,
   };
 }
 
@@ -127,10 +167,10 @@ function getRecordTypeLabel(recordType: RecordType): string {
 function buildRawText(record: Record<string, unknown>): string {
   const raw = record.raw as Record<string, unknown> | undefined;
   const data = raw || record;
-  
+
   // Build a readable text from key fields
   const lines: string[] = [];
-  
+
   if (data.description || data.full_description) {
     lines.push(`Description: ${data.description || data.full_description}`);
   }
@@ -140,6 +180,38 @@ function buildRawText(record: Record<string, unknown>): string {
   if (data.category) {
     lines.push(`Category: ${data.category}`);
   }
+  // Permit-specific fields
+  if (data.permit_type) {
+    lines.push(`Permit Type: ${data.permit_type}`);
+  }
+  if (data.work_type) {
+    lines.push(`Work Type: ${data.work_type}`);
+  }
+  if (data.permit_subtype) {
+    lines.push(`Permit Subtype: ${data.permit_subtype}`);
+  }
+  if (data.filing_status) {
+    lines.push(`Filing Status: ${data.filing_status}`);
+  }
+  // Applicant/owner
+  const applicant = data.applicant_s_first_name || data.applicant || data.applicant_name;
+  const applicantLast = data.applicant_s_last_name;
+  if (applicant) {
+    lines.push(`Applicant: ${applicant}${applicantLast ? ' ' + applicantLast : ''}`);
+  }
+  const owner = data.owner_s_first_name || data.owner || data.owner_name;
+  const ownerLast = data.owner_s_last_name;
+  if (owner) {
+    lines.push(`Owner: ${owner}${ownerLast ? ' ' + ownerLast : ''}`);
+  }
+  // Dates
+  if (data.issuance_date || data.issue_date || data.issued_date) {
+    lines.push(`Issue Date: ${data.issuance_date || data.issue_date || data.issued_date}`);
+  }
+  if (data.expiration_date) {
+    lines.push(`Expiration Date: ${data.expiration_date}`);
+  }
+  // Violation/penalty fields
   if (data.violationClass || data.violation_class) {
     lines.push(`Class: ${data.violationClass || data.violation_class}`);
   }
@@ -152,12 +224,19 @@ function buildRawText(record: Record<string, unknown>): string {
   if (data.severity || data.infraction_code1) {
     lines.push(`Severity/Code: ${data.severity || data.infraction_code1}`);
   }
-  
+  // Violation category/type (DOB violations)
+  if (data.violation_category) {
+    lines.push(`Violation Category: ${data.violation_category}`);
+  }
+  if (data.violation_type) {
+    lines.push(`Violation Type: ${data.violation_type}`);
+  }
+
   // If we have very little, just stringify the whole thing
   if (lines.length < 2) {
     return JSON.stringify(data, null, 2);
   }
-  
+
   return lines.join('\n');
 }
 
@@ -307,7 +386,7 @@ export function RecordExplanation({ recordType, record, address }: RecordExplana
 
       {/* Explanation content */}
       {explanation && expanded && (
-        <div className="space-y-4 border-t border-border/50 pt-4">
+        <div className="space-y-4 border-t border-border/50 pt-4 overflow-hidden" style={{ overflowWrap: 'break-word', wordBreak: 'break-word' }}>
           {/* Confidence badge */}
           <Badge variant="outline" className={confidenceColor[explanation.confidence]}>
             {explanation.confidence} Confidence
@@ -331,8 +410,8 @@ export function RecordExplanation({ recordType, record, address }: RecordExplana
               <ul className="space-y-1">
                 {explanation.meaning.map((item, i) => (
                   <li key={i} className="text-sm text-muted-foreground flex gap-2">
-                    <span className="text-primary">•</span>
-                    {item}
+                    <span className="text-primary shrink-0">•</span>
+                    <span className="min-w-0">{item}</span>
                   </li>
                 ))}
               </ul>
@@ -349,8 +428,8 @@ export function RecordExplanation({ recordType, record, address }: RecordExplana
               <ul className="space-y-1">
                 {explanation.why_it_matters.map((item, i) => (
                   <li key={i} className="text-sm text-muted-foreground flex gap-2">
-                    <span className="text-primary">•</span>
-                    {item}
+                    <span className="text-primary shrink-0">•</span>
+                    <span className="min-w-0">{item}</span>
                   </li>
                 ))}
               </ul>
@@ -380,8 +459,8 @@ export function RecordExplanation({ recordType, record, address }: RecordExplana
               <ol className="space-y-1">
                 {explanation.next_steps.map((step, i) => (
                   <li key={i} className="text-sm text-muted-foreground flex gap-2">
-                    <span className="text-primary font-medium">{i + 1}.</span>
-                    {step}
+                    <span className="text-primary font-medium shrink-0">{i + 1}.</span>
+                    <span className="min-w-0">{step}</span>
                   </li>
                 ))}
               </ol>
@@ -398,8 +477,8 @@ export function RecordExplanation({ recordType, record, address }: RecordExplana
               <ul className="space-y-1">
                 {explanation.unknowns.map((item, i) => (
                   <li key={i} className="text-sm text-muted-foreground/70 flex gap-2">
-                    <span>•</span>
-                    {item}
+                    <span className="shrink-0">•</span>
+                    <span className="min-w-0">{item}</span>
                   </li>
                 ))}
               </ul>

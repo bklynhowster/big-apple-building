@@ -64,7 +64,25 @@ const COLUMN_CONFIGS: ColumnConfig[] = [
   { key: 'ownerName', label: 'Owner', defaultVisible: false },
 ];
 
-function StatusBadge({ status }: { status: PermitRecord['status'] }) {
+function StatusBadge({ status, expirationDate }: { status: PermitRecord['status']; expirationDate?: string | null }) {
+  // Flag permits as "Expired" when status is open but expiration date is past
+  const isExpired = status === 'open' && expirationDate && new Date(expirationDate) < new Date();
+  if (isExpired) {
+    return (
+      <TooltipProvider>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Badge variant="outline" className="font-medium text-amber-700 dark:text-amber-400 border-amber-300 dark:border-amber-600 cursor-help">
+              Expired
+            </Badge>
+          </TooltipTrigger>
+          <TooltipContent side="top" className="max-w-xs text-xs">
+            <p>Permit authorization period ended but DOB hasn't formally closed it. Work under this permit is no longer authorized.</p>
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+    );
+  }
   const variants: Record<string, 'default' | 'secondary' | 'outline'> = { open: 'default', closed: 'secondary', unknown: 'outline' };
   const labels: Record<string, string> = { open: 'Active', closed: 'Closed', unknown: 'Unknown' };
   return <Badge variant={variants[status] || 'outline'} className="font-medium">{labels[status] || status}</Badge>;
@@ -290,6 +308,16 @@ export function PermitsTab({
         />
       )}
 
+      {/* Status legend */}
+      <div className="flex items-center gap-3 text-[11px] text-muted-foreground px-1">
+        <Info className="h-3 w-3 shrink-0" />
+        <span><strong>Active</strong> = authorized &amp; current</span>
+        <span className="text-border">|</span>
+        <span><strong className="text-amber-600 dark:text-amber-400">Expired</strong> = authorization period ended, not formally closed by DOB</span>
+        <span className="text-border">|</span>
+        <span><strong>Closed</strong> = formally closed/completed</span>
+      </div>
+
       <div className="flex items-center justify-between text-sm text-muted-foreground">
         <div>
           Showing {items.length} of ~{totalApprox} permits
@@ -344,7 +372,7 @@ export function PermitsTab({
                     onClick={() => handleRowClick(item)}
                   >
                     {isVisible('issueDate') && <TableCell className="text-sm">{item.issueDate ? new Date(item.issueDate).toLocaleDateString() : '-'}</TableCell>}
-                    {isVisible('status') && <TableCell><StatusBadge status={item.status} /></TableCell>}
+                    {isVisible('status') && <TableCell><StatusBadge status={item.status} expirationDate={item.expirationDate} /></TableCell>}
                     {isVisible('mentions') && recordsWithMentionsCount > 0 && (
                       <TableCell>
                         <UnitMentionBadges 

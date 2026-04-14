@@ -107,7 +107,7 @@ export function DataTable<T extends object>({
 
   return (
     <div className="space-y-4">
-      <div className="rounded-md border overflow-hidden">
+      <div className="rounded-md border overflow-x-auto -webkit-overflow-scrolling-touch">
         <Table>
           <TableHeader>
             <TableRow className="bg-muted/50">

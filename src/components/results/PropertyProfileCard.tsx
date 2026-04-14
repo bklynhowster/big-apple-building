@@ -313,6 +313,11 @@ export function PropertyProfileCard({ bbl, unitLabel, parentAddress, landmarkSta
                   </TooltipContent>
                 </Tooltip>
               </TooltipProvider>
+              {profile.municipal.label === 'Condominium' && (
+                <p className="text-xs text-muted-foreground italic">
+                  Individual units are separately owned. Building-level owner reflects the condo association or managing entity on file with NYC.
+                </p>
+              )}
             </div>
 
             {/* SECTION B: Ownership Structure (Inferred/Manual) */}

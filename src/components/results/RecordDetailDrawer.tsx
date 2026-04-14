@@ -208,7 +208,7 @@ export function RecordDetailDrawer({ open, onOpenChange, recordType, record, add
   
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="w-full sm:max-w-lg overflow-hidden flex flex-col">
+      <SheetContent className="w-full sm:max-w-xl overflow-hidden flex flex-col">
         <SheetHeader className="space-y-3">
           <div className="flex items-start justify-between gap-4">
             <div className="space-y-1.5">

@@ -37,6 +37,7 @@ import {
 } from '@/features/taxes';
 import { cn } from '@/lib/utils';
 import type { ApiError } from '@/types/api-error';
+import { CoopUnitRoster } from './CoopUnitRoster';
 
 export interface CondoMeta {
   isCondo: boolean;
@@ -60,6 +61,7 @@ interface UnitsTabProps {
   borough?: string;
   bin?: string;
   isCoop?: boolean;
+  totalUnits?: number;
   condoRoster: CondoRosterData;
   rosterQueryBbl: string | null;
   onOpenUnit?: (unitBbl: string, unitLabel?: string | null) => void;
@@ -139,12 +141,13 @@ function boroughNameFromBbl(bbl: string): string {
   );
 }
 
-export function UnitsTab({ 
-  bbl, 
-  buildingAddress, 
-  borough: buildingBorough, 
+export function UnitsTab({
+  bbl,
+  buildingAddress,
+  borough: buildingBorough,
   bin: buildingBin,
   isCoop = false,
+  totalUnits,
   condoRoster,
   rosterQueryBbl,
   onOpenUnit,
@@ -177,9 +180,9 @@ export function UnitsTab({
   }, [bbl, resetTaxes]);
 
   const units = condoData?.units || [];
-  const totalUnits = condoData?.totalApprox || 0;
+  const condoTotalUnits = condoData?.totalApprox || 0;
   const isCondo = condoData?.isCondo ?? false;
-  const hasMorePages = units.length < totalUnits;
+  const hasMorePages = units.length < condoTotalUnits;
 
   // Filter units by search term
   const filteredUnits = useMemo(() => {
@@ -296,7 +299,7 @@ export function UnitsTab({
     rosterQueryBbl,
     billingBbl: condoData?.billingBbl || null,
     unitsCount: units.length,
-    totalUnits,
+    totalUnits: condoTotalUnits || totalUnits || 0,
     error: unitsError?.userMessage || unitsError?.error || null,
     isCondo,
     loading: unitsLoading,
@@ -307,12 +310,7 @@ export function UnitsTab({
     return (
       <div>
         {showDebug && <DebugPanel {...debugData} />}
-        <Alert>
-          <Info className="h-4 w-4" />
-          <AlertDescription>
-            Co-op buildings do not have individually taxed units. All regulatory records apply to the building level.
-          </AlertDescription>
-        </Alert>
+        <CoopUnitRoster bbl={bbl} totalUnits={totalUnits} />
       </div>
     );
   }
@@ -380,7 +378,7 @@ export function UnitsTab({
             Condo Units
           </h2>
           <p className="text-sm text-muted-foreground">
-            {totalUnits > 0 ? `${totalUnits} units total` : `${units.length} units loaded`}
+            {condoTotalUnits > 0 ? `${condoTotalUnits} units total` : `${units.length} units loaded`}
           </p>
         </div>
         

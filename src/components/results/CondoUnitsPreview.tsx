@@ -1,16 +1,14 @@
-import { useMemo, useEffect } from 'react';
+import { useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Building2, ChevronRight, Loader2, Home, AlertCircle, Bug, DollarSign } from 'lucide-react';
+import { Building2, ChevronRight, ChevronDown, ChevronUp, Loader2, Home, AlertCircle, Bug, Search } from 'lucide-react';
+import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import type { CondoUnitsResponse, CondoUnit } from '@/hooks/useCondoUnits';
 import type { ApiError } from '@/types/api-error';
 import { cn } from '@/lib/utils';
-import { useCondoUnitTaxes, INITIAL_TAX_BATCH_SIZE } from '@/features/taxes/hooks/useCondoUnitTaxes';
-import type { CondoUnitTaxSummary } from '@/features/taxes/types';
 
 interface CondoUnitsPreviewProps {
   searchBbl: string;
@@ -71,127 +69,29 @@ function DebugPanel({
   );
 }
 
-// Risk-based status styling (mirrors UnitOverviewCard)
-type TaxRiskLevel = 'safe' | 'attention' | 'risk' | 'unknown';
-
-function getTaxRiskLevel(taxSummary: CondoUnitTaxSummary | undefined): TaxRiskLevel {
-  if (!taxSummary || taxSummary.loading || taxSummary.error || !taxSummary.data) return 'unknown';
-  
-  const { payment_status, arrears, no_data_found } = taxSummary.data;
-  if (no_data_found) return 'unknown';
-  
-  const hasArrears = (arrears ?? 0) > 0;
-  const isPaid = payment_status === 'paid';
-  
-  if (isPaid && !hasArrears) return 'safe';
-  if (!isPaid && hasArrears) return 'risk';
-  if (!isPaid) return 'attention';
-  return 'safe';
-}
-
-const statusClasses: Record<TaxRiskLevel, { bg: string; text: string; border: string }> = {
-  safe: { 
-    bg: 'bg-green-100 dark:bg-green-900/30', 
-    text: 'text-green-800 dark:text-green-300',
-    border: 'border-green-200 dark:border-green-800'
-  },
-  attention: { 
-    bg: 'bg-amber-100 dark:bg-amber-900/30', 
-    text: 'text-amber-800 dark:text-amber-300',
-    border: 'border-amber-200 dark:border-amber-800'
-  },
-  risk: { 
-    bg: 'bg-red-100 dark:bg-red-900/30', 
-    text: 'text-red-800 dark:text-red-300',
-    border: 'border-red-200 dark:border-red-800'
-  },
-  unknown: { 
-    bg: 'bg-muted', 
-    text: 'text-muted-foreground',
-    border: 'border-border'
-  },
-};
-
-function getStatusLabel(taxSummary: CondoUnitTaxSummary | undefined): string {
-  if (!taxSummary) return '—';
-  if (taxSummary.loading) return '...';
-  if (taxSummary.error) return 'Error';
-  if (!taxSummary.data || taxSummary.data.no_data_found) return 'No data';
-  
-  const { payment_status, arrears } = taxSummary.data;
-  const hasArrears = (arrears ?? 0) > 0;
-  
-  if (payment_status === 'paid') return 'Paid';
-  if (hasArrears) return 'Arrears';
-  return 'Unpaid';
-}
-
-function formatAmount(amount: number | null | undefined): string {
-  if (amount === null || amount === undefined) return '—';
-  return `$${amount.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
-}
-
-// Unit row component with tax info
-function UnitPreviewRow({ 
-  unit, 
-  taxSummary,
+// Unit pill button — compact inline style
+function UnitPreviewRow({
+  unit,
   onClick,
-}: { 
-  unit: CondoUnit; 
-  taxSummary: CondoUnitTaxSummary | undefined;
+}: {
+  unit: CondoUnit;
   onClick: () => void;
 }) {
   const displayLabel = unit.unitLabel || `Lot ${unit.lot}`;
-  const riskLevel = getTaxRiskLevel(taxSummary);
-  const statusLabel = getStatusLabel(taxSummary);
-  const classes = statusClasses[riskLevel];
-  
-  const latestBill = taxSummary?.data?.latest_bill_amount;
-  const arrears = taxSummary?.data?.arrears;
-  const hasArrears = (arrears ?? 0) > 0;
 
   return (
     <button
       type="button"
       onClick={onClick}
       className={cn(
-        "w-full flex items-center justify-between gap-3 px-3 py-2 rounded-lg border transition-colors",
-        "hover:bg-accent/50 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-1",
+        "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-sm transition-colors",
+        "hover:bg-primary/10 hover:border-primary/50 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-1",
         "bg-card text-card-foreground"
       )}
     >
-      {/* Left: Unit label */}
-      <div className="flex items-center gap-2 min-w-0">
-        <Home className="h-4 w-4 text-muted-foreground shrink-0" />
-        <span className="font-medium truncate">{displayLabel}</span>
-      </div>
-      
-      {/* Middle: Amount (de-emphasized) */}
-      <div className="hidden sm:flex items-center gap-1.5 text-sm text-muted-foreground shrink-0">
-        {taxSummary?.loading ? (
-          <Skeleton className="h-4 w-16" />
-        ) : latestBill ? (
-          <>
-            <DollarSign className="h-3 w-3" />
-            <span>{formatAmount(latestBill)}</span>
-          </>
-        ) : null}
-      </div>
-      
-      {/* Right: Status pill + arrears */}
-      <div className="flex items-center gap-2 shrink-0">
-        {hasArrears && !taxSummary?.loading && (
-          <span className="text-xs font-semibold text-red-600 dark:text-red-400">
-            ${arrears?.toLocaleString()}
-          </span>
-        )}
-        <span className={cn(
-          "inline-flex items-center px-2 py-0.5 rounded text-xs font-medium border",
-          classes.bg, classes.text, classes.border
-        )}>
-          {statusLabel}
-        </span>
-      </div>
+      <Home className="h-3.5 w-3.5 text-muted-foreground" />
+      <span className="font-medium">{displayLabel}</span>
+      <ChevronRight className="h-3 w-3 text-muted-foreground" />
     </button>
   );
 }
@@ -214,22 +114,25 @@ export function CondoUnitsPreview({
   const isCondo = condoData?.isCondo ?? false;
   const billingBbl = condoData?.billingBbl || null;
 
+  // Expanded state — "View all" toggles this
+  const [expanded, setExpanded] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+
   // Preview first 6 units (show enough to be useful, not overwhelming)
   const previewUnits = useMemo(() => units.slice(0, 6), [units]);
 
-  // Lazy-load tax data for preview units
-  const { unitTaxes, ensureLoaded, batchLoading } = useCondoUnitTaxes();
+  // Filtered units for expanded view
+  const filteredUnits = useMemo(() => {
+    if (!searchQuery.trim()) return units;
+    const q = searchQuery.trim().toLowerCase();
+    return units.filter(u =>
+      (u.unitLabel || '').toLowerCase().includes(q) ||
+      u.unitBbl.includes(q) ||
+      String(u.lot).includes(q)
+    );
+  }, [units, searchQuery]);
 
-  // Fetch tax data when preview units are available
-  useEffect(() => {
-    if (previewUnits.length > 0 && !loading) {
-      const unitsToLoad = previewUnits.map(u => ({
-        unitBbl: u.unitBbl,
-        unitLabel: u.unitLabel,
-      }));
-      ensureLoaded(unitsToLoad);
-    }
-  }, [previewUnits, loading, ensureLoaded]);
+
 
   // Don't render for co-ops
   if (isCoop) return null;
@@ -318,86 +221,100 @@ export function CondoUnitsPreview({
   if (!isCondo) return null;
 
   return (
-    <div className="relative z-10 pointer-events-auto">
+    <div id="scroll-units" className="relative z-10 pointer-events-auto scroll-mt-20">
       <Card className="border-primary/20 bg-card">
-        <CardHeader className="pb-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="flex items-center justify-center w-10 h-10 bg-primary/20 rounded-lg">
-                <Building2 className="h-5 w-5 text-primary" />
-              </div>
-              <div>
-                <div className="flex items-center gap-2">
-                  <CardTitle className="text-lg">Condo Units</CardTitle>
-                  {batchLoading && (
-                    <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-                      <Loader2 className="h-3 w-3 animate-spin" />
-                      Loading taxes...
-                    </span>
-                  )}
-                </div>
-                <p className="text-sm text-muted-foreground">
-                  {totalUnits} registered units in this building
-                </p>
-              </div>
+        <CardContent className="py-3 px-4">
+          <div className="flex items-center gap-3 flex-wrap">
+            <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground shrink-0">
+              <Building2 className="h-4 w-4" />
+              <span>{totalUnits} Units</span>
             </div>
-            <Button 
-              type="button"
-              onClick={onViewAllUnits} 
-              variant="outline"
-              className="gap-2 pointer-events-auto"
-            >
-              View all {totalUnits} units
-              <ChevronRight className="h-4 w-4" />
-            </Button>
-          </div>
-        </CardHeader>
-        
-        {/* Preview list of first few units with tax info */}
-        {previewUnits.length > 0 && (
-          <CardContent className="pt-0">
-            <div className="space-y-2 pointer-events-auto">
-              {previewUnits.map((unit) => {
-                const taxSummary = unitTaxes.get(unit.unitBbl);
-                return (
+
+            {/* Compact horizontal grid of unit buttons */}
+            {!expanded && (
+              <div className="flex items-center gap-2 flex-wrap flex-1">
+                {previewUnits.map((unit) => (
                   <UnitPreviewRow
                     key={unit.unitBbl}
                     unit={unit}
-                    taxSummary={taxSummary}
                     onClick={() => onSelectUnit?.(unit.unitBbl, unit.unitLabel)}
                   />
-                );
-              })}
-              
-              {/* Show how many more */}
-              {totalUnits > 6 && (
-                <div className="text-center pt-2">
-                  <Button 
-                    variant="ghost" 
+                ))}
+
+                {totalUnits > 6 && (
+                  <Button
+                    variant="ghost"
                     size="sm"
-                    onClick={onViewAllUnits}
-                    className="text-muted-foreground hover:text-foreground"
+                    onClick={() => setExpanded(true)}
+                    className="text-xs text-muted-foreground hover:text-foreground h-8 px-2"
                   >
-                    + {totalUnits - 6} more units →
+                    +{totalUnits - 6} more
                   </Button>
+                )}
+              </div>
+            )}
+
+            {expanded && <div className="flex-1" />}
+
+            <Button
+              type="button"
+              onClick={() => setExpanded(!expanded)}
+              variant="outline"
+              size="sm"
+              className="gap-1 pointer-events-auto shrink-0"
+            >
+              {expanded ? 'Collapse' : 'View all'}
+              {expanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+            </Button>
+          </div>
+
+          {/* Expanded: full unit grid with search */}
+          {expanded && (
+            <div className="mt-3 pt-3 border-t border-border">
+              {units.length > 12 && (
+                <div className="relative mb-3">
+                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+                  <Input
+                    placeholder={`Search ${totalUnits} units...`}
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="pl-8 h-8 text-sm"
+                  />
                 </div>
               )}
+              <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-10 gap-1.5 max-h-[400px] overflow-y-auto">
+                {filteredUnits.map((unit) => (
+                  <UnitPreviewRow
+                    key={unit.unitBbl}
+                    unit={unit}
+                    onClick={() => onSelectUnit?.(unit.unitBbl, unit.unitLabel)}
+                  />
+                ))}
+              </div>
+              {searchQuery && filteredUnits.length === 0 && (
+                <p className="text-xs text-muted-foreground text-center py-3">No units match "{searchQuery}"</p>
+              )}
+              {filteredUnits.length > 0 && (
+                <p className="text-xs text-muted-foreground mt-2">
+                  {searchQuery ? `${filteredUnits.length} of ${totalUnits} units` : `${totalUnits} units`} — click any unit to view details
+                </p>
+              )}
             </div>
-            
-            {showDebug && (
-              <DebugPanel
-                searchBbl={searchBbl}
-                rosterQueryBbl={rosterQueryBbl}
-                billingBbl={billingBbl}
-                unitsCount={units.length}
-                totalUnits={totalUnits}
-                error={null}
-                isCondo={isCondo}
-                loading={loading}
-              />
-            )}
-          </CardContent>
-        )}
+          )}
+
+          {showDebug && (
+            <DebugPanel
+              searchBbl={searchBbl}
+              rosterQueryBbl={rosterQueryBbl}
+              billingBbl={billingBbl}
+              unitsCount={units.length}
+              totalUnits={totalUnits}
+              error={null}
+              isCondo={isCondo}
+              loading={loading}
+            />
+          )}
+        </CardContent>
       </Card>
     </div>
   );

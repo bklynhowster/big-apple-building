@@ -173,6 +173,8 @@ interface UnitInsightsCardProps {
   fallbackMode?: boolean;
   /** If true, hide the card entirely when there are no unit mentions (default: true) */
   hideWhenEmpty?: boolean;
+  /** Navigate to a record in the Records tab (section key like 'ecb' or 'dob') */
+  onNavigateToRecord?: (sectionKey: string) => void;
 }
 
 // Note: ViolationMentionRef, PermitMentionRef, and CombinedUnitStats are imported from useUnitMentions
@@ -736,12 +738,14 @@ interface ViolationsMentioningUnitsSectionProps {
   combinedStats: CombinedUnitStats[];
   selectedUnit: string | null;
   onUnitSelect: (unit: string) => void;
+  onNavigateToRecord?: (sectionKey: string) => void;
 }
 
 function ViolationsMentioningUnitsSection({
   combinedStats,
   selectedUnit,
   onUnitSelect,
+  onNavigateToRecord,
 }: ViolationsMentioningUnitsSectionProps) {
   const [isOpen, setIsOpen] = useState(true);
   
@@ -821,10 +825,15 @@ function ViolationsMentioningUnitsSection({
                     <TooltipProvider key={`${vio.type}-${vio.id}-${idx}`}>
                       <Tooltip>
                         <TooltipTrigger asChild>
-                          <span 
-                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-mono cursor-help ${
-                              vio.type === 'dob-violation' 
-                                ? 'bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300' 
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const sectionKey = vio.type === 'dob-violation' ? 'dob' : 'ecb';
+                              onNavigateToRecord?.(sectionKey);
+                            }}
+                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-mono cursor-pointer hover:ring-2 hover:ring-primary/40 transition-all ${
+                              vio.type === 'dob-violation'
+                                ? 'bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300'
                                 : 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300'
                             }`}
                           >
@@ -832,7 +841,7 @@ function ViolationsMentioningUnitsSection({
                             {vio.status === 'open' && (
                               <span className="w-1.5 h-1.5 rounded-full bg-red-500" title="Open" />
                             )}
-                          </span>
+                          </button>
                         </TooltipTrigger>
                         <TooltipContent side="top" className="max-w-xs">
                           <div className="text-xs space-y-1">
@@ -850,7 +859,7 @@ function ViolationsMentioningUnitsSection({
                               </p>
                             )}
                             {!vio.snippet && vio.description && <p className="line-clamp-2">{vio.description}</p>}
-                            <p className="text-muted-foreground italic">Unit mentioned in record text</p>
+                            <p className="text-muted-foreground italic">Click to view in Records tab</p>
                           </div>
                         </TooltipContent>
                       </Tooltip>
@@ -1042,6 +1051,7 @@ function EvidenceDrawer({
   const [hpdOpen, setHpdOpen] = useState(true);
   const [threeOneOneOpen, setThreeOneOneOpen] = useState(true);
   const [filingsOpen, setFilingsOpen] = useState(true);
+  const [violationsOpen, setViolationsOpen] = useState(true);
 
   // Filter records matching this unit
   const matchingHpdViolations = useMemo(() => {
@@ -1130,6 +1140,50 @@ function EvidenceDrawer({
                       Open in DOB NOW <ExternalLink className="h-3 w-3" />
                     </a>
                   )}
+                </CollapsibleContent>
+              </Collapsible>
+            )}
+
+            {/* DOB & ECB Violations */}
+            {stats.violationRefs.length > 0 && (
+              <Collapsible open={violationsOpen} onOpenChange={setViolationsOpen}>
+                <CollapsibleTrigger asChild>
+                  <Button variant="ghost" className="w-full justify-between p-3 h-auto">
+                    <div className="flex items-center gap-2">
+                      <AlertTriangle className="h-4 w-4 text-red-600" />
+                      <span className="font-medium">DOB & ECB Violations</span>
+                      <Badge variant="secondary">{stats.violationRefs.length}</Badge>
+                    </div>
+                    {violationsOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                  </Button>
+                </CollapsibleTrigger>
+                <CollapsibleContent className="pl-6 space-y-2">
+                  {stats.violationRefs.map((ref, idx) => (
+                    <div key={`vioref-${idx}`} className="border rounded-lg p-3 text-sm bg-muted/30">
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="font-mono font-medium">{ref.label || ref.id}</span>
+                        <div className="flex items-center gap-1.5">
+                          <Badge variant="outline" className="text-[10px] px-1.5 py-0 uppercase">
+                            {ref.type === 'ecb' ? 'ECB' : 'DOB'}
+                          </Badge>
+                          <Badge variant={ref.status?.toLowerCase() === 'open' || ref.status?.toLowerCase() === 'active' ? 'destructive' : 'secondary'} className="text-xs">
+                            {ref.status || 'Unknown'}
+                          </Badge>
+                        </div>
+                      </div>
+                      {ref.description && (
+                        <p className="text-xs text-muted-foreground mb-1">{ref.description}</p>
+                      )}
+                      {ref.issueDate && (
+                        <p className="text-muted-foreground text-xs mt-1">Date: {ref.issueDate}</p>
+                      )}
+                      {ref.snippet && (
+                        <p className="text-xs italic bg-yellow-100 dark:bg-yellow-900/30 px-2 py-1 rounded mt-2">
+                          "{ref.snippet}"
+                        </p>
+                      )}
+                    </div>
+                  ))}
                 </CollapsibleContent>
               </Collapsible>
             )}
@@ -1259,6 +1313,7 @@ function EvidenceDrawer({
 
             {/* Empty state within drawer */}
             {stats.filingRefs.length === 0 &&
+              stats.violationRefs.length === 0 &&
               matchingHpdViolations.length === 0 &&
               matchingHpdComplaints.length === 0 &&
               matching311.length === 0 && (
@@ -1296,6 +1351,7 @@ export function UnitInsightsCard({
   dobNowUrl,
   fallbackMode,
   hideWhenEmpty = true,
+  onNavigateToRecord,
 }: UnitInsightsCardProps) {
   const [evidenceUnit, setEvidenceUnit] = useState<string | null>(null);
   const [evidenceStats, setEvidenceStats] = useState<CombinedUnitStats | null>(null);
@@ -1870,6 +1926,7 @@ export function UnitInsightsCard({
               combinedStats={combinedStats}
               selectedUnit={selectedUnit}
               onUnitSelect={onUnitSelect}
+              onNavigateToRecord={onNavigateToRecord}
             />
           )}
 

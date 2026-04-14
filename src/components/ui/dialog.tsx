@@ -41,7 +41,7 @@ const DialogContent = React.forwardRef<
       )}
       style={{
         WebkitOverflowScrolling: 'touch',
-        overscrollBehavior: 'contain',
+        overscrollBehavior: 'auto',
       }}
       {...props}
     >
