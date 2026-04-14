@@ -23,3 +23,8 @@ dist-ssr
 *.sln
 *.sw?
 .netlify/
+
+# Local env with secrets — never commit
+.env
+.env.local
+.env.*.local
